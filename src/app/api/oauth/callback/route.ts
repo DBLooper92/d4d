@@ -103,7 +103,7 @@ const iconAttempts = [
   const userRoleAttempts = ["all", "admin", "user"] as const;
   const openModeAttempts = ["iframe", "current_tab"] as const;
 
-  // Base (shared) fields required by validator
+  // Base (shared) fields required y validator
   const baseFields = {
     title: "Driving for Dollars",
     url: "https://app.driving4dollars.co/app?location_id={{location.id}}",
