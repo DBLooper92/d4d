@@ -259,7 +259,7 @@ export default function Page() {
             disabled={busy}
             className="rounded-xl border px-4 py-2 hover:bg-gray-50 disabled:opacity-60"
           >
-            {busy ? "Signing out…" : "Sign out"}
+            {busy ? "Signing you out…" : "Sign out"}
           </button>
         </div>
       </main>
