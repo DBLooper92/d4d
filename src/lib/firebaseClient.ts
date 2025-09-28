@@ -2,26 +2,36 @@
 import { getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
 
-function required(name: string): string {
-  const v = process.env[name];
-  if (!v || !String(v).trim()) {
-    throw new Error(`Missing required client env: ${name}`);
-  }
-  return String(v);
-}
-
 let app: FirebaseApp | undefined;
+
+function getClientConfig() {
+  // IMPORTANT: reference envs statically so Next can inline them at build time
+  const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+  const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN;
+  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+  const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+
+  // Friendly error if any are missing at build/run time
+  const missing: string[] = [];
+  if (!apiKey) missing.push("NEXT_PUBLIC_FIREBASE_API_KEY");
+  if (!authDomain) missing.push("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN");
+  if (!projectId) missing.push("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
+  if (!appId) missing.push("NEXT_PUBLIC_FIREBASE_APP_ID");
+
+  if (missing.length) {
+    throw new Error(
+      `Firebase client env missing: ${missing.join(
+        ", "
+      )}. Make sure they are set with availability [BUILD, RUNTIME] and redeploy.`
+    );
+  }
+
+  return { apiKey, authDomain, projectId, appId };
+}
 
 export function getFirebaseApp(): FirebaseApp {
   if (!app) {
-    app =
-      getApps()[0] ??
-      initializeApp({
-        apiKey: required("NEXT_PUBLIC_FIREBASE_API_KEY"),
-        authDomain: required("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"),
-        projectId: required("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
-        appId: required("NEXT_PUBLIC_FIREBASE_APP_ID"),
-      });
+    app = getApps()[0] ?? initializeApp(getClientConfig());
   }
   return app!;
 }
