@@ -1,7 +1,7 @@
 // src/app/api/tokens/location/route.ts
 import { NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
-import { getGhlConfig } from "@/lib/ghl";
+import { getGhlConfig, olog, scopeListFromTokenScope } from "@/lib/ghl"; // ⬅️ add olog + scopeListFromTokenScope
 import { exchangeRefreshToken } from "@/lib/ghlTokens";
 
 export const runtime = "nodejs";
@@ -27,9 +27,23 @@ export async function GET(req: Request) {
     const { clientId, clientSecret } = getGhlConfig();
     const tok = await exchangeRefreshToken(refreshToken, clientId, clientSecret);
 
-    // Return only the short-lived access token + scope echo for observability
+    const scopesArr = scopeListFromTokenScope(tok.scope ?? "");
+
+    // ⬇️ log full location scopes
+    olog("location token exchanged", {
+      locationId,
+      scopesCount: scopesArr.length,
+      scopes: scopesArr,
+      scopeRaw: tok.scope ?? "",
+    });
+
+    // Return the short-lived access token + scopes so you can see them
     return NextResponse.json(
-      { access_token: tok.access_token, scope: tok.scope || "" },
+      {
+        access_token: tok.access_token,
+        scope: tok.scope || "",
+        scopes: scopesArr, // convenient parsed array
+      },
       { status: 200, headers: { "Cache-Control": "no-store" } }
     );
   } catch (e) {

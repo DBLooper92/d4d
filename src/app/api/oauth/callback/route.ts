@@ -455,13 +455,17 @@ export async function GET(request: Request) {
   if (agencyId) ui.searchParams.set("agencyId", agencyId);
   if (locationId) ui.searchParams.set("locationId", locationId);
 
+  // ⬇️ LOG EVERYTHING (no truncation)
   olog("oauth success", {
     userTypeQuery: userTypeForToken ?? "",
     derivedInstallTarget: installationTarget,
     agencyId,
     locationId,
-    scopes: scopeArr.slice(0, 8),
+    scopesCount: scopeArr.length,
+    scopes: scopeArr,             // <- full list
+    scopeRaw: tokens.scope ?? "", // <- raw string, exactly as returned
   });
 
   return NextResponse.redirect(ui.toString(), { status: 302 });
+
 }
