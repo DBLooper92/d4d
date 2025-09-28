@@ -149,7 +149,6 @@ export type CustomMenu = {
   id?: string;
   title: string;
   url: string;
-  // legacy fields tolerated
   placement?: string;
   openMode?: string;
   visibility?: { agency?: boolean; subAccount?: boolean };
@@ -190,8 +189,51 @@ export function findOurMenu(items: CustomMenu[]) {
   );
 }
 
-export async function deleteMenuById(accessToken: string, customMenuId: string) {
-  const url = `${ghlCustomMenusBase()}${encodeURIComponent(customMenuId)}`;
-  const r = await fetch(url, { method: "DELETE", headers: lcHeaders(accessToken) });
-  return r.ok;
+/**
+ * Robust deletion that handles permission quirks:
+ *  - primary: DELETE /custom-menus/:id  (agency token)
+ *  - retry with ?companyId=...
+ *  - fallback: same permutations with a location token (if provided)
+ * Treat 404 as success — the item is already gone.
+ */
+export async function deleteMenuById(
+  agencyAccessToken: string,
+  customMenuId: string,
+  opts?: { companyId?: string; locationAccessToken?: string },
+): Promise<boolean> {
+  const base = ghlCustomMenusBase();
+  const path = `${base}${encodeURIComponent(customMenuId)}`;
+  const withCo = opts?.companyId ? `${path}?companyId=${encodeURIComponent(opts.companyId)}` : null;
+
+  // Attempt order: agency no-co → agency with-co → location no-co → location with-co
+  const attempts: Array<{ url: string; token: string; label: string }> = [
+    { url: path, token: agencyAccessToken, label: "agency-noCompany" },
+    ...(withCo ? [{ url: withCo, token: agencyAccessToken, label: "agency-withCompany" } as const] : []),
+    ...(opts?.locationAccessToken ? [{ url: path, token: opts.locationAccessToken, label: "location-noCompany" } as const] : []),
+    ...(opts?.locationAccessToken && withCo
+      ? [{ url: withCo, token: opts.locationAccessToken, label: "location-withCompany" } as const]
+      : []),
+  ];
+
+  for (const a of attempts) {
+    try {
+      const r = await fetch(a.url, {
+        method: "DELETE",
+        headers: lcHeaders(a.token, { "Content-Type": "application/json" }),
+      });
+      const sample = await r.text().catch(() => "");
+      if (r.status === 404) {
+        olog("cml delete → 404 (treat as success)", { attempt: a.label });
+        return true;
+      }
+      if (r.ok) {
+        olog("cml delete → success", { attempt: a.label });
+        return true;
+      }
+      olog("cml delete → failed", { attempt: a.label, status: r.status, sample: sample.slice(0, 400) });
+    } catch (e) {
+      olog("cml delete → error", { attempt: a.label, err: String(e) });
+    }
+  }
+  return false;
 }

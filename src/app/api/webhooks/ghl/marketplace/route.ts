@@ -56,6 +56,21 @@ async function getAccessTokenForAgency(agencyId: string) {
   return null;
 }
 
+async function getAccessTokenForLocation(locationId: string) {
+  const { clientId, clientSecret } = getGhlConfig();
+  const snap = await db().collection("locations").doc(locationId).get();
+  if (!snap.exists) return null;
+  const rt = String((snap.data() || {}).refreshToken || "");
+  if (!rt) return null;
+  try {
+    const tok = await exchangeRefreshToken(rt, clientId, clientSecret);
+    return tok.access_token || null;
+  } catch (e) {
+    olog("location token exchange failed", { locationId, err: String(e) });
+    return null;
+  }
+}
+
 export async function POST(req: Request) {
   let payload: UninstallPayload | null = null;
   try {
@@ -64,7 +79,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
   }
 
-  // Narrow using 'in' to satisfy the union
   const isUninstall =
     !!payload &&
     (("type" in payload && payload.type === "UNINSTALL") ||
@@ -85,29 +99,45 @@ export async function POST(req: Request) {
   }
   if (!agencyId) return NextResponse.json({ ok: true }, { status: 200 });
 
+  // If *any* locations still have the app, keep the menu
   if (locationId) {
     const stillAny = await anyInstalledLocations(agencyId);
     if (stillAny) return NextResponse.json({ ok: true, keptMenu: true }, { status: 200 });
   }
 
-  const token = await getAccessTokenForAgency(agencyId);
-  if (!token) return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
+  // Get tokens for both contexts so we can try both if needed
+  const agencyAccessToken = await getAccessTokenForAgency(agencyId);
+  const locationAccessToken = locationId ? await getAccessTokenForLocation(locationId) : null;
+  if (!agencyAccessToken && !locationAccessToken) {
+    return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
+  }
 
+  // Find menu id (known or via list)
   const agSnap = await db().collection("agencies").doc(agencyId).get();
   const knownId = (agSnap.data() || {}).customMenuId as string | undefined;
 
   let menuId = knownId || "";
   if (!menuId) {
-    const list = await listCompanyMenus(token, agencyId);
+    const listToken = agencyAccessToken || locationAccessToken!;
+    const list = await listCompanyMenus(listToken, agencyId);
     if (list.ok) {
       const found = findOurMenu(list.items);
       menuId = (found?.id as string | undefined) || "";
+    } else {
+      olog("list company menus failed", { status: list.status });
     }
   }
   if (!menuId) return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
 
-  const ok = await deleteMenuById(token, menuId);
-  if (ok) await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
+  // 🔑 Robust delete covering API/permission quirks
+  const ok = await deleteMenuById(agencyAccessToken || "", menuId, {
+    companyId: agencyId,
+    locationAccessToken: locationAccessToken || undefined,
+  });
+
+  if (ok) {
+    await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
+  }
 
   return NextResponse.json({ ok }, { status: 200 });
 }
