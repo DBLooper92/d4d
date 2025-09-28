@@ -14,13 +14,13 @@ env:
 
   # --- Firebase Client SDK (public) ---
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
-    value: YOUR_API_KEY
+    value: AIzaSyDfbE5ozmXtGYZwtycZNCJxm5PJjE5XI4M
   - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-    value: YOUR_PROJECT.firebaseapp.com
+    value: driving4dollars-d4d.firebaseapp.com
   - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
-    value: YOUR_PROJECT_ID
+    value: driving4dollars-d4d
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
-    value: 1:XXXXXXXXXXXX:web:YYYYYYYYYYYYYY
+    value: 1:143753814618:web:3525b979c3a888240eae63
 
   # --- Secrets (runtime) ---
   - variable: GHL_CLIENT_ID
