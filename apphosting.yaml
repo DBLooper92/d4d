@@ -12,44 +12,42 @@ env:
   - variable: OAUTH_LOG
     value: on
 
-  # --- Firebase Client SDK (public) ---
+  # --- Firebase Client SDK (PUBLIC; must be present at BUILD + RUNTIME) ---
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
     value: AIzaSyDfbE5ozmXtGYZwtycZNCJxm5PJjE5XI4M
+    availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
     value: driving4dollars-d4d.firebaseapp.com
+    availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
     value: driving4dollars-d4d
+    availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
     value: 1:143753814618:web:3525b979c3a888240eae63
+    availability: [BUILD, RUNTIME]
 
-  # --- Secrets (runtime) ---
+  # --- Secrets (server-only) ---
   - variable: GHL_CLIENT_ID
     secret: GHL_CLIENT_ID
     version: 2
     availability: [RUNTIME]
-
   - variable: GHL_CLIENT_SECRET
     secret: GHL_CLIENT_SECRET
     version: 2
     availability: [RUNTIME]
-
   - variable: GHL_SHARED_SECRET_KEY
     secret: GHL_SHARED_SECRET_KEY
     version: 2
     availability: [RUNTIME]
-
   - variable: GHL_WEBHOOK_PUBLIC_KEY
     secret: GHL_WEBHOOK_PUBLIC_KEY
     availability: [RUNTIME]
-
   - variable: GHL_SCOPES
     secret: GHL_SCOPES
     version: 4
     availability: [RUNTIME]
-
   - variable: GHL_INTEGRATION_ID
     secret: GHL_INTEGRATION_ID
     availability: [RUNTIME]
-
   - variable: GHL_REDIRECT_PATH
     value: /api/oauth/callback
