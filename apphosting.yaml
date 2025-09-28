@@ -12,6 +12,10 @@ env:
   - variable: OAUTH_LOG
     value: on
 
+  - variable: ADMIN_MAINT_TOKEN
+    value: 1654-6cv-vdf6v45dfv-vxfx6-xc
+    availability: [RUNTIME]
+
   # --- Firebase Client SDK (PUBLIC; must be present at BUILD + RUNTIME) ---
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
     value: AIzaSyDfbE5ozmXtGYZwtycZNCJxm5PJjE5XI4M

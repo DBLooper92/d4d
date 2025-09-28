@@ -1,4 +1,4 @@
-// File: src/lib/ghl.ts
+// src/lib/ghl.ts
 const API_VERSION = "2021-07-28";
 
 export type OAuthTokens = {
@@ -19,7 +19,7 @@ export function olog(msg: string, details?: unknown) {
   try {
     console.info(
       `${OAUTH_LOG_PREFIX} ${msg}`,
-      details ? JSON.stringify(details, (_k, v) => (Array.isArray(v) ? v.slice(0, 8) : v)) : ""
+      details ? JSON.stringify(details, (_k, v) => (Array.isArray(v) ? v.slice(0, 8) : v)) : "",
     );
   } catch {
     console.info(`${OAUTH_LOG_PREFIX} ${msg}`);
@@ -85,15 +85,6 @@ function required(name: string): string {
   return String(v);
 }
 
-export function isCompany(userType?: string) {
-  const t = String(userType || "").toLowerCase();
-  return t === "company";
-}
-export function isLocation(userType?: string) {
-  const t = String(userType || "").toLowerCase();
-  return t === "location";
-}
-
 // ---------- Helpers for normalizing LC location payloads ----------
 export type AnyLoc = {
   id?: string;
@@ -133,8 +124,6 @@ export function safeInstalled(l: AnyLoc): boolean {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom Menus
-// Some routes 404 or validate differently depending on router version.
-// Keep a trailing slash on the base; support both list paths.
 // ─────────────────────────────────────────────────────────────────────────────
 export function ghlCustomMenusBase() {
   return "https://services.leadconnectorhq.com/custom-menus/"; // NOTE: trailing slash
@@ -152,11 +141,6 @@ export function scopeListFromTokenScope(scope?: string | null): string[] {
     .filter(Boolean);
 }
 
-// Candidate openMode values (the validator now rejects "IFRAME" in some envs)
-export const CML_OPEN_MODE_CANDIDATES = ["EMBED", "IFRAME", "IN_APP", "NEW_TAB"] as const;
-export type CmlOpenMode = (typeof CML_OPEN_MODE_CANDIDATES)[number];
-
-// Minimal icon object for the new API
 export type CmlIcon =
   | { type: "EMOJI"; value: string }
   | { type: "URL"; value: string };
@@ -165,15 +149,49 @@ export type CustomMenu = {
   id?: string;
   title: string;
   url: string;
-  // Old API fields (ignored by new validator)
+  // legacy fields tolerated
   placement?: string;
   openMode?: string;
   visibility?: { agency?: boolean; subAccount?: boolean };
-  // New API fields
-  icon?: CmlIcon;
+  icon?: CmlIcon | { name?: string; fontFamily?: string };
   showOnCompany?: boolean;
   showOnLocation?: boolean;
   showToAllLocations?: boolean;
 };
-
 export type CustomMenuListResponse = CustomMenu[] | { items?: CustomMenu[] };
+
+export async function listCompanyMenus(accessToken: string, companyId: string) {
+  const base = ghlCustomMenusBase();
+  const url = `${base}?companyId=${encodeURIComponent(companyId)}`;
+  const r = await fetch(url, { headers: lcHeaders(accessToken), cache: "no-store" });
+  const text = await r.text().catch(() => "");
+  if (!r.ok) return { ok: false as const, status: r.status, bodyText: text };
+  let json: unknown = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch { /* ignore */ }
+  const payload = json as CustomMenuListResponse | null;
+  const items = payload
+    ? Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload.items)
+        ? payload.items
+        : []
+    : [];
+  return { ok: true as const, items };
+}
+
+export function findOurMenu(items: CustomMenu[]) {
+  return items.find(
+    (m) =>
+      (m.title || "").toLowerCase() === "driving for dollars" &&
+      typeof m.url === "string" &&
+      m.url.startsWith("https://app.driving4dollars.co/app"),
+  );
+}
+
+export async function deleteMenuById(accessToken: string, customMenuId: string) {
+  const url = `${ghlCustomMenusBase()}${encodeURIComponent(customMenuId)}`;
+  const r = await fetch(url, { method: "DELETE", headers: lcHeaders(accessToken) });
+  return r.ok;
+}

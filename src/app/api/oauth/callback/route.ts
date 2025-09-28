@@ -1,4 +1,4 @@
-// File: src/app/api/oauth/callback/route.ts
+// src/app/api/oauth/callback/route.ts
 import { NextResponse } from "next/server";
 import { cookies, headers } from "next/headers";
 import { db } from "@/lib/firebaseAdmin";
@@ -23,29 +23,39 @@ import {
 } from "@/lib/ghl";
 import { FieldValue } from "firebase-admin/firestore";
 
-export const runtime = "nodejs"; // Node APIs for crypto/cookies
+export const runtime = "nodejs";
 
-/**
- * Ensure a Custom Menu Link exists for this agency.
- * Router quirks handled:
- * - LIST via GET /custom-menus?companyId=...
- * - CREATE via POST /custom-menus (base endpoint) with new schema
- *   required booleans + allowCamera/allowMicrophone
- *   icon as { name, fontFamily } (try a few families)
- *   userRole: try "all" then "admin"/"user"
- *   openMode: try "iframe" then "current_tab"
- * - LAST RESORT: nested POST /custom-menus/companies/{companyId} with same schema (many tenants 404 here)
- */
-async function ensureCml(accessToken: string, companyId: string, tokenScopes: string[]) {
+/** Normalize create-menu response shapes into a single type */
+type CreateMenuResponse = { id?: string; data?: { id?: string } | null };
+
+/** Safe extractor for ID from unknown create response */
+function extractMenuId(jsonText: string): string | null {
+  try {
+    const parsed = JSON.parse(jsonText) as CreateMenuResponse | unknown;
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as CreateMenuResponse;
+      if (typeof obj.id === "string" && obj.id) return obj.id;
+      if (obj.data && typeof obj.data.id === "string" && obj.data.id) return obj.data.id;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+// Ensure a CML exists and return its id if known.
+async function ensureCml(
+  accessToken: string,
+  companyId: string,
+  tokenScopes: string[],
+): Promise<string | null> {
   const base = ghlCustomMenusBase();
 
   const hasRead = tokenScopes.includes(CML_SCOPES.READ);
   const hasWrite = tokenScopes.includes(CML_SCOPES.WRITE);
-
   olog("ensureCml precheck", { companyId, hasWrite, hasRead });
-  if (!hasRead || !hasWrite) return;
+  if (!hasRead || !hasWrite) return null;
 
-  // helper: GET menus for a given URL
   const tryList = async (url: string) => {
     const r = await fetch(url, { headers: lcHeaders(accessToken), cache: "no-store" });
     const text = await r.text().catch(() => "");
@@ -53,7 +63,7 @@ async function ensureCml(accessToken: string, companyId: string, tokenScopes: st
     try {
       json = text ? JSON.parse(text) : null;
     } catch {
-      /* not JSON */
+      /* ignore */
     }
     return { ok: r.ok, status: r.status, bodyText: text, json };
   };
@@ -62,7 +72,7 @@ async function ensureCml(accessToken: string, companyId: string, tokenScopes: st
   const listQueryUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
   let listResp = await tryList(listQueryUrl);
 
-  // Some older routers only expose nested read; try as a fallback (best-effort)
+  // Fallback nested read
   if (!listResp.ok && listResp.status === 404) {
     const listNestedUrl = `${base}companies/${encodeURIComponent(companyId)}`;
     olog("ensureCml list 404; retrying alternate", { url: listNestedUrl });
@@ -78,32 +88,28 @@ async function ensureCml(accessToken: string, companyId: string, tokenScopes: st
           ? payload.items
           : []
       : [];
-    const exists = menus.some(
+    const existing = menus.find(
       (m) =>
         (m.title || "").toLowerCase() === "driving for dollars" &&
         typeof m.url === "string" &&
-        m.url.startsWith("https://app.driving4dollars.co/app")
+        m.url.startsWith("https://app.driving4dollars.co/app"),
     );
-    if (exists) return; // already present
+    if (existing?.id) return existing.id;
+    if (existing) return null;
   } else {
     olog("ensureCml list failed", { status: listResp.status, sample: (listResp.bodyText || "").slice(0, 400) });
-    // continue to create anyway
   }
 
-  // ── Create attempts on BASE endpoint ────────────────────────────────────────
+  // Create attempts on base endpoint
   const createUrl = base;
-
-  // Try several icon families/names that commonly exist across tenants
-const iconAttempts = [
-  { fontFamily: "fas", name: "car" }, // Font Awesome Solid
-  { fontFamily: "fab", name: "car" }, // Font Awesome Brands
-  { fontFamily: "far", name: "car" }, // Font Awesome Regular
-] as const;
-
+  const iconAttempts = [
+    { fontFamily: "fas", name: "car" },
+    { fontFamily: "fab", name: "car" },
+    { fontFamily: "far", name: "car" },
+  ] as const;
   const userRoleAttempts = ["all", "admin", "user"] as const;
   const openModeAttempts = ["iframe", "current_tab"] as const;
 
-  // Base (shared) fields required y validator
   const baseFields = {
     title: "Driving for Dollars",
     url: "https://app.driving4dollars.co/app?location_id={{location.id}}",
@@ -112,11 +118,10 @@ const iconAttempts = [
     showToAllLocations: true,
     allowCamera: false,
     allowMicrophone: false,
+    companyId,
   };
 
-  // Try a small matrix: icon × userRole × openMode
   for (const icon of iconAttempts) {
-    let iconWorked = false;
     for (const userRole of userRoleAttempts) {
       for (const mode of openModeAttempts) {
         const body = { ...baseFields, icon, userRole, openMode: mode };
@@ -126,12 +131,11 @@ const iconAttempts = [
           body: JSON.stringify(body),
         });
         const t = await r.text().catch(() => "");
-
         if (r.ok) {
           olog("ensureCml create success", { icon, userRole, openModeUsed: mode });
-          return;
+          const id = extractMenuId(t);
+          return id;
         }
-
         olog("ensureCml base-create attempt failed", {
           icon,
           userRole,
@@ -139,23 +143,13 @@ const iconAttempts = [
           status: r.status,
           sample: t.slice(0, 500),
         });
-
-        if (r.status === 422 && /font family/i.test(t)) {
-          // current icon family rejected; move to next icon
-          iconWorked = false;
-          break;
-        }
-        // otherwise continue trying other combinations
       }
-      if (iconWorked) break;
     }
-    // proceed to next iconAttempt
   }
 
-  // ── LAST RESORT: nested create with same schema (many tenants 404 here) ────
+  // Last resort nested create
   const nestedCreateUrl = `${base}companies/${encodeURIComponent(companyId)}`;
   for (const icon of iconAttempts) {
-    let iconWorked = false;
     for (const userRole of userRoleAttempts) {
       for (const mode of openModeAttempts) {
         const body = { ...baseFields, icon, userRole, openMode: mode };
@@ -167,7 +161,8 @@ const iconAttempts = [
         const t = await r.text().catch(() => "");
         if (r.ok) {
           olog("ensureCml nested-create success", { icon, userRole, openModeUsed: mode });
-          return;
+          const id = extractMenuId(t);
+          return id;
         }
         olog("ensureCml nested-create attempt failed", {
           icon,
@@ -176,17 +171,12 @@ const iconAttempts = [
           status: r.status,
           sample: t.slice(0, 500),
         });
-        if (r.status === 422 && /font family/i.test(t)) {
-          iconWorked = false;
-          break;
-        }
       }
-      if (iconWorked) break;
     }
   }
 
-  // If we got here, creation failed in all shapes.
-  olog("CML create failed", { status: 0, body: "exhausted all create strategies (base + nested) with icon/userRole/openMode matrix" });
+  olog("CML create failed", { status: 0, body: "exhausted strategies" });
+  return null;
 }
 
 export async function GET(request: Request) {
@@ -282,7 +272,7 @@ export async function GET(request: Request) {
         installedAt: isNewAgency ? FieldValue.serverTimestamp() : snap.get("installedAt") ?? FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       },
-      { merge: true }
+      { merge: true },
     );
   }
 
@@ -299,24 +289,19 @@ export async function GET(request: Request) {
         installedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       },
-      { merge: true }
+      { merge: true },
     );
 
-    await db()
-      .collection("agencies")
-      .doc(agencyId)
-      .collection("locations")
-      .doc(locationId)
-      .set(
-        {
-          locationId,
-          agencyId,
-          name: null,
-          installedAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+    await db().collection("agencies").doc(agencyId).collection("locations").doc(locationId).set(
+      {
+        locationId,
+        agencyId,
+        name: null,
+        installedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
   }
 
   // 4) Company-level discovery + mint per-location tokens (best effort)
@@ -350,10 +335,8 @@ export async function GET(request: Request) {
             headers: lcHeaders(tokens.access_token),
           });
           if (!r.ok) break;
-
           const j = (await r.json()) as LCListLocationsResponse;
           const arr = pickLocs(j);
-
           for (const e of arr) {
             const id = safeId(e);
             if (!id) continue;
@@ -366,7 +349,6 @@ export async function GET(request: Request) {
 
       const batch = db().batch();
       const now = FieldValue.serverTimestamp();
-
       for (const l of locs) {
         const locRef = db().collection("locations").doc(l.id);
         batch.set(
@@ -380,7 +362,7 @@ export async function GET(request: Request) {
             installedAt: now,
             updatedAt: now,
           },
-          { merge: true }
+          { merge: true },
         );
 
         const agencyLocRef = db().collection("agencies").doc(agencyId).collection("locations").doc(l.id);
@@ -393,7 +375,7 @@ export async function GET(request: Request) {
             installedAt: now,
             updatedAt: now,
           },
-          { merge: true }
+          { merge: true },
         );
       }
       await batch.commit();
@@ -410,25 +392,15 @@ export async function GET(request: Request) {
             olog("mint failed", { locationId: l.id, status: resp.status, body: errTxt.slice(0, 300) });
             continue;
           }
-
-          const body = (await resp.json()) as {
-            data?: { refresh_token?: string };
-            refresh_token?: string;
-          };
-
+          const body = (await resp.json()) as { data?: { refresh_token?: string }; refresh_token?: string };
           const mintedRefresh = body?.data?.refresh_token ?? body?.refresh_token ?? "";
           if (!mintedRefresh) {
             olog("mint missing refresh_token", { locationId: l.id });
             continue;
           }
-
           await db().collection("locations").doc(l.id).set(
-            {
-              refreshToken: mintedRefresh,
-              isInstalled: true,
-              updatedAt: FieldValue.serverTimestamp(),
-            },
-            { merge: true }
+            { refreshToken: mintedRefresh, isInstalled: true, updatedAt: FieldValue.serverTimestamp() },
+            { merge: true },
           );
         } catch (e) {
           olog("mint error (non-fatal)", { locationId: l.id, err: String(e) });
@@ -439,10 +411,16 @@ export async function GET(request: Request) {
     olog("location discovery/mint error", { message: (e as Error).message });
   }
 
-  // 4.5) Ensure the Custom Menu Link exists for this agency (idempotent)
+  // 4.5) Ensure the Custom Menu Link exists for this agency (idempotent) and store its id
   if (agencyId) {
     try {
-      await ensureCml(tokens.access_token, agencyId, scopeArr);
+      const cmlId = await ensureCml(tokens.access_token, agencyId, scopeArr);
+      if (cmlId) {
+        await db().collection("agencies").doc(agencyId).set(
+          { customMenuId: cmlId, updatedAt: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+      }
     } catch (e) {
       olog("ensureCml error (non-fatal)", { err: String(e) });
     }
@@ -455,17 +433,15 @@ export async function GET(request: Request) {
   if (agencyId) ui.searchParams.set("agencyId", agencyId);
   if (locationId) ui.searchParams.set("locationId", locationId);
 
-  // ⬇️ LOG EVERYTHING (no truncation)
   olog("oauth success", {
     userTypeQuery: userTypeForToken ?? "",
     derivedInstallTarget: installationTarget,
     agencyId,
     locationId,
     scopesCount: scopeArr.length,
-    scopes: scopeArr,             // <- full list
-    scopeRaw: tokens.scope ?? "", // <- raw string, exactly as returned
+    scopes: scopeArr,
+    scopeRaw: tokens.scope ?? "",
   });
 
   return NextResponse.redirect(ui.toString(), { status: 302 });
-
 }
