@@ -25,23 +25,8 @@ import { FieldValue } from "firebase-admin/firestore";
 
 export const runtime = "nodejs";
 
-/** Normalize create-menu response shapes into a single type */
-type CreateMenuResponse = { id?: string; data?: { id?: string } | null };
-
-/** Safe extractor for ID from unknown create response */
-function extractMenuId(jsonText: string): string | null {
-  try {
-    const parsed = JSON.parse(jsonText) as CreateMenuResponse | unknown;
-    if (parsed && typeof parsed === "object") {
-      const obj = parsed as CreateMenuResponse;
-      if (typeof obj.id === "string" && obj.id) return obj.id;
-      if (obj.data && typeof obj.data.id === "string" && obj.data.id) return obj.data.id;
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
+// NOTE: single shape with optional fields (no union), so TS allows accessing both keys safely
+type CreateMenuResponse = { id?: string; data?: { id?: string } };
 
 // Ensure a CML exists and return its id if known.
 async function ensureCml(
@@ -70,14 +55,7 @@ async function ensureCml(
 
   // List (preferred shape)
   const listQueryUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
-  let listResp = await tryList(listQueryUrl);
-
-  // Fallback nested read
-  if (!listResp.ok && listResp.status === 404) {
-    const listNestedUrl = `${base}companies/${encodeURIComponent(companyId)}`;
-    olog("ensureCml list 404; retrying alternate", { url: listNestedUrl });
-    listResp = await tryList(listNestedUrl);
-  }
+  const listResp = await tryList(listQueryUrl);
 
   if (listResp.ok) {
     const payload = listResp.json as CustomMenuListResponse | null;
@@ -95,22 +73,16 @@ async function ensureCml(
         m.url.startsWith("https://app.driving4dollars.co/app"),
     );
     if (existing?.id) return existing.id;
-    if (existing) return null;
+    if (existing) return null; // found but missing id shape → don't recreate
   } else {
     olog("ensureCml list failed", { status: listResp.status, sample: (listResp.bodyText || "").slice(0, 400) });
   }
 
-  // Create attempts on base endpoint
-  const createUrl = base;
-  const iconAttempts = [
-    { fontFamily: "fas", name: "car" },
-    { fontFamily: "fab", name: "car" },
-    { fontFamily: "far", name: "car" },
-  ] as const;
-  const userRoleAttempts = ["all", "admin", "user"] as const;
-  const openModeAttempts = ["iframe", "current_tab"] as const;
+  // Create on base endpoint with ?companyId=... (DO NOT include companyId in JSON body)
+  const createUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
 
-  const baseFields = {
+  // Minimal, valid body
+  const baseBody = {
     title: "Driving for Dollars",
     url: "https://app.driving4dollars.co/app?location_id={{location.id}}",
     showOnCompany: false,
@@ -118,61 +90,34 @@ async function ensureCml(
     showToAllLocations: true,
     allowCamera: false,
     allowMicrophone: false,
-    companyId,
+    userRole: "all" as const,
+    icon: { fontFamily: "fas", name: "car" as const },
   };
 
-  for (const icon of iconAttempts) {
-    for (const userRole of userRoleAttempts) {
-      for (const mode of openModeAttempts) {
-        const body = { ...baseFields, icon, userRole, openMode: mode };
-        const r = await fetch(createUrl, {
-          method: "POST",
-          headers: { ...lcHeaders(accessToken), "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const t = await r.text().catch(() => "");
-        if (r.ok) {
-          olog("ensureCml create success", { icon, userRole, openModeUsed: mode });
-          const id = extractMenuId(t);
-          return id;
-        }
-        olog("ensureCml base-create attempt failed", {
-          icon,
-          userRole,
-          openModeTried: mode,
-          status: r.status,
-          sample: t.slice(0, 500),
-        });
+  // Try iframe first, then current_tab
+  for (const openMode of ["iframe", "current_tab"] as const) {
+    const body = { ...baseBody, openMode };
+    const r = await fetch(createUrl, {
+      method: "POST",
+      headers: { ...lcHeaders(accessToken), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const t = await r.text().catch(() => "");
+    if (r.ok) {
+      olog("ensureCml create success", { openModeUsed: openMode });
+      try {
+        const created = JSON.parse(t) as CreateMenuResponse;
+        const id = created.id ?? created.data?.id ?? null;
+        return typeof id === "string" && id ? id : null;
+      } catch {
+        return null;
       }
     }
-  }
-
-  // Last resort nested create
-  const nestedCreateUrl = `${base}companies/${encodeURIComponent(companyId)}`;
-  for (const icon of iconAttempts) {
-    for (const userRole of userRoleAttempts) {
-      for (const mode of openModeAttempts) {
-        const body = { ...baseFields, icon, userRole, openMode: mode };
-        const r = await fetch(nestedCreateUrl, {
-          method: "POST",
-          headers: { ...lcHeaders(accessToken), "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const t = await r.text().catch(() => "");
-        if (r.ok) {
-          olog("ensureCml nested-create success", { icon, userRole, openModeUsed: mode });
-          const id = extractMenuId(t);
-          return id;
-        }
-        olog("ensureCml nested-create attempt failed", {
-          icon,
-          userRole,
-          openModeTried: mode,
-          status: r.status,
-          sample: t.slice(0, 500),
-        });
-      }
-    }
+    olog("ensureCml create failed", {
+      openModeTried: openMode,
+      status: r.status,
+      sample: t.slice(0, 500),
+    });
   }
 
   olog("CML create failed", { status: 0, body: "exhausted strategies" });
