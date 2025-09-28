@@ -37,7 +37,7 @@ env:
   - variable: GHL_SCOPES
     secret: GHL_SCOPES
     # (add version if needed)
-    version: 3
+    version: 4
     availability: [RUNTIME]
 
   - variable: GHL_INTEGRATION_ID
