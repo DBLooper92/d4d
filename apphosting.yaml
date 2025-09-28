@@ -12,10 +12,19 @@ env:
   - variable: OAUTH_LOG
     value: on
 
-  # Secrets at runtime (PIN VERSIONS!)
+  # --- Firebase Client SDK (public) ---
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: YOUR_API_KEY
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: YOUR_PROJECT.firebaseapp.com
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: YOUR_PROJECT_ID
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: 1:XXXXXXXXXXXX:web:YYYYYYYYYYYYYY
+
+  # --- Secrets (runtime) ---
   - variable: GHL_CLIENT_ID
     secret: GHL_CLIENT_ID
-    # 👇 add this line
     version: 2
     availability: [RUNTIME]
 
@@ -31,18 +40,15 @@ env:
 
   - variable: GHL_WEBHOOK_PUBLIC_KEY
     secret: GHL_WEBHOOK_PUBLIC_KEY
-    # (add version here too if you rotated it)
     availability: [RUNTIME]
 
   - variable: GHL_SCOPES
     secret: GHL_SCOPES
-    # (add version if needed)
     version: 4
     availability: [RUNTIME]
 
   - variable: GHL_INTEGRATION_ID
     secret: GHL_INTEGRATION_ID
-    # (add version if needed)
     availability: [RUNTIME]
 
   - variable: GHL_REDIRECT_PATH

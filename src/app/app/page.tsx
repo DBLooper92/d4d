@@ -1,49 +1,42 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
+import { getFirebaseAuth } from "@/lib/firebaseClient";
 
-type InstalledResp = {
-  installed: boolean;
-  agencyId: string | null;
-  locationId: string | null;
-  _debug?: {
-    href: string;
-    qs: Record<string, string>;
-    hash: string;
-    pathSegs: string[];
-    received: Record<string, string | undefined>;
-  };
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers to discover GHL context (location/agency) from URL or SSO
+// ─────────────────────────────────────────────────────────────────────────────
+type EncryptedPayload = { iv: string; cipherText: string; tag: string };
+type RequestUserDataResponse = { message: "REQUEST_USER_DATA_RESPONSE"; payload: EncryptedPayload };
 
-type EncryptedPayload = {
-  iv: string;         // base64url
-  cipherText: string; // base64url
-  tag: string;        // base64url
-};
-
-type RequestUserDataResponse = {
-  message: "REQUEST_USER_DATA_RESPONSE";
-  payload: EncryptedPayload;
-};
-
-async function getMarketplaceUserContext(): Promise<{
-  activeLocationId?: string;
-  activeCompanyId?: string;
-} | null> {
-  // Ask GHL parent for encrypted user data
+async function getMarketplaceUserContext(): Promise<{ activeLocationId?: string; activeCompanyId?: string } | null> {
+  // Ask GHL parent for encrypted user data; best-effort with a timeout.
   const encrypted = await new Promise<EncryptedPayload | null>((resolve) => {
+    let done = false;
+    const timeout = setTimeout(() => {
+      if (!done) resolve(null);
+    }, 1500);
+
     try {
       window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
       const onMsg = (ev: MessageEvent<unknown>) => {
         const d = ev?.data as RequestUserDataResponse | undefined;
         if (d && d.message === "REQUEST_USER_DATA_RESPONSE" && d.payload) {
+          done = true;
+          clearTimeout(timeout);
           window.removeEventListener("message", onMsg as EventListener);
           resolve(d.payload);
         }
       };
       window.addEventListener("message", onMsg as EventListener);
     } catch {
+      clearTimeout(timeout);
       resolve(null);
     }
   });
@@ -64,169 +57,331 @@ async function getMarketplaceUserContext(): Promise<{
   }
 }
 
-function pickLikelyLocationId({
-  search,
-  hash,
-  pathname,
-}: {
-  search: URLSearchParams;
-  hash: string;
-  pathname: string;
-}) {
-  const fromQS =
-    search.get("location_id") ||
-    search.get("locationId") ||
-    search.get("location") ||
-    "";
+function pickLikelyLocationId(url: URL) {
+  const search = url.searchParams;
+  const fromQS = search.get("location_id") || search.get("locationId") || search.get("location") || "";
   if (fromQS && fromQS.trim()) return fromQS.trim();
 
+  const hash = url.hash || "";
   if (hash) {
     try {
       const h = hash.startsWith("#") ? hash.slice(1) : hash;
       const asParams = new URLSearchParams(h);
-      const fromHash =
-        asParams.get("location_id") ||
-        asParams.get("locationId") ||
-        asParams.get("location") ||
-        "";
+      const fromHash = asParams.get("location_id") || asParams.get("locationId") || asParams.get("location") || "";
       if (fromHash && fromHash.trim()) return fromHash.trim();
       const segs = h.split(/[/?&]/).filter(Boolean);
       const maybeId = segs.find((s) => s.length >= 12);
       if (maybeId) return maybeId.trim();
     } catch {
-      // ignore
+      /* ignore */
     }
   }
 
-  const segs = pathname.split("/").filter(Boolean);
+  const segs = url.pathname.split("/").filter(Boolean);
   const maybeId = segs.length >= 2 ? segs[1] : "";
   if (maybeId && maybeId.length >= 12) return maybeId.trim();
 
   return "";
 }
-
-function pickLikelyAgencyId(search: URLSearchParams) {
-  const fromQS =
-    search.get("agency_id") ||
-    search.get("agencyId") ||
-    search.get("companyId") ||
-    "";
+function pickLikelyAgencyId(url: URL) {
+  const search = url.searchParams;
+  const fromQS = search.get("agency_id") || search.get("agencyId") || search.get("companyId") || "";
   return (fromQS || "").trim();
 }
 
-function DashboardInner() {
-  const qp = useSearchParams();
+// ─────────────────────────────────────────────────────────────────────────────
+// UI
+// ─────────────────────────────────────────────────────────────────────────────
+type Mode = "login" | "register";
 
-  const qpInstalled = qp.get("installed") === "1";
-
-  const [state, setState] = useState<InstalledResp>({
-    installed: qpInstalled,
-    agencyId: qp.get("agencyId") || qp.get("agency_id"),
-    locationId: qp.get("locationId") || qp.get("location_id"),
-  });
-  const [loading, setLoading] = useState(false);
-
-  // Derive IDs from URL each render
-  const derived = useMemo(() => {
-    const url = typeof window !== "undefined" ? new URL(window.location.href) : null;
-    if (!url) {
-      return { locationId: state.locationId || null, agencyId: state.agencyId || null, href: "" };
-    }
-    const locationId = pickLikelyLocationId({
-      search: url.searchParams,
-      hash: url.hash,
-      pathname: url.pathname,
-    });
-    const agencyId = pickLikelyAgencyId(url.searchParams);
-    return {
-      locationId: locationId || state.locationId || null,
-      agencyId: agencyId || state.agencyId || null,
-      href: url.href,
-    };
-  }, [state.locationId, state.agencyId]);
-
-  // Single effect handles both cases:
-  // - If we already have IDs ⇒ verify install immediately
-  // - Else ⇒ try SSO user context, then verify
-  useEffect(() => {
-    let cancelled = false;
-
-    async function run() {
-      setLoading(true);
-      try {
-        let agencyId = derived.agencyId ?? null;
-        let locationId = derived.locationId ?? null;
-
-        if (!agencyId && !locationId) {
-          // Try Marketplace SSO
-          const ctx = await getMarketplaceUserContext();
-          agencyId = ctx?.activeCompanyId ?? null;
-          locationId = ctx?.activeLocationId ?? null;
-        }
-
-        if (!agencyId && !locationId) {
-          // Nothing to verify yet; show connect CTA
-          if (!cancelled) setState((s) => ({ ...s, installed: false }));
-          return;
-        }
-
-        const url = new URL("/api/installed", window.location.origin);
-        if (locationId) url.searchParams.set("locationId", locationId);
-        if (agencyId) url.searchParams.set("agencyId", agencyId);
-        url.searchParams.set("_debug", "1");
-
-        const r = await fetch(url.toString(), { cache: "no-store" });
-        const json = (await r.json()) as InstalledResp;
-        if (!cancelled) setState(json);
-      } catch {
-        if (!cancelled) {
-          setState((s) => ({ ...s, installed: false }));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [derived.agencyId, derived.locationId]);
-
-  return (
-    <main style={{ padding: 24 }}>
-      <h1>D4D Dashboard</h1>
-
-      {loading ? (
-        <p>Checking install…</p>
-      ) : state.installed ? (
-        <p>Install complete ✅</p>
-      ) : (
-        <p>Welcome. Connect your GoHighLevel account to begin.</p>
-      )}
-
-      <p style={{ marginTop: 16 }}>
-        <a href="/api/oauth/prepare">Connect / Reconnect GHL</a>
-      </p>
-
-      <pre style={{ marginTop: 24, background: "rgba(127,127,127,.1)", padding: 12 }}>
-        {JSON.stringify(state, null, 2)}
-      </pre>
-    </main>
-  );
+// Narrow unknown JSON to an object with an optional string `error` field
+function pickApiError(v: unknown): string | null {
+  if (typeof v === "object" && v !== null) {
+    const rec = v as Record<string, unknown>;
+    const e = rec.error;
+    if (typeof e === "string") return e;
+  }
+  return null;
 }
 
 export default function Page() {
-  return (
-    <Suspense
-      fallback={
-        <main style={{ padding: 24 }}>
-          <h1>D4D Dashboard</h1>
-          <p>Loading…</p>
-        </main>
+  const auth = getFirebaseAuth();
+
+  const [mode, setMode] = useState<Mode>("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [firstName, setFirst] = useState("");
+  const [lastName, setLast] = useState("");
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [uid, setUid] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  const context = useMemo(() => {
+    if (typeof window === "undefined") return { locationId: "", agencyId: "" };
+    const u = new URL(window.location.href);
+    return { locationId: pickLikelyLocationId(u), agencyId: pickLikelyAgencyId(u) };
+  }, []);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (u) {
+        setUid(u.uid);
+        setUserEmail(u.email || null);
+      } else {
+        setUid(null);
+        setUserEmail(null);
       }
-    >
-      <DashboardInner />
-    </Suspense>
+    });
+    return () => unsub();
+  }, [auth]);
+
+  // Try SSO to fill missing IDs (non-blocking)
+  useEffect(() => {
+    (async () => {
+      if (context.locationId || typeof window === "undefined") return;
+      const sso = await getMarketplaceUserContext();
+      if (sso?.activeLocationId) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("location_id", sso.activeLocationId);
+        if (sso.activeCompanyId) url.searchParams.set("agencyId", sso.activeCompanyId);
+        // Replace URL quietly so refreshes keep IDs
+        window.history.replaceState({}, "", url.toString());
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function visibleError(code: string): string {
+    const c = code.toLowerCase();
+    if (c.includes("invalid-email")) return "That email looks invalid.";
+    if (c.includes("user-not-found") || c.includes("wrong-password")) return "Email or password is incorrect.";
+    if (c.includes("email-already-in-use")) return "That email is already registered.";
+    if (c.includes("weak-password")) return "Password should be at least 6 characters.";
+    return "Something went wrong. Please try again.";
+  }
+
+  async function handleRegister() {
+    setErr(null);
+    if (!email.trim() || !password.trim() || !firstName.trim() || !lastName.trim()) {
+      setErr("Please fill in all fields.");
+      return;
+    }
+    if (password !== confirm) {
+      setErr("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const idToken = await cred.user.getIdToken(/* forceRefresh */ true);
+
+      // Ensure we have context
+      let { locationId, agencyId } = context;
+      if (!locationId && typeof window !== "undefined") {
+        const sso = await getMarketplaceUserContext();
+        locationId = sso?.activeLocationId || "";
+        agencyId = sso?.activeCompanyId || agencyId;
+      }
+      if (!locationId) {
+        throw new Error(
+          "We couldn't detect your Location ID. Please open this app from your GHL custom menu (it includes the location_id automatically).",
+        );
+      }
+
+      const resp = await fetch("/api/auth/complete-signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idToken,
+          email: email.trim(),
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          agencyId: agencyId || null,
+          locationId,
+        }),
+      });
+      if (!resp.ok) {
+        const parsed: unknown = await resp.json().catch(() => null);
+        const apiError = pickApiError(parsed);
+        throw new Error(apiError ?? `Signup finalize failed (${resp.status})`);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg.toLowerCase().includes("firebase:") ? visibleError(msg) : msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleLogin() {
+    setErr(null);
+    if (!email.trim() || !password.trim()) {
+      setErr("Please enter your email and password.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(visibleError(msg));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSignOut() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await signOut(auth);
+    } catch {
+      setErr("Sign out failed. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ── Logged-in view ─────────────────────────────────────────────────────────
+  if (uid) {
+    return (
+      <main className="p-6">
+        <h1 className="text-2xl font-semibold">Dashboard</h1>
+        <p className="mt-2 text-gray-700">You are logged in as {userEmail || uid}.</p>
+
+        <div className="mt-6 flex items-center gap-3">
+          <button
+            onClick={handleSignOut}
+            disabled={busy}
+            className="rounded-xl border px-4 py-2 hover:bg-gray-50 disabled:opacity-60"
+          >
+            {busy ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  // ── Auth gate (Login/Register) ─────────────────────────────────────────────
+  return (
+    <main className="p-6 max-w-md mx-auto">
+      <h1 className="text-2xl font-semibold mb-4">Welcome</h1>
+
+      <div className="mb-4 inline-flex rounded-xl border overflow-hidden">
+        <button
+          className={`px-4 py-2 ${mode === "login" ? "bg-gray-100" : ""}`}
+          onClick={() => {
+            setMode("login");
+            setErr(null);
+          }}
+        >
+          Login
+        </button>
+        <button
+          className={`px-4 py-2 ${mode === "register" ? "bg-gray-100" : ""}`}
+          onClick={() => {
+            setMode("register");
+            setErr(null);
+          }}
+        >
+          Register
+        </button>
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (mode === "login") {
+            void handleLogin();
+          } else {
+            void handleRegister();
+          }
+        }}
+        className="space-y-3"
+      >
+        {mode === "register" && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm mb-1">First name</label>
+              <input
+                value={firstName}
+                onChange={(ev) => setFirst(ev.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+                autoComplete="given-name"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm mb-1">Last name</label>
+              <input
+                value={lastName}
+                onChange={(ev) => setLast(ev.target.value)}
+                className="w-full rounded-xl border px-3 py-2"
+                autoComplete="family-name"
+                required
+              />
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-sm mb-1">Email</label>
+          <input
+            type="email"
+            value={email}
+            onChange={(ev) => setEmail(ev.target.value)}
+            className="w-full rounded-xl border px-3 py-2"
+            autoComplete="email"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm mb-1">Password</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(ev) => setPassword(ev.target.value)}
+            className="w-full rounded-xl border px-3 py-2"
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
+            required
+            minLength={6}
+          />
+        </div>
+
+        {mode === "register" && (
+          <div>
+            <label className="block text-sm mb-1">Confirm password</label>
+            <input
+              type="password"
+              value={confirm}
+              onChange={(ev) => setConfirm(ev.target.value)}
+              className="w-full rounded-xl border px-3 py-2"
+              autoComplete="new-password"
+              required
+              minLength={6}
+            />
+          </div>
+        )}
+
+        {err && <p className="text-sm text-red-600 mt-2">{err}</p>}
+
+        <button
+          type="submit"
+          disabled={busy}
+          className="mt-2 w-full rounded-xl border px-4 py-2 hover:bg-gray-50 disabled:opacity-60"
+        >
+          {busy ? (mode === "login" ? "Logging in…" : "Creating account…") : mode === "login" ? "Login" : "Register"}
+        </button>
+
+        <p className="text-xs text-gray-500 mt-3">
+          Tip: open this from your GHL custom menu so the <code>location_id</code> is auto-passed.
+        </p>
+      </form>
+    </main>
   );
 }
