@@ -37,19 +37,6 @@ function pickString(obj: Record<string, unknown>, keys: string[]): string | null
   return null;
 }
 
-function pickBool(obj: Record<string, unknown>, keys: string[]): boolean | null {
-  for (const k of keys) {
-    const v = obj[k];
-    if (typeof v === "boolean") return v;
-    if (typeof v === "string") {
-      const s = v.trim().toLowerCase();
-      if (s === "true") return true;
-      if (s === "false") return false;
-    }
-  }
-  return null;
-}
-
 export async function POST(req: Request) {
   try {
     const { encryptedData } = (await req.json()) as { encryptedData: EncryptedPayload | string };
@@ -73,15 +60,15 @@ export async function POST(req: Request) {
       /* noop */
     }
 
-    // Normalize across observed variants from HL/LeadConnector
+    // Normalize across HL variants (per docs)
+    // https://marketplace.gohighlevel.com/docs/other/user-context-marketplace-apps/index.html
     const userId = pickString(raw, ["userId", "id"]);
     const companyId = pickString(raw, ["companyId", "agencyId", "company", "agency"]);
-    const role = pickString(raw, ["role", "userRole"]);
+    const role = pickString(raw, ["role", "userRole"]); // some payloads use userRole
     const type = pickString(raw, ["type"]);
     const activeLocation = pickString(raw, ["activeLocation", "activeLocationId", "locationId"]);
     const userName = pickString(raw, ["userName"]);
     const email = pickString(raw, ["email"]);
-    const isAgencyOwner = pickBool(raw, ["isAgencyOwner", "agencyOwner"]);
 
     return NextResponse.json(
       {
@@ -92,7 +79,6 @@ export async function POST(req: Request) {
         type,
         userName,
         email,
-        isAgencyOwner,
       },
       { status: 200, headers: { "Cache-Control": "no-store" } }
     );

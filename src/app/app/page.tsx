@@ -1,4 +1,3 @@
-// src/app/app/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -18,7 +17,6 @@ type SsoContext = {
   type?: string;
   userName?: string;
   email?: string;
-  isAgencyOwner?: boolean | null;
 };
 
 type EncryptedPayload = { iv: string; cipherText: string; tag: string };
@@ -210,7 +208,6 @@ export default function Page() {
           // GHL identity context
           ghlUserId: sso?.userId || null,
           ghlRole: sso?.role || null,
-          ghlIsAgencyOwner: sso?.isAgencyOwner ?? null,
         }),
       });
       if (!resp.ok) {

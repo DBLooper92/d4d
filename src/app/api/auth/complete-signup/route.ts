@@ -1,4 +1,3 @@
-// src/app/api/auth/complete-signup/route.ts
 import { NextResponse } from "next/server";
 import { getAdminApp, db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -15,7 +14,6 @@ type Body = {
   // optional identity context from SSO
   ghlUserId?: string | null;
   ghlRole?: string | null;
-  ghlIsAgencyOwner?: boolean | null;
 };
 
 type UserDoc = {
@@ -35,7 +33,6 @@ export async function POST(req: Request) {
       locationId,
       ghlUserId = null,
       ghlRole = null,
-      ghlIsAgencyOwner = null,
     } = (await req.json()) as Body;
 
     if (!idToken) return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
@@ -85,7 +82,6 @@ export async function POST(req: Request) {
         // keep GHL identity hints on the user too
         ghlUserId: ghlUserId || null,
         ghlRole: ghlRole || null,
-        ghlIsAgencyOwner: ghlIsAgencyOwner ?? null,
       };
 
       if (!uSnap.exists) {
