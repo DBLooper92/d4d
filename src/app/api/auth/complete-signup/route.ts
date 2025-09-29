@@ -12,21 +12,37 @@ type Body = {
   lastName: string;
   agencyId?: string | null;
   locationId: string;
+  // NEW optional identity context
+  ghlUserId?: string | null;
+  ghlRole?: string | null;
+  ghlIsAgencyOwner?: boolean | null;
+};
+
+type UserDoc = {
+  agencyId?: string | null;
+  locationId?: string | null;
+  [k: string]: unknown;
 };
 
 export async function POST(req: Request) {
   try {
-    const { idToken, email, firstName, lastName, agencyId, locationId } = (await req.json()) as Body;
+    const {
+      idToken,
+      email,
+      firstName,
+      lastName,
+      agencyId,
+      locationId,
+      ghlUserId = null,
+      ghlRole = null,
+      ghlIsAgencyOwner = null,
+    } = (await req.json()) as Body;
 
-    if (!idToken) {
-      return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
-    }
-    if (!locationId || !String(locationId).trim()) {
+    if (!idToken) return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
+    if (!locationId || !String(locationId).trim())
       return NextResponse.json({ error: "Missing locationId" }, { status: 400 });
-    }
-    if (!firstName?.trim() || !lastName?.trim()) {
+    if (!firstName?.trim() || !lastName?.trim())
       return NextResponse.json({ error: "Missing first/last name" }, { status: 400 });
-    }
 
     const admin = getAdminApp();
     const auth = admin.auth();
@@ -50,24 +66,33 @@ export async function POST(req: Request) {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         updatedAt: now,
+        // Store these on the root user for convenience too
+        ghlUserId: ghlUserId || null,
+        ghlRole: ghlRole || null,
+        ghlIsAgencyOwner: ghlIsAgencyOwner ?? null,
       };
 
-      // Parent collection: users/{uid} (includes agencyId, locationId)
       if (!uSnap.exists) {
         tx.set(usersRef, { ...baseProfile, agencyId: agencyId ?? null, locationId, createdAt: now });
       } else {
+        const existing = (uSnap.data() as UserDoc) || {};
         tx.set(
           usersRef,
-          { ...baseProfile, agencyId: agencyId ?? uSnap.get("agencyId") ?? null, locationId },
+          { ...baseProfile, agencyId: agencyId ?? existing.agencyId ?? null, locationId },
           { merge: true },
         );
       }
 
-      // Subcollection: locations/{locationId}/users/{uid} (no agencyId/locationId in doc body per spec)
+      // Location membership doc — include the role we got from HL (if any)
+      const locProfile = {
+        ...baseProfile,
+        role: ghlRole || null,
+      };
+
       if (!luSnap.exists) {
-        tx.set(locUserRef, { ...baseProfile, createdAt: now });
+        tx.set(locUserRef, { ...locProfile, createdAt: now });
       } else {
-        tx.set(locUserRef, { ...baseProfile }, { merge: true });
+        tx.set(locUserRef, { ...locProfile }, { merge: true });
       }
     });
 

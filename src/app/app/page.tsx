@@ -1,3 +1,4 @@
+// src/app/app/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -9,14 +10,21 @@ import {
 } from "firebase/auth";
 import { getFirebaseAuth } from "@/lib/firebaseClient";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers to discover GHL context (location/agency) from URL or SSO
-// ─────────────────────────────────────────────────────────────────────────────
+type SsoContext = {
+  activeLocationId?: string;
+  activeCompanyId?: string;
+  userId?: string;
+  role?: string;
+  type?: string;
+  userName?: string;
+  email?: string;
+  isAgencyOwner?: boolean | null;
+};
+
 type EncryptedPayload = { iv: string; cipherText: string; tag: string };
 type RequestUserDataResponse = { message: "REQUEST_USER_DATA_RESPONSE"; payload: EncryptedPayload };
 
-async function getMarketplaceUserContext(): Promise<{ activeLocationId?: string; activeCompanyId?: string } | null> {
-  // Ask GHL parent for encrypted user data; best-effort with a timeout.
+async function getMarketplaceUserContext(): Promise<SsoContext | null> {
   const encrypted = await new Promise<EncryptedPayload | null>((resolve) => {
     let done = false;
     const timeout = setTimeout(() => {
@@ -50,7 +58,7 @@ async function getMarketplaceUserContext(): Promise<{ activeLocationId?: string;
       body: JSON.stringify({ encryptedData: encrypted }),
     });
     if (!r.ok) return null;
-    const json = (await r.json()) as { activeLocationId?: string; activeCompanyId?: string };
+    const json = (await r.json()) as SsoContext;
     return json;
   } catch {
     return null;
@@ -89,12 +97,8 @@ function pickLikelyAgencyId(url: URL) {
   return (fromQS || "").trim();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// UI
-// ─────────────────────────────────────────────────────────────────────────────
 type Mode = "login" | "register";
 
-// Narrow unknown JSON to an object with an optional string `error` field
 function pickApiError(v: unknown): string | null {
   if (typeof v === "object" && v !== null) {
     const rec = v as Record<string, unknown>;
@@ -120,7 +124,7 @@ export default function Page() {
   const [uid, setUid] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  const context = useMemo(() => {
+  const contextFromUrl = useMemo(() => {
     if (typeof window === "undefined") return { locationId: "", agencyId: "" };
     const u = new URL(window.location.href);
     return { locationId: pickLikelyLocationId(u), agencyId: pickLikelyAgencyId(u) };
@@ -139,16 +143,14 @@ export default function Page() {
     return () => unsub();
   }, [auth]);
 
-  // Try SSO to fill missing IDs (non-blocking)
   useEffect(() => {
     (async () => {
-      if (context.locationId || typeof window === "undefined") return;
+      if (contextFromUrl.locationId || typeof window === "undefined") return;
       const sso = await getMarketplaceUserContext();
       if (sso?.activeLocationId) {
         const url = new URL(window.location.href);
         url.searchParams.set("location_id", sso.activeLocationId);
         if (sso.activeCompanyId) url.searchParams.set("agencyId", sso.activeCompanyId);
-        // Replace URL quietly so refreshes keep IDs
         window.history.replaceState({}, "", url.toString());
       }
     })();
@@ -179,12 +181,15 @@ export default function Page() {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const idToken = await cred.user.getIdToken(/* forceRefresh */ true);
 
-      // Ensure we have context
-      let { locationId, agencyId } = context;
-      if (!locationId && typeof window !== "undefined") {
-        const sso = await getMarketplaceUserContext();
-        locationId = sso?.activeLocationId || "";
-        agencyId = sso?.activeCompanyId || agencyId;
+      // Context (URL first, then SSO)
+      let { locationId, agencyId } = contextFromUrl;
+      let sso: SsoContext | null = null;
+      if (!locationId || !agencyId) {
+        sso = await getMarketplaceUserContext();
+        locationId = locationId || sso?.activeLocationId || "";
+        agencyId = agencyId || sso?.activeCompanyId || "";
+      } else {
+        sso = await getMarketplaceUserContext();
       }
       if (!locationId) {
         throw new Error(
@@ -202,6 +207,10 @@ export default function Page() {
           lastName: lastName.trim(),
           agencyId: agencyId || null,
           locationId,
+          // GHL identity context
+          ghlUserId: sso?.userId || null,
+          ghlRole: sso?.role || null,
+          ghlIsAgencyOwner: sso?.isAgencyOwner ?? null,
         }),
       });
       if (!resp.ok) {
@@ -246,7 +255,6 @@ export default function Page() {
     }
   }
 
-  // ── Logged-in view ─────────────────────────────────────────────────────────
   if (uid) {
     return (
       <main className="p-6">
@@ -266,7 +274,7 @@ export default function Page() {
     );
   }
 
-  // ── Auth gate (Login/Register) ─────────────────────────────────────────────
+  // Logged-out: bring the small auth form back so all states/handlers are used
   return (
     <main className="p-6 max-w-md mx-auto">
       <h1 className="text-2xl font-semibold mb-4">Welcome</h1>
@@ -375,7 +383,13 @@ export default function Page() {
           disabled={busy}
           className="mt-2 w-full rounded-xl border px-4 py-2 hover:bg-gray-50 disabled:opacity-60"
         >
-          {busy ? (mode === "login" ? "Logging in…" : "Creating account…") : mode === "login" ? "Login" : "Register"}
+          {busy
+            ? mode === "login"
+              ? "Logging in…"
+              : "Creating account…"
+            : mode === "login"
+              ? "Login"
+              : "Register"}
         </button>
 
         <p className="text-xs text-gray-500 mt-3">
