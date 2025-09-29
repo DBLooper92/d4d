@@ -53,7 +53,7 @@ export async function POST(req: Request) {
           }
         }
       } catch {
-        /* ignore and proceed; agencyId can remain null */
+        /* allow agencyId to remain null */
       }
     }
 
@@ -79,7 +79,7 @@ export async function POST(req: Request) {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         updatedAt: now,
-        // keep GHL identity hints on the user too
+        // GHL identity hints on the user
         ghlUserId: ghlUserId || null,
         ghlRole: ghlRole || null,
       };

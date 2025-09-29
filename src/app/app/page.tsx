@@ -1,4 +1,3 @@
-// File: src/app/app/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -12,36 +11,71 @@ import {
 import { getFirebaseAuth } from "@/lib/firebaseClient";
 
 type SsoContext = {
-  activeLocationId?: string;
-  activeCompanyId?: string;
-  userId?: string;
-  role?: string;
-  type?: string;
-  userName?: string;
-  email?: string;
+  activeLocationId?: string | null;
+  activeCompanyId?: string | null;
+  userId?: string | null;
+  role?: string | null;
+  type?: string | null;
+  userName?: string | null;
+  email?: string | null;
 };
 
-type EncryptedPayload = { iv: string; cipherText: string; tag: string };
-type RequestUserDataResponse = { message: "REQUEST_USER_DATA_RESPONSE"; payload: EncryptedPayload };
+// Accept both formats: single AES string OR object {iv,cipherText,tag}
+type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
+type EncryptedAny = string | EncryptedPayloadObject;
+
+// HL has shipped both of these keys:
+//   - { message: "REQUEST_USER_DATA_RESPONSE", encryptedData: ... }
+//   - { message: "REQUEST_USER_DATA_RESPONSE", payload: ... }
+type MarketplaceMessage =
+  | { message: "REQUEST_USER_DATA_RESPONSE"; encryptedData: EncryptedAny }
+  | { message: "REQUEST_USER_DATA_RESPONSE"; payload: EncryptedAny };
+
+function isObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
 
 async function getMarketplaceUserContext(): Promise<SsoContext | null> {
-  const encrypted = await new Promise<EncryptedPayload | null>((resolve) => {
+  const encrypted = await new Promise<EncryptedAny | null>((resolve) => {
     let done = false;
     const timeout = setTimeout(() => {
       if (!done) resolve(null);
-    }, 1500);
+    }, 3000);
 
     try {
+      // Ask parent (GHL) for the encrypted user context
       window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
+
       const onMsg = (ev: MessageEvent<unknown>) => {
-        const d = ev?.data as RequestUserDataResponse | undefined;
-        if (d && d.message === "REQUEST_USER_DATA_RESPONSE" && d.payload) {
-          done = true;
-          clearTimeout(timeout);
-          window.removeEventListener("message", onMsg as EventListener);
-          resolve(d.payload);
+        const data = ev?.data as unknown;
+
+        if (isObj(data) && data["message"] === "REQUEST_USER_DATA_RESPONSE") {
+          const mm = data as MarketplaceMessage;
+
+          const maybe =
+            "encryptedData" in mm
+              ? (mm.encryptedData as unknown)
+              : "payload" in mm
+              ? (mm.payload as unknown)
+              : null;
+
+          const okString = typeof maybe === "string" && !!maybe;
+          const okObj =
+            isObj(maybe) &&
+            typeof (maybe as EncryptedPayloadObject).iv === "string" &&
+            typeof (maybe as EncryptedPayloadObject).cipherText === "string" &&
+            typeof (maybe as EncryptedPayloadObject).tag === "string";
+
+          if (okString || okObj) {
+            done = true;
+            clearTimeout(timeout);
+            window.removeEventListener("message", onMsg as EventListener);
+            resolve(maybe as EncryptedAny);
+            return;
+          }
         }
       };
+
       window.addEventListener("message", onMsg as EventListener);
     } catch {
       clearTimeout(timeout);
@@ -67,7 +101,11 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
 
 function pickLikelyLocationId(url: URL) {
   const search = url.searchParams;
-  const fromQS = search.get("location_id") || search.get("locationId") || search.get("location") || "";
+  const fromQS =
+    search.get("location_id") ||
+    search.get("locationId") ||
+    search.get("location") ||
+    "";
   if (fromQS && fromQS.trim()) return fromQS.trim();
 
   const hash = url.hash || "";
@@ -75,7 +113,11 @@ function pickLikelyLocationId(url: URL) {
     try {
       const h = hash.startsWith("#") ? hash.slice(1) : hash;
       const asParams = new URLSearchParams(h);
-      const fromHash = asParams.get("location_id") || asParams.get("locationId") || asParams.get("location") || "";
+      const fromHash =
+        asParams.get("location_id") ||
+        asParams.get("locationId") ||
+        asParams.get("location") ||
+        "";
       if (fromHash && fromHash.trim()) return fromHash.trim();
       const segs = h.split(/[/?&]/).filter(Boolean);
       const maybeId = segs.find((s) => s.length >= 12);
@@ -93,7 +135,8 @@ function pickLikelyLocationId(url: URL) {
 }
 function pickLikelyAgencyId(url: URL) {
   const search = url.searchParams;
-  const fromQS = search.get("agency_id") || search.get("agencyId") || search.get("companyId") || "";
+  const fromQS =
+    search.get("agency_id") || search.get("agencyId") || search.get("companyId") || "";
   return (fromQS || "").trim();
 }
 
@@ -109,9 +152,7 @@ function pickApiError(v: unknown): string | null {
 }
 
 export default function Page() {
-  // Lazily initialize Firebase Auth ONLY in the browser to avoid build-time errors
   const [auth, setAuth] = useState<Auth | null>(null);
-
   useEffect(() => {
     setAuth(getFirebaseAuth());
   }, []);
@@ -135,7 +176,6 @@ export default function Page() {
     return { locationId: pickLikelyLocationId(u), agencyId: pickLikelyAgencyId(u) };
   }, []);
 
-  // Attach auth state listener only after auth is ready
   useEffect(() => {
     if (!auth) return;
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -150,6 +190,7 @@ export default function Page() {
     return () => unsub();
   }, [auth]);
 
+  // If we don't have locationId from URL, try to patch URL from SSO on load.
   useEffect(() => {
     (async () => {
       if (contextFromUrl.locationId || typeof window === "undefined") return;
@@ -189,25 +230,23 @@ export default function Page() {
     }
     setBusy(true);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      const idToken = await cred.user.getIdToken(/* forceRefresh */ true);
-
-      // Context (URL first, then SSO)
+      // 1) Gather Marketplace SSO FIRST so we don’t miss GHL identity fields
       let { locationId, agencyId } = contextFromUrl;
-      let sso: SsoContext | null = null;
-      if (!locationId || !agencyId) {
-        sso = await getMarketplaceUserContext();
-        locationId = locationId || sso?.activeLocationId || "";
-        agencyId = agencyId || sso?.activeCompanyId || "";
-      } else {
-        sso = await getMarketplaceUserContext();
-      }
+      const sso = await getMarketplaceUserContext();
+      locationId = locationId || sso?.activeLocationId || "";
+      agencyId = agencyId || sso?.activeCompanyId || "";
+
       if (!locationId) {
         throw new Error(
-          "We couldn't detect your Location ID. Please open this app from your GHL custom menu (it includes the location_id automatically).",
+          "We couldn't detect your Location ID. Please open this app from your GHL custom menu (it includes the location_id automatically)."
         );
       }
 
+      // 2) Create Firebase user
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const idToken = await cred.user.getIdToken(/* forceRefresh */ true);
+
+      // 3) Finalize profile in Firestore with strict GHL identity hints
       const resp = await fetch("/api/auth/complete-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -218,9 +257,9 @@ export default function Page() {
           lastName: lastName.trim(),
           agencyId: agencyId || null,
           locationId,
-          // GHL identity context
-          ghlUserId: sso?.userId || null,
-          ghlRole: sso?.role || null,
+          // GHL identity context (null-safe)
+          ghlUserId: sso?.userId ?? null,
+          ghlRole: sso?.role ?? null,
         }),
       });
       if (!resp.ok) {
@@ -297,7 +336,6 @@ export default function Page() {
     );
   }
 
-  // Logged-out: bring the small auth form back so all states/handlers are used
   return (
     <main className="p-6 max-w-md mx-auto">
       <h1 className="text-2xl font-semibold mb-4">Welcome</h1>

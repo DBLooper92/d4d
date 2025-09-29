@@ -7,7 +7,8 @@ export const runtime = "nodejs";
 /**
  * HL sometimes returns a single AES string (CryptoJS "passphrase" format),
  * not an { iv, cipherText, tag } object. We support BOTH.
- * Docs: https://marketplace.gohighlevel.com/docs/other/user-context-marketplace-apps/index.html
+ * Docs keys we normalize: userId/id, companyId/agencyId, role/userRole, type,
+ * activeLocation/activeLocationId/locationId, userName, email
  */
 
 type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
@@ -44,8 +45,7 @@ function decryptCryptoJsString(enc: string, secret: string): Record<string, unkn
   return JSON.parse(utf8) as Record<string, unknown>;
 }
 
-// ---------- Safe pickers (no `any`) ----------
-function pickString(obj: Record<string, unknown>, keys: string[]): string | null {
+function pickString(obj: Record<string, unknown>, keys: readonly string[]): string | null {
   for (const k of keys) {
     const v = obj[k];
     if (typeof v === "string" && v.trim()) return v;
@@ -66,10 +66,8 @@ export async function POST(req: Request) {
 
     try {
       if (typeof encryptedData === "string") {
-        // Primary (per HL docs): single AES string
         raw = decryptCryptoJsString(encryptedData, secret);
       } else if (encryptedData && typeof encryptedData === "object") {
-        // Compatibility: object with iv/cipherText/tag (our earlier format)
         raw = decryptGcm(encryptedData as EncryptedPayloadObject, secret);
       }
     } catch (e) {
@@ -78,7 +76,7 @@ export async function POST(req: Request) {
       raw = {};
     }
 
-    // Light observability: which keys were present?
+    // Light observability
     try {
       const keys = Object.keys(raw).slice(0, 30);
       console.info("[oauth] sso decode keys", { keys });
@@ -97,15 +95,15 @@ export async function POST(req: Request) {
 
     return NextResponse.json(
       {
-        activeLocationId: activeLocation,
-        activeCompanyId: companyId,
-        userId,
-        role,
-        type,
-        userName,
-        email,
+        activeLocationId: activeLocation ?? null,
+        activeCompanyId: companyId ?? null,
+        userId: userId ?? null,
+        role: role ?? null,
+        type: type ?? null,
+        userName: userName ?? null,
+        email: email ?? null,
       },
-      { status: 200, headers: { "Cache-Control": "no-store" } }
+      { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   } catch {
     return NextResponse.json({ error: "Failed to decode user context" }, { status: 400 });
