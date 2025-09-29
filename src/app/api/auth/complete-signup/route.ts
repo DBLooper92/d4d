@@ -12,7 +12,7 @@ type Body = {
   lastName: string;
   agencyId?: string | null;
   locationId: string;
-  // NEW optional identity context
+  // optional identity context from SSO
   ghlUserId?: string | null;
   ghlRole?: string | null;
   ghlIsAgencyOwner?: boolean | null;
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
       email,
       firstName,
       lastName,
-      agencyId,
+      agencyId: agencyIdIn,
       locationId,
       ghlUserId = null,
       ghlRole = null,
@@ -43,6 +43,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing locationId" }, { status: 400 });
     if (!firstName?.trim() || !lastName?.trim())
       return NextResponse.json({ error: "Missing first/last name" }, { status: 400 });
+
+    // Try to resolve agencyId server-side if client didn't have it
+    let agencyId = agencyIdIn ?? null;
+    if (!agencyId) {
+      try {
+        const locSnap = await db().collection("locations").doc(locationId).get();
+        if (locSnap.exists) {
+          const locData = (locSnap.data() || {}) as { agencyId?: string };
+          if (locData.agencyId && String(locData.agencyId).trim()) {
+            agencyId = String(locData.agencyId).trim();
+          }
+        }
+      } catch {
+        /* ignore and proceed; agencyId can remain null */
+      }
+    }
 
     const admin = getAdminApp();
     const auth = admin.auth();
@@ -66,7 +82,7 @@ export async function POST(req: Request) {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         updatedAt: now,
-        // Store these on the root user for convenience too
+        // keep GHL identity hints on the user too
         ghlUserId: ghlUserId || null,
         ghlRole: ghlRole || null,
         ghlIsAgencyOwner: ghlIsAgencyOwner ?? null,
@@ -83,7 +99,7 @@ export async function POST(req: Request) {
         );
       }
 
-      // Location membership doc — include the role we got from HL (if any)
+      // Location membership (store role here for per-location checks later)
       const locProfile = {
         ...baseProfile,
         role: ghlRole || null,

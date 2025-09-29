@@ -1,11 +1,8 @@
-// src/app/api/user-context/decode/route.ts
 import { NextResponse } from "next/server";
 import * as crypto from "node:crypto";
 
 export const runtime = "nodejs";
 
-// Accepts either the documented HL payload shape { iv, cipherText, tag } with base64url strings,
-// or (for forward-compat) a plain encrypted string. We only implement the structured variant here.
 type EncryptedPayload = { iv: string; cipherText: string; tag: string };
 
 function b64urlToBuf(s: string): Buffer {
@@ -15,7 +12,6 @@ function b64urlToBuf(s: string): Buffer {
 }
 
 function deriveAesKeyFromSecret(secret: string): Buffer {
-  // Derive a 32-byte key deterministically from the shared secret
   return crypto.createHash("sha256").update(secret, "utf8").digest(); // 32 bytes
 }
 
@@ -32,6 +28,28 @@ function decryptPayload(p: EncryptedPayload, secret: string): Record<string, unk
   return JSON.parse(txt) as Record<string, unknown>;
 }
 
+// ---------- Safe pickers (no `any`) ----------
+function pickString(obj: Record<string, unknown>, keys: string[]): string | null {
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return null;
+}
+
+function pickBool(obj: Record<string, unknown>, keys: string[]): boolean | null {
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === "boolean") return v;
+    if (typeof v === "string") {
+      const s = v.trim().toLowerCase();
+      if (s === "true") return true;
+      if (s === "false") return false;
+    }
+  }
+  return null;
+}
+
 export async function POST(req: Request) {
   try {
     const { encryptedData } = (await req.json()) as { encryptedData: EncryptedPayload | string };
@@ -41,26 +59,29 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Server not configured (GHL_SHARED_SECRET_KEY)" }, { status: 500 });
     }
 
-    let raw: Record<string, unknown> | null = null;
-
+    // Decrypt to a generic record (no `any`)
+    let raw: Record<string, unknown> = {};
     if (encryptedData && typeof encryptedData === "object" && encryptedData !== null) {
       raw = decryptPayload(encryptedData as EncryptedPayload, secret);
-    } else {
-      // If a future HL payload sends a single encrypted string, return a minimal shape instead of failing hard.
-      raw = {};
     }
 
-    // Normalize to the fields we want on the client & signup:
-    // Fields can include:
-    // userId, companyId, role, type ('agency'|'location'), activeLocation, userName, email, isAgencyOwner
-    const userId = typeof raw.userId === "string" ? raw.userId : null;
-    const companyId = typeof raw.companyId === "string" ? raw.companyId : null;
-    const role = typeof raw.role === "string" ? raw.role : null;
-    const type = typeof raw.type === "string" ? raw.type : null;
-    const activeLocation = typeof raw.activeLocation === "string" ? raw.activeLocation : null;
-    const userName = typeof raw.userName === "string" ? raw.userName : null;
-    const email = typeof raw.email === "string" ? raw.email : null;
-    const isAgencyOwner = typeof raw.isAgencyOwner === "boolean" ? raw.isAgencyOwner : null;
+    // Light observability: which keys were present?
+    try {
+      const keys = Object.keys(raw).slice(0, 30);
+      console.info("[oauth] sso decode keys", { keys });
+    } catch {
+      /* noop */
+    }
+
+    // Normalize across observed variants from HL/LeadConnector
+    const userId = pickString(raw, ["userId", "id"]);
+    const companyId = pickString(raw, ["companyId", "agencyId", "company", "agency"]);
+    const role = pickString(raw, ["role", "userRole"]);
+    const type = pickString(raw, ["type"]);
+    const activeLocation = pickString(raw, ["activeLocation", "activeLocationId", "locationId"]);
+    const userName = pickString(raw, ["userName"]);
+    const email = pickString(raw, ["email"]);
+    const isAgencyOwner = pickBool(raw, ["isAgencyOwner", "agencyOwner"]);
 
     return NextResponse.json(
       {
