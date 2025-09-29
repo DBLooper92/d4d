@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import * as crypto from "node:crypto";
+import * as CryptoJS from "crypto-js";
 
 export const runtime = "nodejs";
 
-type EncryptedPayload = { iv: string; cipherText: string; tag: string };
+/**
+ * HL sometimes returns a single AES string (CryptoJS "passphrase" format),
+ * not an { iv, cipherText, tag } object. We support BOTH.
+ * Docs: https://marketplace.gohighlevel.com/docs/other/user-context-marketplace-apps/index.html
+ */
+
+type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
+type EncryptedPayload = EncryptedPayloadObject | string;
 
 function b64urlToBuf(s: string): Buffer {
   const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
@@ -15,7 +23,7 @@ function deriveAesKeyFromSecret(secret: string): Buffer {
   return crypto.createHash("sha256").update(secret, "utf8").digest(); // 32 bytes
 }
 
-function decryptPayload(p: EncryptedPayload, secret: string): Record<string, unknown> {
+function decryptGcm(p: EncryptedPayloadObject, secret: string): Record<string, unknown> {
   const key = deriveAesKeyFromSecret(secret);
   const iv = b64urlToBuf(p.iv);
   const tag = b64urlToBuf(p.tag);
@@ -26,6 +34,14 @@ function decryptPayload(p: EncryptedPayload, secret: string): Record<string, unk
   const dec = Buffer.concat([decipher.update(ct), decipher.final()]);
   const txt = dec.toString("utf8");
   return JSON.parse(txt) as Record<string, unknown>;
+}
+
+function decryptCryptoJsString(enc: string, secret: string): Record<string, unknown> {
+  // Matches docs: CryptoJS.AES.decrypt(encryptedData, sharedSecretKey)
+  const bytes = CryptoJS.AES.decrypt(enc, secret);
+  const utf8 = bytes.toString(CryptoJS.enc.Utf8);
+  if (!utf8) throw new Error("Failed to decrypt user data (empty result)");
+  return JSON.parse(utf8) as Record<string, unknown>;
 }
 
 // ---------- Safe pickers (no `any`) ----------
@@ -39,17 +55,27 @@ function pickString(obj: Record<string, unknown>, keys: string[]): string | null
 
 export async function POST(req: Request) {
   try {
-    const { encryptedData } = (await req.json()) as { encryptedData: EncryptedPayload | string };
+    const { encryptedData } = (await req.json()) as { encryptedData: EncryptedPayload };
 
     const secret = process.env.GHL_SHARED_SECRET_KEY;
     if (!secret) {
       return NextResponse.json({ error: "Server not configured (GHL_SHARED_SECRET_KEY)" }, { status: 500 });
     }
 
-    // Decrypt to a generic record (no `any`)
     let raw: Record<string, unknown> = {};
-    if (encryptedData && typeof encryptedData === "object" && encryptedData !== null) {
-      raw = decryptPayload(encryptedData as EncryptedPayload, secret);
+
+    try {
+      if (typeof encryptedData === "string") {
+        // Primary (per HL docs): single AES string
+        raw = decryptCryptoJsString(encryptedData, secret);
+      } else if (encryptedData && typeof encryptedData === "object") {
+        // Compatibility: object with iv/cipherText/tag (our earlier format)
+        raw = decryptGcm(encryptedData as EncryptedPayloadObject, secret);
+      }
+    } catch (e) {
+      // Return 200 with null fields so the UI can still proceed; add light clue
+      console.info("[oauth] sso decrypt failed", { err: (e as Error).message });
+      raw = {};
     }
 
     // Light observability: which keys were present?
@@ -61,10 +87,9 @@ export async function POST(req: Request) {
     }
 
     // Normalize across HL variants (per docs)
-    // https://marketplace.gohighlevel.com/docs/other/user-context-marketplace-apps/index.html
     const userId = pickString(raw, ["userId", "id"]);
     const companyId = pickString(raw, ["companyId", "agencyId", "company", "agency"]);
-    const role = pickString(raw, ["role", "userRole"]); // some payloads use userRole
+    const role = pickString(raw, ["role", "userRole"]);
     const type = pickString(raw, ["type"]);
     const activeLocation = pickString(raw, ["activeLocation", "activeLocationId", "locationId"]);
     const userName = pickString(raw, ["userName"]);

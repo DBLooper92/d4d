@@ -1,3 +1,4 @@
+// File: src/app/app/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -6,6 +7,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
+  type Auth,
 } from "firebase/auth";
 import { getFirebaseAuth } from "@/lib/firebaseClient";
 
@@ -107,7 +109,12 @@ function pickApiError(v: unknown): string | null {
 }
 
 export default function Page() {
-  const auth = getFirebaseAuth();
+  // Lazily initialize Firebase Auth ONLY in the browser to avoid build-time errors
+  const [auth, setAuth] = useState<Auth | null>(null);
+
+  useEffect(() => {
+    setAuth(getFirebaseAuth());
+  }, []);
 
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
@@ -128,7 +135,9 @@ export default function Page() {
     return { locationId: pickLikelyLocationId(u), agencyId: pickLikelyAgencyId(u) };
   }, []);
 
+  // Attach auth state listener only after auth is ready
   useEffect(() => {
+    if (!auth) return;
     const unsub = onAuthStateChanged(auth, (u) => {
       if (u) {
         setUid(u.uid);
@@ -166,6 +175,10 @@ export default function Page() {
 
   async function handleRegister() {
     setErr(null);
+    if (!auth) {
+      setErr("Auth not ready yet. Please try again.");
+      return;
+    }
     if (!email.trim() || !password.trim() || !firstName.trim() || !lastName.trim()) {
       setErr("Please fill in all fields.");
       return;
@@ -225,6 +238,10 @@ export default function Page() {
 
   async function handleLogin() {
     setErr(null);
+    if (!auth) {
+      setErr("Auth not ready yet. Please try again.");
+      return;
+    }
     if (!email.trim() || !password.trim()) {
       setErr("Please enter your email and password.");
       return;
@@ -244,12 +261,21 @@ export default function Page() {
     setBusy(true);
     setErr(null);
     try {
-      await signOut(auth);
+      if (auth) await signOut(auth);
     } catch {
       setErr("Sign out failed. Try again.");
     } finally {
       setBusy(false);
     }
+  }
+
+  if (!auth) {
+    return (
+      <main className="p-6 max-w-md mx-auto">
+        <h1 className="text-2xl font-semibold mb-4">Loading…</h1>
+        <p className="text-gray-600">Preparing authentication…</p>
+      </main>
+    );
   }
 
   if (uid) {
