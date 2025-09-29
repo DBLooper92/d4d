@@ -24,9 +24,6 @@ type SsoContext = {
 type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
 type EncryptedAny = string | EncryptedPayloadObject;
 
-// HL has shipped both of these keys:
-//   - { message: "REQUEST_USER_DATA_RESPONSE", encryptedData: ... }
-//   - { message: "REQUEST_USER_DATA_RESPONSE", payload: ... }
 type MarketplaceMessage =
   | { message: "REQUEST_USER_DATA_RESPONSE"; encryptedData: EncryptedAny }
   | { message: "REQUEST_USER_DATA_RESPONSE"; payload: EncryptedAny };
@@ -43,7 +40,6 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
     }, 3000);
 
     try {
-      // Ask parent (GHL) for the encrypted user context
       window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
 
       const onMsg = (ev: MessageEvent<unknown>) => {
@@ -101,11 +97,7 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
 
 function pickLikelyLocationId(url: URL) {
   const search = url.searchParams;
-  const fromQS =
-    search.get("location_id") ||
-    search.get("locationId") ||
-    search.get("location") ||
-    "";
+  const fromQS = search.get("location_id") || search.get("locationId") || search.get("location") || "";
   if (fromQS && fromQS.trim()) return fromQS.trim();
 
   const hash = url.hash || "";
@@ -113,11 +105,7 @@ function pickLikelyLocationId(url: URL) {
     try {
       const h = hash.startsWith("#") ? hash.slice(1) : hash;
       const asParams = new URLSearchParams(h);
-      const fromHash =
-        asParams.get("location_id") ||
-        asParams.get("locationId") ||
-        asParams.get("location") ||
-        "";
+      const fromHash = asParams.get("location_id") || asParams.get("locationId") || asParams.get("location") || "";
       if (fromHash && fromHash.trim()) return fromHash.trim();
       const segs = h.split(/[/?&]/).filter(Boolean);
       const maybeId = segs.find((s) => s.length >= 12);
@@ -135,8 +123,7 @@ function pickLikelyLocationId(url: URL) {
 }
 function pickLikelyAgencyId(url: URL) {
   const search = url.searchParams;
-  const fromQS =
-    search.get("agency_id") || search.get("agencyId") || search.get("companyId") || "";
+  const fromQS = search.get("agency_id") || search.get("agencyId") || search.get("companyId") || "";
   return (fromQS || "").trim();
 }
 
@@ -190,7 +177,6 @@ export default function Page() {
     return () => unsub();
   }, [auth]);
 
-  // If we don't have locationId from URL, try to patch URL from SSO on load.
   useEffect(() => {
     (async () => {
       if (contextFromUrl.locationId || typeof window === "undefined") return;
@@ -230,7 +216,7 @@ export default function Page() {
     }
     setBusy(true);
     try {
-      // 1) Gather Marketplace SSO FIRST so we don’t miss GHL identity fields
+      // 1) Gather Marketplace SSO first
       let { locationId, agencyId } = contextFromUrl;
       const sso = await getMarketplaceUserContext();
       locationId = locationId || sso?.activeLocationId || "";
@@ -242,11 +228,32 @@ export default function Page() {
         );
       }
 
-      // 2) Create Firebase user
+      // 2) If SSO didn't include userId/role, use server fallback (Users API v2 with users.readonly)
+      let ghlUserId: string | null = sso?.userId ?? null;
+      let ghlRole: string | null = sso?.role ?? null;
+
+      if (!ghlUserId || !ghlRole) {
+        try {
+          const fb = await fetch("/api/user-context/fallback-user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ locationId }),
+          });
+          if (fb.ok) {
+            const j = (await fb.json()) as { userId: string | null; role: string | null };
+            if (!ghlUserId) ghlUserId = j.userId;
+            if (!ghlRole) ghlRole = j.role;
+          }
+        } catch {
+          /* non-fatal */
+        }
+      }
+
+      // 3) Create Firebase user
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const idToken = await cred.user.getIdToken(/* forceRefresh */ true);
 
-      // 3) Finalize profile in Firestore with strict GHL identity hints
+      // 4) Finalize profile
       const resp = await fetch("/api/auth/complete-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -257,9 +264,8 @@ export default function Page() {
           lastName: lastName.trim(),
           agencyId: agencyId || null,
           locationId,
-          // GHL identity context (null-safe)
-          ghlUserId: sso?.userId ?? null,
-          ghlRole: sso?.role ?? null,
+          ghlUserId,
+          ghlRole,
         }),
       });
       if (!resp.ok) {
