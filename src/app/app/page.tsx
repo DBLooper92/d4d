@@ -32,14 +32,20 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
-async function getMarketplaceUserContext(): Promise<SsoContext | null> {
+/**
+ * Request SSO from the HL parent and wait up to `timeoutMs` for a response.
+ * We intentionally wait a bit longer here (default 8000ms) because HL
+ * sometimes responds late right after switching sub-accounts.
+ */
+async function getMarketplaceUserContext(timeoutMs = 8000): Promise<SsoContext | null> {
   const encrypted = await new Promise<EncryptedAny | null>((resolve) => {
     let done = false;
     const timeout = setTimeout(() => {
       if (!done) resolve(null);
-    }, 3000);
+    }, timeoutMs);
 
     try {
+      // Ask parent (GHL) for the encrypted user context
       window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
 
       const onMsg = (ev: MessageEvent<unknown>) => {
@@ -139,6 +145,7 @@ function pickApiError(v: unknown): string | null {
 }
 
 export default function Page() {
+  // Auth (client-only)
   const [auth, setAuth] = useState<Auth | null>(null);
   useEffect(() => {
     setAuth(getFirebaseAuth());
@@ -177,10 +184,11 @@ export default function Page() {
     return () => unsub();
   }, [auth]);
 
+  // Try to enrich URL with location_id from SSO on first load (shorter wait is fine here)
   useEffect(() => {
     (async () => {
       if (contextFromUrl.locationId || typeof window === "undefined") return;
-      const sso = await getMarketplaceUserContext();
+      const sso = await getMarketplaceUserContext(4000);
       if (sso?.activeLocationId) {
         const url = new URL(window.location.href);
         url.searchParams.set("location_id", sso.activeLocationId);
@@ -216,9 +224,9 @@ export default function Page() {
     }
     setBusy(true);
     try {
-      // 1) Gather Marketplace SSO first
+      // 1) Gather Marketplace SSO first (longer wait: 8s)
       let { locationId, agencyId } = contextFromUrl;
-      const sso = await getMarketplaceUserContext();
+      const sso = await getMarketplaceUserContext(8000);
       locationId = locationId || sso?.activeLocationId || "";
       agencyId = agencyId || sso?.activeCompanyId || "";
 
@@ -228,10 +236,10 @@ export default function Page() {
         );
       }
 
-      // 2) If SSO didn't include userId/role, use server fallback (Users API v2 with users.readonly)
       let ghlUserId: string | null = sso?.userId ?? null;
       let ghlRole: string | null = sso?.role ?? null;
 
+      // 2) If SSO was missing id/role, use server fallback (Users API v2 with users.readonly)
       if (!ghlUserId || !ghlRole) {
         try {
           const fb = await fetch("/api/user-context/fallback-user", {
@@ -253,7 +261,7 @@ export default function Page() {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const idToken = await cred.user.getIdToken(/* forceRefresh */ true);
 
-      // 4) Finalize profile
+      // 4) Finalize profile server-side
       const resp = await fetch("/api/auth/complete-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

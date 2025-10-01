@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 /**
  * HL sometimes returns a single AES string (CryptoJS "passphrase" format),
  * not an { iv, cipherText, tag } object. We support BOTH.
- * Docs keys we normalize: userId/id, companyId/agencyId, role/userRole, type,
+ * We normalize keys: userId/id, companyId/agencyId, role/userRole, type,
  * activeLocation/activeLocationId/locationId, userName, email
  */
 
@@ -38,7 +38,6 @@ function decryptGcm(p: EncryptedPayloadObject, secret: string): Record<string, u
 }
 
 function decryptCryptoJsString(enc: string, secret: string): Record<string, unknown> {
-  // Matches docs: CryptoJS.AES.decrypt(encryptedData, sharedSecretKey)
   const bytes = CryptoJS.AES.decrypt(enc, secret);
   const utf8 = bytes.toString(CryptoJS.enc.Utf8);
   if (!utf8) throw new Error("Failed to decrypt user data (empty result)");
@@ -71,7 +70,6 @@ export async function POST(req: Request) {
         raw = decryptGcm(encryptedData as EncryptedPayloadObject, secret);
       }
     } catch (e) {
-      // Return 200 with null fields so the UI can still proceed; add light clue
       console.info("[oauth] sso decrypt failed", { err: (e as Error).message });
       raw = {};
     }
@@ -84,14 +82,22 @@ export async function POST(req: Request) {
       /* noop */
     }
 
-    // Normalize across HL variants (per docs)
+    // Normalize across HL variants
     const userId = pickString(raw, ["userId", "id"]);
     const companyId = pickString(raw, ["companyId", "agencyId", "company", "agency"]);
     const role = pickString(raw, ["role", "userRole"]);
     const type = pickString(raw, ["type"]);
     const activeLocation = pickString(raw, ["activeLocation", "activeLocationId", "locationId"]);
-    const userName = pickString(raw, ["userName"]);
+    const userName = pickString(raw, ["userName", "name"]);
     const email = pickString(raw, ["email"]);
+
+    // Extra line that makes debugging crystal clear in Cloud Run logs
+    console.info("[oauth] sso normalized", {
+      haveUserId: !!userId,
+      haveRole: !!role,
+      haveCompanyId: !!companyId,
+      haveActiveLocation: !!activeLocation,
+    });
 
     return NextResponse.json(
       {
