@@ -7,8 +7,7 @@ export const runtime = "nodejs";
 /**
  * HL sometimes returns a single AES string (CryptoJS "passphrase" format),
  * not an { iv, cipherText, tag } object. We support BOTH.
- * Docs keys we normalize: userId/id, companyId/agencyId, role/userRole, type,
- * activeLocation/activeLocationId/locationId, userName, email
+ * We only return fields needed for routing: company & location (plus optional display bits).
  */
 
 type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
@@ -21,7 +20,7 @@ function b64urlToBuf(s: string): Buffer {
 }
 
 function deriveAesKeyFromSecret(secret: string): Buffer {
-  return crypto.createHash("sha256").update(secret, "utf8").digest(); // 32 bytes
+  return crypto.createHash("sha256").update(secret, "utf8").digest();
 }
 
 function decryptGcm(p: EncryptedPayloadObject, secret: string): Record<string, unknown> {
@@ -38,7 +37,6 @@ function decryptGcm(p: EncryptedPayloadObject, secret: string): Record<string, u
 }
 
 function decryptCryptoJsString(enc: string, secret: string): Record<string, unknown> {
-  // Matches docs: CryptoJS.AES.decrypt(encryptedData, sharedSecretKey)
   const bytes = CryptoJS.AES.decrypt(enc, secret);
   const utf8 = bytes.toString(CryptoJS.enc.Utf8);
   if (!utf8) throw new Error("Failed to decrypt user data (empty result)");
@@ -71,23 +69,17 @@ export async function POST(req: Request) {
         raw = decryptGcm(encryptedData as EncryptedPayloadObject, secret);
       }
     } catch (e) {
-      // Return 200 with null fields so the UI can still proceed; add light clue
       console.info("[oauth] sso decrypt failed", { err: (e as Error).message });
       raw = {};
     }
 
-    // Light observability
     try {
       const keys = Object.keys(raw).slice(0, 30);
       console.info("[oauth] sso decode keys", { keys });
-    } catch {
-      /* noop */
-    }
+    } catch { /* noop */ }
 
-    // Normalize across HL variants (per docs)
-    const userId = pickString(raw, ["userId", "id"]);
+    // Only return what we need now
     const companyId = pickString(raw, ["companyId", "agencyId", "company", "agency"]);
-    const role = pickString(raw, ["role", "userRole"]);
     const type = pickString(raw, ["type"]);
     const activeLocation = pickString(raw, ["activeLocation", "activeLocationId", "locationId"]);
     const userName = pickString(raw, ["userName"]);
@@ -97,8 +89,6 @@ export async function POST(req: Request) {
       {
         activeLocationId: activeLocation ?? null,
         activeCompanyId: companyId ?? null,
-        userId: userId ?? null,
-        role: role ?? null,
         type: type ?? null,
         userName: userName ?? null,
         email: email ?? null,

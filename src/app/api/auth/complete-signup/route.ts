@@ -11,9 +11,6 @@ type Body = {
   lastName: string;
   agencyId?: string | null;
   locationId: string;
-  // optional identity context from SSO
-  ghlUserId?: string | null;
-  ghlRole?: string | null;
 };
 
 type UserDoc = {
@@ -31,8 +28,6 @@ export async function POST(req: Request) {
       lastName,
       agencyId: agencyIdIn,
       locationId,
-      ghlUserId = null,
-      ghlRole = null,
     } = (await req.json()) as Body;
 
     if (!idToken) return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
@@ -41,7 +36,6 @@ export async function POST(req: Request) {
     if (!firstName?.trim() || !lastName?.trim())
       return NextResponse.json({ error: "Missing first/last name" }, { status: 400 });
 
-    // Try to resolve agencyId server-side if client didn't have it
     let agencyId = agencyIdIn ?? null;
     if (!agencyId) {
       try {
@@ -52,9 +46,7 @@ export async function POST(req: Request) {
             agencyId = String(locData.agencyId).trim();
           }
         }
-      } catch {
-        /* allow agencyId to remain null */
-      }
+      } catch { /* allow agencyId to remain null */ }
     }
 
     const admin = getAdminApp();
@@ -79,9 +71,6 @@ export async function POST(req: Request) {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         updatedAt: now,
-        // GHL identity hints on the user
-        ghlUserId: ghlUserId || null,
-        ghlRole: ghlRole || null,
       };
 
       if (!uSnap.exists) {
@@ -95,11 +84,8 @@ export async function POST(req: Request) {
         );
       }
 
-      // Location membership (store role here for per-location checks later)
-      const locProfile = {
-        ...baseProfile,
-        role: ghlRole || null,
-      };
+      // Basic membership document (no role stored here anymore)
+      const locProfile = { ...baseProfile };
 
       if (!luSnap.exists) {
         tx.set(locUserRef, { ...locProfile, createdAt: now });
