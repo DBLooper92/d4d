@@ -189,13 +189,6 @@ export function findOurMenu(items: CustomMenu[]) {
   );
 }
 
-/**
- * Robust deletion that handles permission quirks:
- *  - primary: DELETE /custom-menus/:id  (agency token)
- *  - retry with ?companyId=...
- *  - fallback: same permutations with a location token (if provided)
- * Treat 404 as success — the item is already gone.
- */
 export async function deleteMenuById(
   agencyAccessToken: string,
   customMenuId: string,
@@ -205,7 +198,6 @@ export async function deleteMenuById(
   const path = `${base}${encodeURIComponent(customMenuId)}`;
   const withCo = opts?.companyId ? `${path}?companyId=${encodeURIComponent(opts.companyId)}` : null;
 
-  // Attempt order: agency no-co → agency with-co → location no-co → location with-co
   const attempts: Array<{ url: string; token: string; label: string }> = [
     { url: path, token: agencyAccessToken, label: "agency-noCompany" },
     ...(withCo ? [{ url: withCo, token: agencyAccessToken, label: "agency-withCompany" } as const] : []),

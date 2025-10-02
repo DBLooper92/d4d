@@ -18,11 +18,35 @@ type SsoContext = {
   type?: string;
   userName?: string;
   email?: string;
-  isAgencyOwner?: boolean | null;
 };
 
 type EncryptedPayload = { iv: string; cipherText: string; tag: string };
 type RequestUserDataResponse = { message: "REQUEST_USER_DATA_RESPONSE"; payload: EncryptedPayload };
+
+function pickFromAliases(search: URLSearchParams, keys: string[]): string {
+  for (const k of keys) {
+    const v = search.get(k);
+    if (v && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+function pickLikelyLocationId(url: URL) {
+  return pickFromAliases(url.searchParams, ["location_id", "locationId", "location", "subAccountId", "accountId"]);
+}
+function pickLikelyAgencyId(url: URL) {
+  return pickFromAliases(url.searchParams, ["agency_id", "agencyId", "companyId"]);
+}
+function pickGhlUserId(url: URL) {
+  return pickFromAliases(url.searchParams, ["ghl_user_id", "ghlUserId", "user_id", "userId"]);
+}
+function pickGhlRole(url: URL) {
+  return pickFromAliases(url.searchParams, ["ghl_role", "ghlRole", "role"]);
+}
+function pickEmail(url: URL) {
+  // allow testing via ?email=...
+  return pickFromAliases(url.searchParams, ["email"]);
+}
 
 async function getMarketplaceUserContext(): Promise<SsoContext | null> {
   const encrypted = await new Promise<EncryptedPayload | null>((resolve) => {
@@ -65,38 +89,6 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
   }
 }
 
-function pickLikelyLocationId(url: URL) {
-  const search = url.searchParams;
-  const fromQS = search.get("location_id") || search.get("locationId") || search.get("location") || "";
-  if (fromQS && fromQS.trim()) return fromQS.trim();
-
-  const hash = url.hash || "";
-  if (hash) {
-    try {
-      const h = hash.startsWith("#") ? hash.slice(1) : hash;
-      const asParams = new URLSearchParams(h);
-      const fromHash = asParams.get("location_id") || asParams.get("locationId") || asParams.get("location") || "";
-      if (fromHash && fromHash.trim()) return fromHash.trim();
-      const segs = h.split(/[/?&]/).filter(Boolean);
-      const maybeId = segs.find((s) => s.length >= 12);
-      if (maybeId) return maybeId.trim();
-    } catch {
-      /* ignore */
-    }
-  }
-
-  const segs = url.pathname.split("/").filter(Boolean);
-  const maybeId = segs.length >= 2 ? segs[1] : "";
-  if (maybeId && maybeId.length >= 12) return maybeId.trim();
-
-  return "";
-}
-function pickLikelyAgencyId(url: URL) {
-  const search = url.searchParams;
-  const fromQS = search.get("agency_id") || search.get("agencyId") || search.get("companyId") || "";
-  return (fromQS || "").trim();
-}
-
 type Mode = "login" | "register";
 
 function pickApiError(v: unknown): string | null {
@@ -124,11 +116,23 @@ export default function Page() {
   const [uid, setUid] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
+  // URL-derived context (primary)
   const contextFromUrl = useMemo(() => {
-    if (typeof window === "undefined") return { locationId: "", agencyId: "" };
+    if (typeof window === "undefined") return { locationId: "", agencyId: "", ghlUserId: "", ghlRole: "", email: "" };
     const u = new URL(window.location.href);
-    return { locationId: pickLikelyLocationId(u), agencyId: pickLikelyAgencyId(u) };
+    return {
+      locationId: pickLikelyLocationId(u),
+      agencyId: pickLikelyAgencyId(u),
+      ghlUserId: pickGhlUserId(u),
+      ghlRole: pickGhlRole(u),
+      email: pickEmail(u),
+    };
   }, []);
+
+  // When the page mounts, prefill from URL immediately (so you can test without registering)
+  useEffect(() => {
+    if (contextFromUrl.email) setEmail(contextFromUrl.email);
+  }, [contextFromUrl.email]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -143,14 +147,21 @@ export default function Page() {
     return () => unsub();
   }, [auth]);
 
+  // Optional: If we didn't receive location/agency via URL, attempt SSO and update the URL for persistence.
   useEffect(() => {
     (async () => {
-      if (contextFromUrl.locationId || typeof window === "undefined") return;
+      if (typeof window === "undefined") return;
+      if (contextFromUrl.locationId && contextFromUrl.agencyId && contextFromUrl.ghlUserId && contextFromUrl.ghlRole) {
+        return; // we already have full context via URL
+      }
       const sso = await getMarketplaceUserContext();
-      if (sso?.activeLocationId) {
+      if (sso?.activeLocationId || sso?.activeCompanyId || sso?.userId || sso?.role || sso?.email) {
         const url = new URL(window.location.href);
-        url.searchParams.set("location_id", sso.activeLocationId);
-        if (sso.activeCompanyId) url.searchParams.set("agencyId", sso.activeCompanyId);
+        if (!contextFromUrl.locationId && sso.activeLocationId) url.searchParams.set("location_id", sso.activeLocationId);
+        if (!contextFromUrl.agencyId && sso.activeCompanyId) url.searchParams.set("agencyId", sso.activeCompanyId);
+        if (!contextFromUrl.ghlUserId && sso.userId) url.searchParams.set("ghl_user_id", sso.userId);
+        if (!contextFromUrl.ghlRole && sso.role) url.searchParams.set("ghl_role", sso.role);
+        if (!contextFromUrl.email && sso.email) url.searchParams.set("email", sso.email);
         window.history.replaceState({}, "", url.toString());
       }
     })();
@@ -179,18 +190,19 @@ export default function Page() {
     setBusy(true);
     try {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      const idToken = await cred.user.getIdToken(/* forceRefresh */ true);
+      const idToken = await cred.user.getIdToken(true);
 
-      // Context (URL first, then SSO)
-      let { locationId, agencyId } = contextFromUrl;
+      // Prefer URL method, fall back to SSO (but we won't store isAgencyOwner anymore)
+      let { locationId, agencyId, ghlUserId, ghlRole } = contextFromUrl;
       let sso: SsoContext | null = null;
-      if (!locationId || !agencyId) {
+      if (!locationId || !agencyId || !ghlUserId || !ghlRole) {
         sso = await getMarketplaceUserContext();
         locationId = locationId || sso?.activeLocationId || "";
         agencyId = agencyId || sso?.activeCompanyId || "";
-      } else {
-        sso = await getMarketplaceUserContext();
+        ghlUserId = ghlUserId || sso?.userId || "";
+        ghlRole = ghlRole || sso?.role || "";
       }
+
       if (!locationId) {
         throw new Error(
           "We couldn't detect your Location ID. Please open this app from your GHL custom menu (it includes the location_id automatically).",
@@ -207,10 +219,8 @@ export default function Page() {
           lastName: lastName.trim(),
           agencyId: agencyId || null,
           locationId,
-          // GHL identity context
-          ghlUserId: sso?.userId || null,
-          ghlRole: sso?.role || null,
-          ghlIsAgencyOwner: sso?.isAgencyOwner ?? null,
+          ghlUserId: ghlUserId || null,
+          ghlRole: ghlRole || null,
         }),
       });
       if (!resp.ok) {
@@ -274,7 +284,9 @@ export default function Page() {
     );
   }
 
-  // Logged-out: bring the small auth form back so all states/handlers are used
+  const ghli = contextFromUrl.ghlUserId;
+  const ghlr = contextFromUrl.ghlRole;
+
   return (
     <main className="p-6 max-w-md mx-auto">
       <h1 className="text-2xl font-semibold mb-4">Welcome</h1>
@@ -348,6 +360,28 @@ export default function Page() {
           />
         </div>
 
+        {/* New: GHL context fields (read-only, auto-populated via URL/SSO) */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm mb-1">GHL User ID</label>
+            <input
+              value={ghli}
+              readOnly
+              placeholder="(via URL)"
+              className="w-full rounded-xl border px-3 py-2 bg-gray-50"
+            />
+          </div>
+          <div>
+            <label className="block text-sm mb-1">GHL Role</label>
+            <input
+              value={ghlr}
+              readOnly
+              placeholder="(via URL)"
+              className="w-full rounded-xl border px-3 py-2 bg-gray-50"
+            />
+          </div>
+        </div>
+
         <div>
           <label className="block text-sm mb-1">Password</label>
           <input
@@ -393,7 +427,8 @@ export default function Page() {
         </button>
 
         <p className="text-xs text-gray-500 mt-3">
-          Tip: open this from your GHL custom menu so the <code>location_id</code> is auto-passed.
+          Tip: open this from your GHL custom menu so the <code>location_id</code>, <code>ghl_user_id</code> and{" "}
+          <code>ghl_role</code> are auto-passed.
         </p>
       </form>
     </main>

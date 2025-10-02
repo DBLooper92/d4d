@@ -25,10 +25,8 @@ import { FieldValue } from "firebase-admin/firestore";
 
 export const runtime = "nodejs";
 
-// NOTE: single shape with optional fields (no union), so TS allows accessing both keys safely
 type CreateMenuResponse = { id?: string; data?: { id?: string } };
 
-// Ensure a CML exists and return its id if known.
 async function ensureCml(
   accessToken: string,
   companyId: string,
@@ -47,13 +45,10 @@ async function ensureCml(
     let json: unknown = null;
     try {
       json = text ? JSON.parse(text) : null;
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     return { ok: r.ok, status: r.status, bodyText: text, json };
   };
 
-  // List (preferred shape)
   const listQueryUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
   const listResp = await tryList(listQueryUrl);
 
@@ -73,18 +68,22 @@ async function ensureCml(
         m.url.startsWith("https://app.driving4dollars.co/app"),
     );
     if (existing?.id) return existing.id;
-    if (existing) return null; // found but missing id shape → don't recreate
+    if (existing) return null;
   } else {
     olog("ensureCml list failed", { status: listResp.status, sample: (listResp.bodyText || "").slice(0, 400) });
   }
 
-  // Create on base endpoint with ?companyId=... (DO NOT include companyId in JSON body)
   const createUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
 
-  // Minimal, valid body
+  // ↙️ include URL placeholders for user id/role so GHL can inject on iframe launch
   const baseBody = {
     title: "Driving for Dollars",
-    url: "https://app.driving4dollars.co/app?location_id={{location.id}}",
+    url:
+      "https://app.driving4dollars.co/app" +
+      "?location_id={{location.id}}" +
+      "&agencyId={{company.id}}" +
+      "&ghl_user_id={{user.id}}" +
+      "&ghl_role={{user.role}}",
     showOnCompany: false,
     showOnLocation: true,
     showToAllLocations: true,
@@ -94,7 +93,6 @@ async function ensureCml(
     icon: { fontFamily: "fas", name: "car" as const },
   };
 
-  // Try iframe first, then current_tab
   for (const openMode of ["iframe", "current_tab"] as const) {
     const body = { ...baseBody, openMode };
     const r = await fetch(createUrl, {

@@ -12,10 +12,8 @@ type Body = {
   lastName: string;
   agencyId?: string | null;
   locationId: string;
-  // NEW optional identity context
   ghlUserId?: string | null;
   ghlRole?: string | null;
-  ghlIsAgencyOwner?: boolean | null;
 };
 
 type UserDoc = {
@@ -35,7 +33,6 @@ export async function POST(req: Request) {
       locationId,
       ghlUserId = null,
       ghlRole = null,
-      ghlIsAgencyOwner = null,
     } = (await req.json()) as Body;
 
     if (!idToken) return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
@@ -66,10 +63,8 @@ export async function POST(req: Request) {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         updatedAt: now,
-        // Store these on the root user for convenience too
         ghlUserId: ghlUserId || null,
         ghlRole: ghlRole || null,
-        ghlIsAgencyOwner: ghlIsAgencyOwner ?? null,
       };
 
       if (!uSnap.exists) {
@@ -83,7 +78,6 @@ export async function POST(req: Request) {
         );
       }
 
-      // Location membership doc — include the role we got from HL (if any)
       const locProfile = {
         ...baseProfile,
         role: ghlRole || null,
