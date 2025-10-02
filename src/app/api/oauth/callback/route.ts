@@ -79,11 +79,11 @@ async function ensureCml(
   // Create on base endpoint with ?companyId=... (DO NOT include companyId in JSON body)
   const createUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
 
-  // Menu should appear for both agency and location contexts.
+  // Menu should appear only at the location level.
   const baseBody = {
     title: "Driving for Dollars",
     url: "https://app.driving4dollars.co/app?location_id={{location.id}}",
-    showOnCompany: true,
+    showOnCompany: false,
     showOnLocation: true,
     showToAllLocations: true,
     allowCamera: false,
@@ -386,4 +386,5 @@ export async function GET(request: Request) {
 
   return NextResponse.redirect(ui.toString(), { status: 302 });
 }
+
 
