@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   auth.searchParams.set("client_id", clientId);
   auth.searchParams.set("redirect_uri", redirectUri);
   if (scope) auth.searchParams.set("scope", scope);
-  // DO NOT set user_type here; let GHL set it based on where the user clicked Install
+  // DO NOT set user_type here; let GHL set it based on where the usr clicked Install
   auth.searchParams.set("state", state);
 
   olog("prepare redirect", { redirectUri, scope, stateEnc: state.slice(0, 12) + "…" });
