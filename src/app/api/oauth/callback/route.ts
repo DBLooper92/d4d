@@ -78,7 +78,6 @@ async function ensureCml(
     olog("ensureCml list failed", { status: listResp.status, sample: (listResp.bodyText || "").slice(0, 400) });
   }
 
-  // Create on base endpoint with ?companyId=... (DO NOT include companyId in JSON body)
   const createUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
 
   const baseBody = {
