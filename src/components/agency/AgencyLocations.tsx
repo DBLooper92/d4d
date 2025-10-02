@@ -162,7 +162,7 @@ export default function AgencyLocations() {
       <h1 className="text-2xl font-semibold mb-3">All locations</h1>
       {agencyId && <p className="text-sm text-gray-600 mb-4">Agency: <code>{agencyId}</code></p>}
 
-      {loading && <p className="text-gray-700">Loading locations…</p>}
+      {loading && <p className="text-gray-700">Loading locations...</p>}
 
       {!loading && err && (
         <p className="text-red-600">

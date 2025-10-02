@@ -34,7 +34,7 @@ export async function GET(request: Request) {
   // DO NOT set user_type here; let GHL set it based on where the usr clicked Install
   auth.searchParams.set("state", state);
 
-  olog("prepare redirect", { redirectUri, scope, stateEnc: state.slice(0, 12) + "…" });
+  olog("prepare redirect", { redirectUri, scope, stateEnc: state.slice(0, 12) + "..." });
 
   return NextResponse.redirect(auth.toString(), { status: 302 });
 }

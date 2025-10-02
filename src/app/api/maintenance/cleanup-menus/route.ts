@@ -51,7 +51,7 @@ export async function POST(req: Request) {
 
   const cfg = getGhlConfig();
 
-  // 1) Quick check: Firestore—any installed locations?
+  // 1) Quick check: Firestore - any installed locations?
   const q = await db()
     .collection("locations")
     .where("agencyId", "==", agencyId)
@@ -80,7 +80,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, keptMenu: true, installedCount }, { status: 200 });
   }
 
-  // 3) No installs remain → delete the menu
+  // 3) No installs remain -> delete the menu
   const acc = await getAccessTokenForAgency(agencyId);
   if (!acc) return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
 

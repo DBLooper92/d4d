@@ -1,13 +1,15 @@
+type PageParamRecord = Record<string, string | string[] | undefined>;
+type SearchParamRecord = Record<string, string | string[] | undefined>;
+
 import AgencyLocations from "@/components/agency/AgencyLocations";
 import AuthClient from "@/components/auth/AuthClient";
 
 // This is the Next.js route segment option. Keep the exact export name "dynamic".
 export const dynamic = "auto";
 
-type SearchParamRecord = Record<string, string | string[] | undefined>;
-
 type Props = {
-  searchParams?: SearchParamRecord | Promise<SearchParamRecord>;
+  params?: Promise<PageParamRecord>;
+  searchParams?: Promise<SearchParamRecord>;
 };
 
 function pickParam(sp: SearchParamRecord, key: string): string {
@@ -17,7 +19,7 @@ function pickParam(sp: SearchParamRecord, key: string): string {
 }
 
 export default async function AppPage({ searchParams }: Props) {
-  const resolved = (await searchParams) ?? {};
+  const resolved = ((await searchParams) ?? {}) as SearchParamRecord;
 
   const locationId =
     pickParam(resolved, "location_id") ||

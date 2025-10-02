@@ -79,7 +79,7 @@ async function ensureCml(
   // Create on base endpoint with ?companyId=... (DO NOT include companyId in JSON body)
   const createUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
 
-  // ✅ New visibility rules:
+  // New visibility rules:
   // - Visible at Agency and Location
   // - Only Admins see it in sub-accounts (userRole: "admin")
   // - Location URL param is passed for location context; agency context opens /app without it

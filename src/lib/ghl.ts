@@ -122,9 +122,9 @@ export function safeInstalled(l: AnyLoc): boolean {
   return Boolean(l.isInstalled);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Custom Menus
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 export function ghlCustomMenusBase() {
   return "https://services.leadconnectorhq.com/custom-menus/"; // NOTE: trailing slash
 }
@@ -219,16 +219,16 @@ export async function deleteMenuById(
       });
       const sample = await r.text().catch(() => "");
       if (r.status === 404) {
-        olog("cml delete → 404 (treat as success)", { attempt: a.label });
+        olog("cml delete -> 404 (treat as success)", { attempt: a.label });
         return true;
       }
       if (r.ok) {
-        olog("cml delete → success", { attempt: a.label });
+        olog("cml delete -> success", { attempt: a.label });
         return true;
       }
-      olog("cml delete → failed", { attempt: a.label, status: r.status, sample: sample.slice(0, 400) });
+      olog("cml delete -> failed", { attempt: a.label, status: r.status, sample: sample.slice(0, 400) });
     } catch (e) {
-      olog("cml delete → error", { attempt: a.label, err: String(e) });
+      olog("cml delete -> error", { attempt: a.label, err: String(e) });
     }
   }
   return false;

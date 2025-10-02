@@ -1,7 +1,7 @@
 // src/app/api/tokens/location/route.ts
 import { NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
-import { getGhlConfig, olog, scopeListFromTokenScope } from "@/lib/ghl"; // ⬅️ add olog + scopeListFromTokenScope
+import { getGhlConfig, olog, scopeListFromTokenScope } from "@/lib/ghl";
 import { exchangeRefreshToken } from "@/lib/ghlTokens";
 
 export const runtime = "nodejs";
@@ -29,7 +29,7 @@ export async function GET(req: Request) {
 
     const scopesArr = scopeListFromTokenScope(tok.scope ?? "");
 
-    // ⬇️ log full location scopes
+    // Log scope details to help validate marketplace permissions.
     olog("location token exchanged", {
       locationId,
       scopesCount: scopesArr.length,
@@ -37,12 +37,12 @@ export async function GET(req: Request) {
       scopeRaw: tok.scope ?? "",
     });
 
-    // Return the short-lived access token + scopes so you can see them
+    // Return the short-lived access token plus the parsed scope list for debugging.
     return NextResponse.json(
       {
         access_token: tok.access_token,
         scope: tok.scope || "",
-        scopes: scopesArr, // convenient parsed array
+        scopes: scopesArr,
       },
       { status: 200, headers: { "Cache-Control": "no-store" } }
     );

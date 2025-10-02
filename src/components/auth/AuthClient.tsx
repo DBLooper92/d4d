@@ -282,8 +282,8 @@ export default function AuthClient() {
   if (!auth) {
     return (
       <main className="p-6 max-w-md mx-auto">
-        <h1 className="text-2xl font-semibold mb-4">Loading…</h1>
-        <p className="text-gray-600">Preparing authentication…</p>
+        <h1 className="text-2xl font-semibold mb-4">Loading...</h1>
+        <p className="text-gray-600">Preparing authentication...</p>
       </main>
     );
   }
@@ -300,7 +300,7 @@ export default function AuthClient() {
             disabled={busy}
             className="rounded-xl border px-4 py-2 hover:bg-gray-50 disabled:opacity-60"
           >
-            {busy ? "Signing you out…" : "Sign out"}
+            {busy ? "Signing you out..." : "Sign out"}
           </button>
         </div>
       </main>
@@ -417,8 +417,8 @@ export default function AuthClient() {
         >
           {busy
             ? mode === "login"
-              ? "Logging in…"
-              : "Creating account…"
+              ? "Logging in..."
+              : "Creating account..."
             : mode === "login"
               ? "Login"
               : "Register"}

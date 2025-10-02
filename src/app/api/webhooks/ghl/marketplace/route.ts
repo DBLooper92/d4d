@@ -129,7 +129,7 @@ export async function POST(req: Request) {
   }
   if (!menuId) return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
 
-  // 🔑 Robust delete covering API/permission quirks
+  // Robust delete covering API and permission quirks
   const ok = await deleteMenuById(agencyAccessToken || "", menuId, {
     companyId: agencyId,
     locationAccessToken: locationAccessToken || undefined,
