@@ -94,7 +94,6 @@ url: "https://app.driving4dollars.co/app?location_id={{location.id}}&agencyId={{
     icon: { fontFamily: "fas", name: "car" as const },
   };
 
-  // Try iframe first, then current_tab
   for (const openMode of ["iframe", "current_tab"] as const) {
     const body = { ...baseBody, openMode };
     const r = await fetch(createUrl, {
