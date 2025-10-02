@@ -81,10 +81,9 @@ async function ensureCml(
   // Create on base endpoint with ?companyId=... (DO NOT include companyId in JSON body)
   const createUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
 
-  // Minimal, valid body
   const baseBody = {
     title: "Driving for Dollars",
-url: "https://app.driving4dollars.co/app?location_id={{location.id}}&agencyId={{company.id}}&ghl_user_id={{user.id}}&ghl_user_role={{user.role}}&ghl_user_email={{user.email}}",
+    url: "https://app.driving4dollars.co/app?location_id={{location.id}}&agencyId={{company.id}}&ghl_user_id={{user.id}}&ghl_user_role={{user.role}}&ghl_user_email={{user.email}}",
     showOnCompany: false,
     showOnLocation: true,
     showToAllLocations: true,
