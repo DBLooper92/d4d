@@ -79,17 +79,13 @@ async function ensureCml(
   // Create on base endpoint with ?companyId=... (DO NOT include companyId in JSON body)
   const createUrl = `${base}?companyId=${encodeURIComponent(companyId)}`;
 
-  // New visibility rules:
-  // - Visible at Agency and Location
-  // - Only Admins see it in sub-accounts (userRole: "admin")
-  // - Location URL param is passed for location context; agency context opens /app without it
+  // Menu should appear for both agency and location contexts.
   const baseBody = {
     title: "Driving for Dollars",
     url: "https://app.driving4dollars.co/app?location_id={{location.id}}",
     showOnCompany: true,
     showOnLocation: true,
     showToAllLocations: true,
-    visibility: { agency: true, subAccount: true },
     allowCamera: false,
     allowMicrophone: false,
     userRole: "admin" as const,
@@ -390,3 +386,4 @@ export async function GET(request: Request) {
 
   return NextResponse.redirect(ui.toString(), { status: 302 });
 }
+
