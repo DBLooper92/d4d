@@ -30,7 +30,7 @@ async function getAccessTokenForAgency(agencyId: string) {
   }
 }
 
-type CleanupBody = { agencyId?: string };
+type CleanupBody = { agencyId?: string; force?: boolean };
 
 export async function POST(req: Request) {
   const url = new URL(req.url);
@@ -47,20 +47,14 @@ export async function POST(req: Request) {
     /* ignore body */
   }
   const agencyId = (body.agencyId || url.searchParams.get("agencyId") || "").trim();
+  const force = body.force ?? (url.searchParams.get("force") === "1");
   if (!agencyId) return NextResponse.json({ error: "Missing agencyId" }, { status: 400 });
 
   const cfg = getGhlConfig();
 
-  // 1) Quick check: Firestore - any installed locations?
-  const q = await db()
-    .collection("locations")
-    .where("agencyId", "==", agencyId)
-    .where("isInstalled", "==", true)
-    .limit(1)
-    .get();
-  let installedCount = q.size;
-
-  // 2) If appId configured, confirm via installedLocations API (authoritative)
+  // 1) Prefer authoritative installedLocations if appId is set.
+  let installedCount = 0;
+  let usedApi = false;
   if (cfg.integrationId) {
     const acc = await getAccessTokenForAgency(agencyId);
     if (acc) {
@@ -69,18 +63,29 @@ export async function POST(req: Request) {
       });
       if (r.ok) {
         const json: unknown = await r.json();
-        // Normalize via shared helper (avoids any)
         const arr = pickLocs(json);
         installedCount = arr.length;
+        usedApi = true;
       }
     }
   }
 
-  if (installedCount > 0) {
+  // 2) Fallback to Firestore if API couldn’t be used.
+  if (!usedApi) {
+    const q = await db()
+      .collection("locations")
+      .where("agencyId", "==", agencyId)
+      .where("isInstalled", "==", true)
+      .limit(1)
+      .get();
+    installedCount = q.size;
+  }
+
+  if (installedCount > 0 && !force) {
     return NextResponse.json({ ok: true, keptMenu: true, installedCount }, { status: 200 });
   }
 
-  // 3) No installs remain -> delete the menu
+  // 3) Delete the menu at the company scope
   const acc = await getAccessTokenForAgency(agencyId);
   if (!acc) return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
 
@@ -97,8 +102,8 @@ export async function POST(req: Request) {
   }
   if (!menuId) return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
 
-  const ok = await deleteMenuById(acc, menuId);
+  const ok = await deleteMenuById(acc, menuId, { companyId: agencyId });
   if (ok) await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
 
-  return NextResponse.json({ ok, removedMenuId: menuId }, { status: 200 });
+  return NextResponse.json({ ok, removedMenuId: menuId, force }, { status: 200 });
 }
