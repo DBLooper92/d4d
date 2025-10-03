@@ -83,15 +83,10 @@ async function ensureCml(
   const baseBody = {
     title: "Driving for Dollars",
     url: "https://app.driving4dollars.co/app?location_id={{location.id}}",
-
-    // 🔒 Visibility controls (hide at agency, show for all locations)
+    // visibility flags that the API accepts (do NOT send `visibility`)
     showOnCompany: false,
     showOnLocation: true,
     showToAllLocations: true,
-
-    // Extra belt-and-suspenders visibility for newer payload formats
-    visibility: { agency: false, subAccount: true },
-
     allowCamera: false,
     allowMicrophone: false,
     userRole: "admin" as const,
@@ -360,7 +355,7 @@ export async function GET(request: Request) {
     olog("location discovery/mint error", { message: (e as Error).message });
   }
 
-  if (agencyId) {
+  if (agencyId && installationTarget === "Company") {
     try {
       const cmlId = await ensureCml(tokens.access_token, agencyId, scopeArr);
       if (cmlId) {
