@@ -32,7 +32,6 @@ type UninstallPayload =
   | (CommonKeys & { type: "UNINSTALL"; event?: string })
   | (CommonKeys & { event: "AppUninstall"; type?: string });
 
-
 /** Type guards */
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -159,10 +158,15 @@ async function getAgencyIdForLocation(locationId: string) {
   return snap.exists ? (String((snap.data() || {}).agencyId || "") || null) : null;
 }
 
+/**
+ * Get an access token for the agency:
+ *  1) Try agency refresh token
+ *  2) Index-free fallback: scan locations where agencyId == X and use the first refreshToken
+ */
 async function getAccessTokenForAgency(agencyId: string) {
   const { clientId, clientSecret } = getGhlConfig();
   const agSnap = await db().collection("agencies").doc(agencyId).get();
-  const ag = agSnap.exists ? agSnap.data() || {} : {};
+  const ag = agSnap.exists ? (agSnap.data() || {}) : {};
   const agencyRefresh = String((ag as Record<string, unknown>).refreshToken || "") || "";
 
   const tryExchange = async (rt: string) => {
@@ -180,17 +184,27 @@ async function getAccessTokenForAgency(agencyId: string) {
     if (acc) return acc;
   }
 
-  // Fallback: any location refresh token under this agency
-  const q = await db()
-    .collection("locations")
-    .where("agencyId", "==", agencyId)
-    .where("refreshToken", ">", "")
-    .limit(1)
-    .get();
-  if (!q.empty) {
-    const rt = String((q.docs[0].data() || {}).refreshToken || "");
-    if (rt) return tryExchange(rt);
+  // Index-free fallback (no composite index required)
+  let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+  for (let page = 0; page < 5; page++) {
+    let q = db().collection("locations").where("agencyId", "==", agencyId).limit(200);
+    if (last) q = q.startAfter(last);
+    const snap = await q.get();
+    if (snap.empty) break;
+
+    for (const d of snap.docs) {
+      const data = d.data() || {};
+      const rt = String((data as Record<string, unknown>).refreshToken || "");
+      if (rt) {
+        const acc = await tryExchange(rt);
+        if (acc) return acc;
+      }
+    }
+
+    last = snap.docs[snap.docs.length - 1];
+    if (snap.size < 200) break;
   }
+
   return null;
 }
 
@@ -422,22 +436,30 @@ export async function POST(req: Request) {
   const locationId: string | null = locationIdFromPayload;
   if (!agencyId && locationId) agencyId = await getAgencyIdForLocation(locationId);
 
+  // ---- Acquire tokens *before* we delete documents ----
+  const preAgencyAccessToken = agencyId ? await getAccessTokenForAgency(agencyId) : null;
+  const preLocationAccessToken = locationId ? await getAccessTokenForLocation(locationId) : null;
+
   // --- CASE A: Location uninstall ---
   if (locationId) {
     try {
+      // Harmless flag in case other code reads it mid-flight
       await db().collection("locations").doc(locationId).set({ isInstalled: false }, { merge: true });
+
       await cascadeDeleteLocation(locationId, agencyId);
       olog("location cascade delete complete", { agencyId, locationId });
     } catch (e) {
       olog("location cascade delete failed", { agencyId, locationId, err: String(e) });
+      // Continue; we still want to try menu removal below
     }
   }
 
   if (!agencyId) {
+    // No way to determine company context; we already removed local data.
     return NextResponse.json({ ok: true, note: "no agencyId available after location delete" }, { status: 200 });
   }
 
-  // If any locations still have the app, keep the menu
+  // If any locations still have the app, keep the menu (nothing to remove)
   if (await anyInstalledLocations(agencyId)) {
     return NextResponse.json({ ok: true, keptMenu: true }, { status: 200 });
   }
@@ -453,11 +475,13 @@ export async function POST(req: Request) {
     }
   }
 
-  // ---- Custom Menu removal flow
-  const agencyAccessToken = await getAccessTokenForAgency(agencyId);
-  const locationAccessToken = locationId ? await getAccessTokenForLocation(locationId) : null;
+  // ---- Custom Menu removal flow (use pre-fetched tokens; do not re-query now)
+  const agencyAccessToken = preAgencyAccessToken;
+  const locationAccessToken = preLocationAccessToken;
 
   if (!agencyAccessToken && !locationAccessToken) {
+    // We can’t auth against CML API; return success so webhook doesn’t retry forever.
+    // Run maintenance endpoint later to clean up if needed.
     return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
   }
 
