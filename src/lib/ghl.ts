@@ -41,6 +41,9 @@ export function ghlAuthBase() {
 export function ghlTokenUrl() {
   return "https://services.leadconnectorhq.com/oauth/token";
 }
+export function ghlReconnectUrl() {
+  return "https://services.leadconnectorhq.com/oauth/reconnect";
+}
 
 export function ghlCompanyUrl(companyId: string) {
   return `https://services.leadconnectorhq.com/companies/${companyId}`;
@@ -232,4 +235,64 @@ export async function deleteMenuById(
     }
   }
   return false;
+}
+
+// -----------------------------------------------------------------------------
+// Reconnect helpers
+// -----------------------------------------------------------------------------
+
+export async function reconnectForCompanyAuthCode(
+  clientId: string,
+  clientSecret: string,
+  companyId: string,
+): Promise<string | null> {
+  try {
+    const r = await fetch(ghlReconnectUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ clientKey: clientId, clientSecret, companyId }),
+    });
+    if (!r.ok) {
+      olog("reconnect company failed", { status: r.status, sample: (await r.text().catch(() => "")).slice(0, 300) });
+      return null;
+    }
+    const j = (await r.json()) as { authorizationCode?: string };
+    return (j.authorizationCode && j.authorizationCode.trim()) || null;
+  } catch (e) {
+    olog("reconnect company error", { err: String(e) });
+    return null;
+  }
+}
+
+export async function exchangeAuthCodeForTokens(
+  code: string,
+  clientId: string,
+  clientSecret: string,
+  redirectUri: string,
+): Promise<OAuthTokens | null> {
+  try {
+    const form = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+      // IMPORTANT: for company reconnection we explicitly set user_type
+      user_type: "Company",
+    });
+    const r = await fetch(ghlTokenUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: form,
+    });
+    const raw = await r.text();
+    if (!r.ok) {
+      olog("token exchange (from reconnect code) failed", { status: r.status, sample: raw.slice(0, 400) });
+      return null;
+    }
+    return JSON.parse(raw) as OAuthTokens;
+  } catch (e) {
+    olog("token exchange error", { err: String(e) });
+    return null;
+  }
 }

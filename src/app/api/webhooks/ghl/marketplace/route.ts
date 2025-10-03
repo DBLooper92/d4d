@@ -7,233 +7,163 @@ import {
   listCompanyMenus,
   findOurMenu,
   deleteMenuById,
-  lcHeaders,
-  ghlInstalledLocationsUrl,
-  pickLocs,
-  AnyLoc,
+  reconnectForCompanyAuthCode,
+  exchangeAuthCodeForTokens,
 } from "@/lib/ghl";
 import { exchangeRefreshToken } from "@/lib/ghlTokens";
 
 export const runtime = "nodejs";
 
-type UninstallPayloadA = { type: "UNINSTALL"; appId?: string; companyId?: string; locationId?: string };
-type UninstallPayloadB = { event: "AppUninstall"; appId?: string; companyId?: string; locationId?: string };
-type UninstallPayload = UninstallPayloadA | UninstallPayloadB;
+type UninstallPayload =
+  | { type: "UNINSTALL"; appId?: string; companyId?: string; locationId?: string }
+  | { event: "AppUninstall"; appId?: string; companyId?: string; locationId?: string };
 
-/**
- * Single-field query (no composite index). Checks up to 500 docs for isInstalled.
- * Return value is explicit on all paths.
- */
-async function anyInstalledLocations(agencyId: string): Promise<boolean> {
-  const snap = await db()
-    .collection("locations")
-    .where("agencyId", "==", agencyId)
-    .limit(500)
-    .get();
-
-  const any = snap.docs.some((doc) => Boolean((doc.data() || {}).isInstalled));
-  return any;
+function isNonEmpty(s?: string | null): s is string {
+  return typeof s === "string" && !!s.trim();
 }
 
-/**
- * Resolve agency access token without composite index:
- * 1) Try agency refresh token on /agencies/{agencyId}
- * 2) Fallback: scan up to 200 locations (agencyId filter only) and use first refreshToken found
- */
-async function getAccessTokenForAgency(agencyId: string): Promise<string | null> {
-  const { clientId, clientSecret } = getGhlConfig();
-
-  // 1) Agency-level refresh token
-  const agSnap = await db().collection("agencies").doc(agencyId).get();
-  const ag = agSnap.exists ? agSnap.data() || {} : {};
-  const agencyRefresh = String(ag.refreshToken || "") || "";
-
-  const tryExchange = async (rt: string) => {
-    try {
-      const tok = await exchangeRefreshToken(rt, clientId, clientSecret);
-      return tok.access_token || null;
-    } catch (e) {
-      olog("agency token exchange failed", { agencyId, err: String(e) });
-      return null;
-    }
-  };
-
-  if (agencyRefresh) {
-    const acc = await tryExchange(agencyRefresh);
-    if (acc) return acc;
-  }
-
-  // 2) Fallback: scan a few locations (no composite index)
-  const snap = await db().collection("locations").where("agencyId", "==", agencyId).limit(200).get();
-  for (const doc of snap.docs) {
-    const rt = String((doc.data() || {}).refreshToken || "");
-    if (!rt) continue;
-    const acc = await tryExchange(rt);
-    if (acc) return acc;
-  }
-
-  return null;
-}
-
-async function getAgencyIdForLocation(locationId: string): Promise<string | null> {
-  const snap = await db().collection("locations").doc(locationId).get();
-  return snap.exists ? (String((snap.data() || {}).agencyId || "") || null) : null;
-}
-
-async function getAccessTokenForLocation(locationId: string): Promise<string | null> {
-  const { clientId, clientSecret } = getGhlConfig();
-  const snap = await db().collection("locations").doc(locationId).get();
-  if (!snap.exists) return null;
-  const rt = String((snap.data() || {}).refreshToken || "");
-  if (!rt) return null;
+// Avoid composite index by scanning a small slice and picking the first token.
+async function getAnyLocationAccessTokenForAgency(agencyId: string): Promise<string | null> {
   try {
-    const tok = await exchangeRefreshToken(rt, clientId, clientSecret);
-    return tok.access_token || null;
-  } catch (e) {
-    olog("location token exchange failed", { locationId, err: String(e) });
-    return null;
-  }
-}
+    const { clientId, clientSecret } = getGhlConfig();
+    // Pull up to 50 docs and pick the first with a refresh token.
+    const q = await db()
+      .collection("locations")
+      .where("agencyId", "==", agencyId)
+      .limit(50)
+      .get();
 
-/**
- * Mark every location in this agency as uninstalled (local source of truth).
- */
-async function markAllAgencyLocationsUninstalled(agencyId: string): Promise<number> {
-  const CLEAR_REFRESH = false; // set true if you also want to null out refreshToken
-  const col = db().collection("locations");
-  const q = await col.where("agencyId", "==", agencyId).select().get();
-
-  let updated = 0;
-  const BATCH_LIMIT = 400;
-  let batch = db().batch();
-  let count = 0;
-
-  for (const doc of q.docs) {
-    const ref = col.doc(doc.id);
-    const data: Record<string, unknown> = { isInstalled: false };
-    if (CLEAR_REFRESH) data.refreshToken = null;
-    batch.set(ref, data, { merge: true });
-    updated++;
-    count++;
-    if (count >= BATCH_LIMIT) {
-      await batch.commit();
-      batch = db().batch();
-      count = 0;
-    }
-  }
-  if (count > 0) await batch.commit();
-  return updated;
-}
-
-async function countInstalledViaApi(agencyId: string): Promise<number | null> {
-  const cfg = getGhlConfig();
-  if (!cfg.integrationId) return null;
-
-  const acc = await getAccessTokenForAgency(agencyId);
-  if (!acc) return null;
-
-  const r = await fetch(ghlInstalledLocationsUrl(agencyId, cfg.integrationId), {
-    headers: lcHeaders(acc),
-  });
-  if (!r.ok) {
-    const sample = await r.text().catch(() => "");
-    olog("installedLocations check failed", { status: r.status, sample: sample.slice(0, 300) });
-    return null;
-  }
-
-  const json: unknown = await r.json();
-  const arr = pickLocs(json);
-  const installed = arr.filter((l: AnyLoc) => !!(l.id || l.locationId || l._id));
-  return installed.length;
-}
-
-export async function POST(req: Request) {
-  try {
-    let payload: UninstallPayload | null = null;
-    try {
-      payload = (await req.json()) as UninstallPayload;
-    } catch {
-      return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
-    }
-
-    const isUninstall =
-      !!payload &&
-      (("type" in payload && payload.type === "UNINSTALL") ||
-        ("event" in payload && payload.event === "AppUninstall"));
-    if (!isUninstall) return NextResponse.json({ ok: true }, { status: 200 });
-
-    const agencyIdFromPayload =
-      payload && "companyId" in payload && typeof payload.companyId === "string" ? payload.companyId : null;
-    const locationIdFromPayload =
-      payload && "locationId" in payload && typeof payload.locationId === "string" ? payload.locationId : null;
-
-    let agencyId: string | null = agencyIdFromPayload;
-    const locationId: string | null = locationIdFromPayload;
-    if (!agencyId && locationId) agencyId = await getAgencyIdForLocation(locationId);
-
-    // Mark local state
-    if (locationId) {
-      await db().collection("locations").doc(locationId).set({ isInstalled: false }, { merge: true });
-    } else if (agencyId) {
-      const changed = await markAllAgencyLocationsUninstalled(agencyId);
-      olog("company uninstall: marked sub-accounts uninstalled", { agencyId, changed });
-    }
-
-    if (!agencyId) return NextResponse.json({ ok: true }, { status: 200 });
-
-    // If this was a single-location uninstall and others still installed, keep the menu.
-    if (locationId) {
-      const stillAny = await anyInstalledLocations(agencyId);
-      if (stillAny) return NextResponse.json({ ok: true, keptMenu: true }, { status: 200 });
-    }
-
-    // Otherwise (company uninstall, or last location): remove CML at company scope.
-    const agencyAccessToken = await getAccessTokenForAgency(agencyId);
-    const locationAccessToken = locationId ? await getAccessTokenForLocation(locationId) : null;
-
-    if (!agencyAccessToken && !locationAccessToken) {
-      await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
-      return NextResponse.json({ ok: true, pendingMenuRemoval: true }, { status: 200 });
-    }
-
-    const agSnap = await db().collection("agencies").doc(agencyId).get();
-    const knownId = (agSnap.data() || {}).customMenuId as string | undefined;
-
-    let menuId = knownId || "";
-    if (!menuId) {
-      const listToken = agencyAccessToken || locationAccessToken!;
-      const list = await listCompanyMenus(listToken, agencyId);
-      if (list.ok) {
-        const found = findOurMenu(list.items);
-        menuId = (found?.id as string | undefined) || "";
-      } else {
-        olog("list company menus failed", { status: list.status });
+    for (const d of q.docs) {
+      const rt = String((d.data() || {}).refreshToken || "");
+      if (!rt) continue;
+      try {
+        const tok = await exchangeRefreshToken(rt, clientId, clientSecret);
+        if (isNonEmpty(tok.access_token)) return tok.access_token!;
+      } catch (e) {
+        olog("fallback location token exchange failed", { agencyId, locationId: d.id, err: String(e) });
       }
     }
-
-    if (!menuId) {
-      await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
-      return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
-    }
-
-    const ok = await deleteMenuById(agencyAccessToken || "", menuId, {
-      companyId: agencyId,
-      locationAccessToken: locationAccessToken || undefined,
-    });
-
-    if (ok) {
-      await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
-      return NextResponse.json({ ok: true, removedMenuId: menuId }, { status: 200 });
-    }
-
-    const apiCount = await countInstalledViaApi(agencyId);
-    return NextResponse.json(
-      { ok: false, apiInstalledCount: apiCount ?? "(unknown)", removalAttempted: true },
-      { status: 200 },
-    );
+    return null;
   } catch (e) {
-    // Never 500 on uninstall webhooks; log and return 200 so Marketplace doesn’t retry forever
-    olog("uninstall webhook error (soft)", { err: (e as Error).message });
-    return NextResponse.json({ ok: true, softError: true }, { status: 200 });
+    olog("fallback location token scan failed", { agencyId, err: String(e) });
+    return null;
   }
+}
+
+async function getAgencyAccessTokenOrReconnect(agencyId: string): Promise<string | null> {
+  const { clientId, clientSecret, redirectUri } = getGhlConfig();
+
+  // 1) Try stored agency refresh token (may be invalid after uninstall).
+  try {
+    const agSnap = await db().collection("agencies").doc(agencyId).get();
+    const ag = agSnap.exists ? agSnap.data() || {} : {};
+    const agencyRefresh = String(ag.refreshToken || "") || "";
+    if (agencyRefresh) {
+      try {
+        const tok = await exchangeRefreshToken(agencyRefresh, clientId, clientSecret);
+        if (isNonEmpty(tok.access_token)) return tok.access_token!;
+      } catch (e) {
+        olog("agency token exchange failed", { agencyId, err: String(e) });
+      }
+    }
+  } catch (e) {
+    olog("agency read failed", { agencyId, err: String(e) });
+  }
+
+  // 2) If that failed, use the official Reconnect API for companyId -> auth code -> access token
+  const code = await reconnectForCompanyAuthCode(clientId, clientSecret, agencyId);
+  if (!code) return null;
+
+  const toks = await exchangeAuthCodeForTokens(code, clientId, clientSecret, redirectUri);
+  if (!toks?.access_token) return null;
+  return toks.access_token;
+}
+
+export async function POST(req: Request): Promise<Response> {
+  let payload: UninstallPayload | null = null;
+  try {
+    payload = (await req.json()) as UninstallPayload;
+  } catch {
+    return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
+  }
+
+  const isUninstall =
+    !!payload &&
+    (("type" in payload && payload.type === "UNINSTALL") ||
+      ("event" in payload && payload.event === "AppUninstall"));
+
+  if (!isUninstall) return NextResponse.json({ ok: true }, { status: 200 });
+
+  const agencyId =
+    (payload && "companyId" in payload && typeof payload.companyId === "string" && payload.companyId.trim()) || null;
+  const locationId =
+    (payload && "locationId" in payload && typeof payload.locationId === "string" && payload.locationId.trim()) || null;
+
+  // Mark the specific location as uninstalled if present.
+  if (locationId) {
+    await db().collection("locations").doc(locationId).set({ isInstalled: false }, { merge: true });
+  }
+
+  if (!agencyId) {
+    return NextResponse.json({ ok: true, note: "no companyId on uninstall payload" }, { status: 200 });
+  }
+
+  // If this is an AGENCY uninstall (no specific locationId provided),
+  // consider all sub-accounts uninstalled and proceed to delete the agency-level menu.
+  if (!locationId) {
+    // Mark a slice of locations under this agency as uninstalled (best-effort; no composite index).
+    try {
+      const q = await db().collection("locations").where("agencyId", "==", agencyId).limit(500).get();
+      let changed = 0;
+      const batch = db().batch();
+      for (const d of q.docs) {
+        batch.set(d.ref, { isInstalled: false }, { merge: true });
+        changed++;
+      }
+      if (changed) await batch.commit();
+      olog("company uninstall: marked sub-accounts uninstalled", { agencyId, changed });
+    } catch (e) {
+      olog("company uninstall: marking subs failed (non-fatal)", { agencyId, err: String(e) });
+    }
+  }
+
+  // Acquire a token with permission to delete the company custom menu:
+  //  1) try agency refresh -> access; 2) try company reconnect; 3) optional: any location refresh (will still 401 on CML).
+  let agencyAccessToken = await getAgencyAccessTokenOrReconnect(agencyId);
+  if (!agencyAccessToken) {
+    // As a very last resort, try a location access token (likely to 401 on CML endpoints, but we’ll attempt).
+    agencyAccessToken = await getAnyLocationAccessTokenForAgency(agencyId);
+  }
+
+  if (!agencyAccessToken) {
+    // We can’t call Custom Menus — return success to webhook, but flag manual cleanup.
+    return NextResponse.json({ ok: true, pendingManualRemoval: true, reason: "no-token" }, { status: 200 });
+  }
+
+  // Find the custom menu id (either stored or by listing) then delete it.
+  const agSnap = await db().collection("agencies").doc(agencyId).get();
+  const knownId = (agSnap.data() || {}).customMenuId as string | undefined;
+
+  let menuId = knownId || "";
+  if (!menuId) {
+    const list = await listCompanyMenus(agencyAccessToken, agencyId);
+    if (list.ok) {
+      const found = findOurMenu(list.items);
+      menuId = (found?.id as string | undefined) || "";
+    } else {
+      olog("list company menus failed", { status: (list as { status?: number }).status });
+    }
+  }
+
+  if (!menuId) {
+    return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
+  }
+
+  const ok = await deleteMenuById(agencyAccessToken, menuId, { companyId: agencyId });
+
+  if (ok) {
+    await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
+  }
+
+  return NextResponse.json({ ok, removedMenuId: ok ? menuId : undefined }, { status: 200 });
 }
