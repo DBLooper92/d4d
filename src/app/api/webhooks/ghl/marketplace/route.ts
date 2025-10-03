@@ -1,6 +1,6 @@
 // File: src/app/api/webhooks/ghl/marketplace/route.ts
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebaseAdmin";
+import { db, getAdminApp } from "@/lib/firebaseAdmin";
 import { olog, getGhlConfig, listCompanyMenus, findOurMenu, deleteMenuById } from "@/lib/ghl";
 import { exchangeRefreshToken } from "@/lib/ghlTokens";
 
@@ -11,9 +11,10 @@ type UninstallPayload =
   | { event: "AppUninstall"; appId?: string; companyId?: string; locationId?: string };
 
 /**
- * ---- Helpers: chunked Firestore batch ops
+ * ---- Helpers: chunked Firestore batch + Auth ops
  */
-const BATCH_LIMIT = 450; // under 500 to leave headroom for metadata ops
+const BATCH_LIMIT = 450; // under 500 to leave headroom
+const AUTH_DELETE_LIMIT = 1000; // Admin SDK bulk delete limit
 
 async function commitInChunks(ops: Array<(b: FirebaseFirestore.WriteBatch) => void>) {
   let i = 0;
@@ -28,19 +29,53 @@ async function commitInChunks(ops: Array<(b: FirebaseFirestore.WriteBatch) => vo
 
 async function deleteCollectionByQuery(
   col: FirebaseFirestore.Query,
-  pickOp: (doc: FirebaseFirestore.QueryDocumentSnapshot) => (b: FirebaseFirestore.WriteBatch) => void,
+  pick: (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
+    op: (b: FirebaseFirestore.WriteBatch) => void;
+    uid?: string | null;
+  },
   pageSize = 500,
 ) {
+  const uids: string[] = [];
   let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
-  // Loop pages until empty
   while (true) {
     let q = col.limit(pageSize);
     if (last) q = q.startAfter(last);
     const snap = await q.get();
     if (snap.empty) break;
-    const ops = snap.docs.map((d) => pickOp(d));
+
+    const ops: Array<(b: FirebaseFirestore.WriteBatch) => void> = [];
+    for (const d of snap.docs) {
+      const { op, uid } = pick(d);
+      ops.push(op);
+      if (uid && uid.trim()) uids.push(uid.trim());
+    }
     await commitInChunks(ops);
     last = snap.docs[snap.docs.length - 1];
+  }
+  return uids;
+}
+
+async function deleteAuthUsersInChunks(uids: string[]) {
+  if (!uids.length) return;
+  const auth = getAdminApp().auth();
+  for (let i = 0; i < uids.length; i += AUTH_DELETE_LIMIT) {
+    const chunk = uids.slice(i, i + AUTH_DELETE_LIMIT);
+    try {
+      const res = await auth.deleteUsers(chunk);
+      olog("auth.deleteUsers", {
+        count: chunk.length,
+        successCount: res.successCount,
+        failureCount: res.failureCount,
+      });
+      if (res.failureCount) {
+        // Log details (do not throw)
+        const samples = res.errors.slice(0, 5).map((e) => ({ index: e.index, error: String(e.error) }));
+        olog("auth.deleteUsers failures", { sample: samples });
+      }
+    } catch (e) {
+      olog("auth.deleteUsers error", { err: String(e), chunkSize: chunk.length });
+      // Non-fatal: continue
+    }
   }
 }
 
@@ -112,32 +147,35 @@ async function getAccessTokenForLocation(locationId: string) {
 /**
  * ---- Cascade delete for a single location
  * Deletes:
- *   - locations/{locationId}/users/*  (subcollection)
- *   - users/{uid} for each member referencing the location
- *   - root users where locationId == {locationId} (fallback if subcollection missing)
+ *   - locations/{locationId}/users/* (subcollection)  → and each root users/{uid} + Auth user
+ *   - users/{uid} where locationId == {locationId} (fallback) → and Auth user
  *   - agencies/{agencyId}/locations/{locationId}
  *   - locations/{locationId}
  */
 async function cascadeDeleteLocation(locationId: string, agencyId?: string | null) {
   const ops: Array<(b: FirebaseFirestore.WriteBatch) => void> = [];
 
-  // 1) Delete membership subcollection & root users
+  // 1) Membership subcollection: collect UID list and delete subdocs + root users
   const membersCol = db().collection("locations").doc(locationId).collection("users");
-  // Page through subcollection; collect delete ops for both the subdoc and root user doc
-  // We prefer subcollection as source of truth for "associated users".
-  await deleteCollectionByQuery(membersCol, (doc) => {
+  const uidsFromMembers = await deleteCollectionByQuery(membersCol, (doc) => {
     const uid = doc.id;
     const userRef = db().collection("users").doc(uid);
     const locUserRef = doc.ref;
-    return (b) => {
-      b.delete(locUserRef);
-      b.delete(userRef);
+    return {
+      op: (b) => {
+        b.delete(locUserRef);
+        b.delete(userRef);
+      },
+      uid,
     };
   });
 
-  // 2) Fallback: delete any root users that still point at this location (if any)
+  // 2) Fallback: root users that still point to this location (if any)
   const rootUsersQuery = db().collection("users").where("locationId", "==", locationId);
-  await deleteCollectionByQuery(rootUsersQuery, (doc) => (b) => b.delete(doc.ref));
+  const uidsFromRoot = await deleteCollectionByQuery(rootUsersQuery, (doc) => {
+    const uid = doc.id;
+    return { op: (b) => b.delete(doc.ref), uid };
+  });
 
   // 3) Delete agency subcollection mirror doc (if agency known)
   if (agencyId) {
@@ -150,6 +188,12 @@ async function cascadeDeleteLocation(locationId: string, agencyId?: string | nul
   ops.push((b) => b.delete(locationRef));
 
   await commitInChunks(ops);
+
+  // 5) Delete Firebase Auth users (bulk) — dedupe UIDs
+  const allUids = Array.from(new Set([...uidsFromMembers, ...uidsFromRoot]));
+  if (allUids.length) {
+    await deleteAuthUsersInChunks(allUids);
+  }
 }
 
 /**
@@ -159,7 +203,6 @@ async function cascadeDeleteLocation(locationId: string, agencyId?: string | nul
  *   - agencies/{agencyId}
  */
 async function cascadeDeleteAgency(agencyId: string) {
-  // Page through locations for the agency
   const baseQuery = db().collection("locations").where("agencyId", "==", agencyId);
   let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
 
@@ -213,8 +256,7 @@ export async function POST(req: Request) {
   // --- CASE A: Location uninstall ---
   if (locationId) {
     try {
-      // If you previously flagged isInstalled, we don't need it anymore because we're deleting the doc;
-      // but keep this write harmless for logs/consistency in case other code relies on it mid-flight.
+      // Harmless flag in case other code reads it mid-flight
       await db().collection("locations").doc(locationId).set({ isInstalled: false }, { merge: true });
 
       await cascadeDeleteLocation(locationId, agencyId);
@@ -235,7 +277,6 @@ export async function POST(req: Request) {
   }
 
   // --- CASE B: Agency uninstall (company-level) OR last location removed ---
-  // If company-level uninstall (no locationId in payload), we also nuke all data for this agency.
   if (!locationId) {
     try {
       await cascadeDeleteAgency(agencyId);
@@ -246,7 +287,7 @@ export async function POST(req: Request) {
     }
   }
 
-  // ---- Custom Menu removal (unchanged flow, but now always runs when no installs remain)
+  // ---- Custom Menu removal flow
   const agencyAccessToken = await getAccessTokenForAgency(agencyId);
   const locationAccessToken = locationId ? await getAccessTokenForLocation(locationId) : null;
 

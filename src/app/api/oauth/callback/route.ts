@@ -83,9 +83,15 @@ async function ensureCml(
   const baseBody = {
     title: "Driving for Dollars",
     url: "https://app.driving4dollars.co/app?location_id={{location.id}}",
-    showOnCompany: true,
+
+    // 🔒 Visibility controls (hide at agency, show for all locations)
+    showOnCompany: false,
     showOnLocation: true,
     showToAllLocations: true,
+
+    // Extra belt-and-suspenders visibility for newer payload formats
+    visibility: { agency: false, subAccount: true },
+
     allowCamera: false,
     allowMicrophone: false,
     userRole: "admin" as const,
