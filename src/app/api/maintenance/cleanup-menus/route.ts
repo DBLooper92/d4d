@@ -17,17 +17,35 @@ export const runtime = "nodejs";
 
 async function getAccessTokenForAgency(agencyId: string) {
   const { clientId, clientSecret } = getGhlConfig();
+
   const agSnap = await db().collection("agencies").doc(agencyId).get();
   const ag = agSnap.exists ? (agSnap.data() || {}) : {};
   const agencyRefresh = String(ag.refreshToken || "") || "";
-  if (!agencyRefresh) return null;
-  try {
-    const tok = await exchangeRefreshToken(agencyRefresh, clientId, clientSecret);
-    return tok.access_token || null;
-  } catch (e) {
-    olog("cleanup: token exchange failed", { agencyId, err: String(e) });
-    return null;
+
+  const tryExchange = async (rt: string) => {
+    try {
+      const tok = await exchangeRefreshToken(rt, clientId, clientSecret);
+      return tok.access_token || null;
+    } catch (e) {
+      olog("cleanup: token exchange failed", { agencyId, err: String(e) });
+      return null;
+    }
+  };
+
+  if (agencyRefresh) {
+    const acc = await tryExchange(agencyRefresh);
+    if (acc) return acc;
   }
+
+  // Fallback: scan a few locations (no composite index)
+  const snap = await db().collection("locations").where("agencyId", "==", agencyId).limit(200).get();
+  for (const doc of snap.docs) {
+    const rt = String((doc.data() || {}).refreshToken || "");
+    if (!rt) continue;
+    const acc = await tryExchange(rt);
+    if (acc) return acc;
+  }
+  return null;
 }
 
 type CleanupBody = { agencyId?: string; force?: boolean };
@@ -43,24 +61,21 @@ export async function POST(req: Request) {
   let body: CleanupBody = {};
   try {
     body = (await req.json()) as CleanupBody;
-  } catch {
-    /* ignore body */
-  }
+  } catch { /* ignore */ }
+
   const agencyId = (body.agencyId || url.searchParams.get("agencyId") || "").trim();
   const force = body.force ?? (url.searchParams.get("force") === "1");
   if (!agencyId) return NextResponse.json({ error: "Missing agencyId" }, { status: 400 });
 
   const cfg = getGhlConfig();
 
-  // 1) Prefer authoritative installedLocations if appId is set.
+  // Prefer authoritative API if available
   let installedCount = 0;
   let usedApi = false;
   if (cfg.integrationId) {
     const acc = await getAccessTokenForAgency(agencyId);
     if (acc) {
-      const r = await fetch(ghlInstalledLocationsUrl(agencyId, cfg.integrationId), {
-        headers: lcHeaders(acc),
-      });
+      const r = await fetch(ghlInstalledLocationsUrl(agencyId, cfg.integrationId), { headers: lcHeaders(acc) });
       if (r.ok) {
         const json: unknown = await r.json();
         const arr = pickLocs(json);
@@ -70,22 +85,16 @@ export async function POST(req: Request) {
     }
   }
 
-  // 2) Fallback to Firestore if API couldn’t be used.
   if (!usedApi) {
-    const q = await db()
-      .collection("locations")
-      .where("agencyId", "==", agencyId)
-      .where("isInstalled", "==", true)
-      .limit(1)
-      .get();
-    installedCount = q.size;
+    // Scan Firestore without composite index
+    const snap = await db().collection("locations").where("agencyId", "==", agencyId).limit(500).get();
+    installedCount = snap.docs.some((d) => Boolean((d.data() || {}).isInstalled)) ? 1 : 0;
   }
 
   if (installedCount > 0 && !force) {
     return NextResponse.json({ ok: true, keptMenu: true, installedCount }, { status: 200 });
   }
 
-  // 3) Delete the menu at the company scope
   const acc = await getAccessTokenForAgency(agencyId);
   if (!acc) return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
 

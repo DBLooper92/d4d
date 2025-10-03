@@ -20,23 +20,30 @@ type UninstallPayloadA = { type: "UNINSTALL"; appId?: string; companyId?: string
 type UninstallPayloadB = { event: "AppUninstall"; appId?: string; companyId?: string; locationId?: string };
 type UninstallPayload = UninstallPayloadA | UninstallPayloadB;
 
+/**
+ * Single-field query (no composite index). Checks up to 500 docs for isInstalled.
+ * Return value is explicit on all paths.
+ */
 async function anyInstalledLocations(agencyId: string): Promise<boolean> {
-  const q = await db()
+  const snap = await db()
     .collection("locations")
     .where("agencyId", "==", agencyId)
-    .where("isInstalled", "==", true)
-    .limit(1)
+    .limit(500)
     .get();
-  return !q.empty;
+
+  const any = snap.docs.some((doc) => Boolean((doc.data() || {}).isInstalled));
+  return any;
 }
 
-async function getAgencyIdForLocation(locationId: string): Promise<string | null> {
-  const snap = await db().collection("locations").doc(locationId).get();
-  return snap.exists ? (String((snap.data() || {}).agencyId || "") || null) : null;
-}
-
+/**
+ * Resolve agency access token without composite index:
+ * 1) Try agency refresh token on /agencies/{agencyId}
+ * 2) Fallback: scan up to 200 locations (agencyId filter only) and use first refreshToken found
+ */
 async function getAccessTokenForAgency(agencyId: string): Promise<string | null> {
   const { clientId, clientSecret } = getGhlConfig();
+
+  // 1) Agency-level refresh token
   const agSnap = await db().collection("agencies").doc(agencyId).get();
   const ag = agSnap.exists ? agSnap.data() || {} : {};
   const agencyRefresh = String(ag.refreshToken || "") || "";
@@ -56,18 +63,21 @@ async function getAccessTokenForAgency(agencyId: string): Promise<string | null>
     if (acc) return acc;
   }
 
-  // Fallback: use any location refresh token under the agency
-  const q = await db()
-    .collection("locations")
-    .where("agencyId", "==", agencyId)
-    .where("refreshToken", ">", "")
-    .limit(1)
-    .get();
-  if (!q.empty) {
-    const rt = String((q.docs[0].data() || {}).refreshToken || "");
-    if (rt) return tryExchange(rt);
+  // 2) Fallback: scan a few locations (no composite index)
+  const snap = await db().collection("locations").where("agencyId", "==", agencyId).limit(200).get();
+  for (const doc of snap.docs) {
+    const rt = String((doc.data() || {}).refreshToken || "");
+    if (!rt) continue;
+    const acc = await tryExchange(rt);
+    if (acc) return acc;
   }
+
   return null;
+}
+
+async function getAgencyIdForLocation(locationId: string): Promise<string | null> {
+  const snap = await db().collection("locations").doc(locationId).get();
+  return snap.exists ? (String((snap.data() || {}).agencyId || "") || null) : null;
 }
 
 async function getAccessTokenForLocation(locationId: string): Promise<string | null> {
@@ -87,41 +97,34 @@ async function getAccessTokenForLocation(locationId: string): Promise<string | n
 
 /**
  * Mark every location in this agency as uninstalled (local source of truth).
- * Keeps refreshToken intact (some teams prefer to null it; if you want that, flip CLEAR_REFRESH to true).
  */
 async function markAllAgencyLocationsUninstalled(agencyId: string): Promise<number> {
-  const CLEAR_REFRESH = false;
+  const CLEAR_REFRESH = false; // set true if you also want to null out refreshToken
   const col = db().collection("locations");
   const q = await col.where("agencyId", "==", agencyId).select().get();
 
   let updated = 0;
-  const BATCH_LIMIT = 400; // under 500 to be safe with overhead
+  const BATCH_LIMIT = 400;
   let batch = db().batch();
-  let countInBatch = 0;
+  let count = 0;
 
   for (const doc of q.docs) {
     const ref = col.doc(doc.id);
     const data: Record<string, unknown> = { isInstalled: false };
     if (CLEAR_REFRESH) data.refreshToken = null;
-
     batch.set(ref, data, { merge: true });
     updated++;
-    countInBatch++;
-
-    if (countInBatch >= BATCH_LIMIT) {
+    count++;
+    if (count >= BATCH_LIMIT) {
       await batch.commit();
       batch = db().batch();
-      countInBatch = 0;
+      count = 0;
     }
   }
-  if (countInBatch > 0) await batch.commit();
+  if (count > 0) await batch.commit();
   return updated;
 }
 
-/**
- * Authoritative check via /oauth/installedLocations to see if any sub-accounts
- * still have the app installed (only when appId is configured).
- */
 async function countInstalledViaApi(agencyId: string): Promise<number | null> {
   const cfg = getGhlConfig();
   if (!cfg.integrationId) return null;
@@ -140,105 +143,97 @@ async function countInstalledViaApi(agencyId: string): Promise<number | null> {
 
   const json: unknown = await r.json();
   const arr = pickLocs(json);
-  // Only keep valid location ids
   const installed = arr.filter((l: AnyLoc) => !!(l.id || l.locationId || l._id));
   return installed.length;
 }
 
 export async function POST(req: Request) {
-  let payload: UninstallPayload | null = null;
   try {
-    payload = (await req.json()) as UninstallPayload;
-  } catch {
-    return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
-  }
-
-  const isUninstall =
-    !!payload &&
-    (("type" in payload && payload.type === "UNINSTALL") ||
-      ("event" in payload && payload.event === "AppUninstall"));
-  if (!isUninstall) return NextResponse.json({ ok: true }, { status: 200 });
-
-  const agencyIdFromPayload =
-    payload && "companyId" in payload && typeof payload.companyId === "string" ? payload.companyId : null;
-  const locationIdFromPayload =
-    payload && "locationId" in payload && typeof payload.locationId === "string" ? payload.locationId : null;
-
-  let agencyId: string | null = agencyIdFromPayload;
-  const locationId: string | null = locationIdFromPayload;
-  if (!agencyId && locationId) agencyId = await getAgencyIdForLocation(locationId);
-
-  // Update Firestore install flags
-  if (locationId) {
-    await db().collection("locations").doc(locationId).set({ isInstalled: false }, { merge: true });
-  } else if (agencyId) {
-    // Company-level uninstall -> proactively mark ALL agency locations uninstalled
-    const changed = await markAllAgencyLocationsUninstalled(agencyId);
-    olog("company uninstall: marked sub-accounts uninstalled", { agencyId, changed });
-  }
-
-  if (!agencyId) return NextResponse.json({ ok: true }, { status: 200 });
-
-  // If a specific location uninstalled and others still installed, keep the single CML
-  if (locationId) {
-    const stillAny = await anyInstalledLocations(agencyId);
-    if (stillAny) return NextResponse.json({ ok: true, keptMenu: true }, { status: 200 });
-  }
-
-  // From here, either:
-  //  - company-level uninstall, or
-  //  - last remaining location uninstall
-  // Try to remove the CML at the company scope so it disappears everywhere.
-
-  // Grab usable access tokens for both contexts to maximize success.
-  const agencyAccessToken = await getAccessTokenForAgency(agencyId);
-  const locationAccessToken = locationId ? await getAccessTokenForLocation(locationId) : null;
-
-  // If tokens are gone post-uninstall, we still proceed with local cleanup and surface that remote delete is pending.
-  if (!agencyAccessToken && !locationAccessToken) {
-    await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
-    return NextResponse.json({ ok: true, pendingMenuRemoval: true }, { status: 200 });
-  }
-
-  // Resolve the CML id (use known id, else list and find)
-  const agSnap = await db().collection("agencies").doc(agencyId).get();
-  const knownId = (agSnap.data() || {}).customMenuId as string | undefined;
-
-  let menuId = knownId || "";
-  if (!menuId) {
-    const listToken = agencyAccessToken || locationAccessToken!;
-    const list = await listCompanyMenus(listToken, agencyId);
-    if (list.ok) {
-      const found = findOurMenu(list.items);
-      menuId = (found?.id as string | undefined) || "";
-    } else {
-      olog("list company menus failed", { status: list.status });
+    let payload: UninstallPayload | null = null;
+    try {
+      payload = (await req.json()) as UninstallPayload;
+    } catch {
+      return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
     }
+
+    const isUninstall =
+      !!payload &&
+      (("type" in payload && payload.type === "UNINSTALL") ||
+        ("event" in payload && payload.event === "AppUninstall"));
+    if (!isUninstall) return NextResponse.json({ ok: true }, { status: 200 });
+
+    const agencyIdFromPayload =
+      payload && "companyId" in payload && typeof payload.companyId === "string" ? payload.companyId : null;
+    const locationIdFromPayload =
+      payload && "locationId" in payload && typeof payload.locationId === "string" ? payload.locationId : null;
+
+    let agencyId: string | null = agencyIdFromPayload;
+    const locationId: string | null = locationIdFromPayload;
+    if (!agencyId && locationId) agencyId = await getAgencyIdForLocation(locationId);
+
+    // Mark local state
+    if (locationId) {
+      await db().collection("locations").doc(locationId).set({ isInstalled: false }, { merge: true });
+    } else if (agencyId) {
+      const changed = await markAllAgencyLocationsUninstalled(agencyId);
+      olog("company uninstall: marked sub-accounts uninstalled", { agencyId, changed });
+    }
+
+    if (!agencyId) return NextResponse.json({ ok: true }, { status: 200 });
+
+    // If this was a single-location uninstall and others still installed, keep the menu.
+    if (locationId) {
+      const stillAny = await anyInstalledLocations(agencyId);
+      if (stillAny) return NextResponse.json({ ok: true, keptMenu: true }, { status: 200 });
+    }
+
+    // Otherwise (company uninstall, or last location): remove CML at company scope.
+    const agencyAccessToken = await getAccessTokenForAgency(agencyId);
+    const locationAccessToken = locationId ? await getAccessTokenForLocation(locationId) : null;
+
+    if (!agencyAccessToken && !locationAccessToken) {
+      await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
+      return NextResponse.json({ ok: true, pendingMenuRemoval: true }, { status: 200 });
+    }
+
+    const agSnap = await db().collection("agencies").doc(agencyId).get();
+    const knownId = (agSnap.data() || {}).customMenuId as string | undefined;
+
+    let menuId = knownId || "";
+    if (!menuId) {
+      const listToken = agencyAccessToken || locationAccessToken!;
+      const list = await listCompanyMenus(listToken, agencyId);
+      if (list.ok) {
+        const found = findOurMenu(list.items);
+        menuId = (found?.id as string | undefined) || "";
+      } else {
+        olog("list company menus failed", { status: list.status });
+      }
+    }
+
+    if (!menuId) {
+      await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
+      return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
+    }
+
+    const ok = await deleteMenuById(agencyAccessToken || "", menuId, {
+      companyId: agencyId,
+      locationAccessToken: locationAccessToken || undefined,
+    });
+
+    if (ok) {
+      await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
+      return NextResponse.json({ ok: true, removedMenuId: menuId }, { status: 200 });
+    }
+
+    const apiCount = await countInstalledViaApi(agencyId);
+    return NextResponse.json(
+      { ok: false, apiInstalledCount: apiCount ?? "(unknown)", removalAttempted: true },
+      { status: 200 },
+    );
+  } catch (e) {
+    // Never 500 on uninstall webhooks; log and return 200 so Marketplace doesn’t retry forever
+    olog("uninstall webhook error (soft)", { err: (e as Error).message });
+    return NextResponse.json({ ok: true, softError: true }, { status: 200 });
   }
-
-  // If there's no CML id, nothing to delete remotely.
-  if (!menuId) {
-    await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
-    return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
-  }
-
-  // If company-level uninstall, we can be aggressive and remove the menu now.
-  // Otherwise (last location uninstall), remove as well.
-  const ok = await deleteMenuById(agencyAccessToken || "", menuId, {
-    companyId: agencyId,
-    locationAccessToken: locationAccessToken || undefined,
-  });
-
-  if (ok) {
-    await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
-    return NextResponse.json({ ok: true, removedMenuId: menuId }, { status: 200 });
-  }
-
-  // Last resort: confirm via installedLocations. If zero, respond accordingly so
-  // your ops can run /maintenance/cleanup-menus later (or you can call it automatically).
-  const apiCount = await countInstalledViaApi(agencyId);
-  return NextResponse.json(
-    { ok: false, apiInstalledCount: apiCount ?? "(unknown)", removalAttempted: true },
-    { status: 200 },
-  );
 }
