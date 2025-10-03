@@ -1,14 +1,81 @@
-// File: src/app/api/webhooks/ghl/marketplace/route.ts
+// src/app/api/webhooks/ghl/marketplace/route.ts
 import { NextResponse } from "next/server";
 import { db, getAdminApp } from "@/lib/firebaseAdmin";
-import { olog, getGhlConfig, listCompanyMenus, findOurMenu, deleteMenuById } from "@/lib/ghl";
+import {
+  olog,
+  getGhlConfig,
+  listCompanyMenus,
+  findOurMenu,
+  deleteMenuById,
+  ghlMintLocationTokenUrl,
+  lcHeaders,
+} from "@/lib/ghl";
 import { exchangeRefreshToken } from "@/lib/ghlTokens";
+import { FieldValue } from "firebase-admin/firestore";
 
 export const runtime = "nodejs";
 
+/**
+ * -------- Incoming payload shapes we handle (lenient) ----------
+ */
+type CommonKeys = {
+  appId?: string;
+  companyId?: string; // agencyId
+  locationId?: string;
+  locations?: string[];
+};
+type InstallPayload =
+  | (CommonKeys & { type: "INSTALL"; event?: string })
+  | (CommonKeys & { event: "AppInstall"; type?: string });
+
 type UninstallPayload =
-  | { type: "UNINSTALL"; appId?: string; companyId?: string; locationId?: string }
-  | { event: "AppUninstall"; appId?: string; companyId?: string; locationId?: string };
+  | (CommonKeys & { type: "UNINSTALL"; event?: string })
+  | (CommonKeys & { event: "AppUninstall"; type?: string });
+
+
+/** Type guards */
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+function isString(v: unknown): v is string {
+  return typeof v === "string";
+}
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((x) => typeof x === "string");
+}
+function hasKey<T extends string>(
+  obj: Record<string, unknown>,
+  key: T,
+): obj is Record<T, unknown> & Record<string, unknown> {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function isInstallPayload(p: unknown): p is InstallPayload {
+  if (!isObject(p)) return false;
+  const t = hasKey(p, "type") && isString(p.type) ? p.type : "";
+  const e = hasKey(p, "event") && isString(p.event) ? p.event : "";
+  return t === "INSTALL" || e === "AppInstall";
+}
+function isUninstallPayload(p: unknown): p is UninstallPayload {
+  if (!isObject(p)) return false;
+  const t = hasKey(p, "type") && isString(p.type) ? p.type : "";
+  const e = hasKey(p, "event") && isString(p.event) ? p.event : "";
+  return t === "UNINSTALL" || e === "AppUninstall";
+}
+
+/** Safe readers */
+function readCompanyId(p: Record<string, unknown>): string {
+  const v = hasKey(p, "companyId") ? p.companyId : undefined;
+  return isString(v) ? v.trim() : "";
+}
+function readLocationId(p: Record<string, unknown>): string {
+  const v = hasKey(p, "locationId") ? p.locationId : undefined;
+  return isString(v) ? v.trim() : "";
+}
+function readLocations(p: Record<string, unknown>): string[] {
+  const v = hasKey(p, "locations") ? p.locations : undefined;
+  return isStringArray(v) ? v.map((s) => s.trim()).filter(Boolean) : [];
+}
 
 /**
  * ---- Helpers: chunked Firestore batch + Auth ops
@@ -68,13 +135,11 @@ async function deleteAuthUsersInChunks(uids: string[]) {
         failureCount: res.failureCount,
       });
       if (res.failureCount) {
-        // Log details (do not throw)
         const samples = res.errors.slice(0, 5).map((e) => ({ index: e.index, error: String(e.error) }));
         olog("auth.deleteUsers failures", { sample: samples });
       }
     } catch (e) {
       olog("auth.deleteUsers error", { err: String(e), chunkSize: chunk.length });
-      // Non-fatal: continue
     }
   }
 }
@@ -98,7 +163,7 @@ async function getAccessTokenForAgency(agencyId: string) {
   const { clientId, clientSecret } = getGhlConfig();
   const agSnap = await db().collection("agencies").doc(agencyId).get();
   const ag = agSnap.exists ? agSnap.data() || {} : {};
-  const agencyRefresh = String(ag.refreshToken || "") || "";
+  const agencyRefresh = String((ag as Record<string, unknown>).refreshToken || "") || "";
 
   const tryExchange = async (rt: string) => {
     try {
@@ -146,16 +211,11 @@ async function getAccessTokenForLocation(locationId: string) {
 
 /**
  * ---- Cascade delete for a single location
- * Deletes:
- *   - locations/{locationId}/users/* (subcollection)  → and each root users/{uid} + Auth user
- *   - users/{uid} where locationId == {locationId} (fallback) → and Auth user
- *   - agencies/{agencyId}/locations/{locationId}
- *   - locations/{locationId}
  */
 async function cascadeDeleteLocation(locationId: string, agencyId?: string | null) {
   const ops: Array<(b: FirebaseFirestore.WriteBatch) => void> = [];
 
-  // 1) Membership subcollection: collect UID list and delete subdocs + root users
+  // 1) Membership subcollection → collect UIDs and delete
   const membersCol = db().collection("locations").doc(locationId).collection("users");
   const uidsFromMembers = await deleteCollectionByQuery(membersCol, (doc) => {
     const uid = doc.id;
@@ -170,26 +230,26 @@ async function cascadeDeleteLocation(locationId: string, agencyId?: string | nul
     };
   });
 
-  // 2) Fallback: root users that still point to this location (if any)
+  // 2) Root users fallback
   const rootUsersQuery = db().collection("users").where("locationId", "==", locationId);
   const uidsFromRoot = await deleteCollectionByQuery(rootUsersQuery, (doc) => {
     const uid = doc.id;
     return { op: (b) => b.delete(doc.ref), uid };
   });
 
-  // 3) Delete agency subcollection mirror doc (if agency known)
+  // 3) Agency mirror doc
   if (agencyId) {
     const agLocRef = db().collection("agencies").doc(agencyId).collection("locations").doc(locationId);
     ops.push((b) => b.delete(agLocRef));
   }
 
-  // 4) Delete the location doc itself
+  // 4) Location doc
   const locationRef = db().collection("locations").doc(locationId);
   ops.push((b) => b.delete(locationRef));
 
   await commitInChunks(ops);
 
-  // 5) Delete Firebase Auth users (bulk) — dedupe UIDs
+  // 5) Delete Auth users
   const allUids = Array.from(new Set([...uidsFromMembers, ...uidsFromRoot]));
   if (allUids.length) {
     await deleteAuthUsersInChunks(allUids);
@@ -198,9 +258,6 @@ async function cascadeDeleteLocation(locationId: string, agencyId?: string | nul
 
 /**
  * ---- Cascade delete for an agency
- * Deletes:
- *   - For each location in agency: cascadeDeleteLocation(...)
- *   - agencies/{agencyId}
  */
 async function cascadeDeleteAgency(agencyId: string) {
   const baseQuery = db().collection("locations").where("agencyId", "==", agencyId);
@@ -230,24 +287,136 @@ async function cascadeDeleteAgency(agencyId: string) {
   await commitInChunks(ops);
 }
 
+/**
+ * -------- INSTALL handling ----------
+ * Idempotently upsert location docs and try to mint refresh tokens immediately.
+ */
+async function handleInstall(payload: InstallPayload) {
+  const rawObj = payload as unknown as Record<string, unknown>;
+  const agencyId = readCompanyId(rawObj);
+  const singleLoc = readLocationId(rawObj);
+  const manyLocs = readLocations(rawObj);
+  const locationIds = Array.from(new Set([singleLoc, ...manyLocs].filter(Boolean)));
+
+  if (!agencyId || locationIds.length === 0) {
+    olog("install payload ignored (missing ids)", { hasAgency: !!agencyId, count: locationIds.length });
+    return NextResponse.json({ ok: true, note: "ignored (no ids)" }, { status: 200 });
+  }
+
+  const now = FieldValue.serverTimestamp();
+
+  // 1) Ensure agency doc exists (merge)
+  await db().collection("agencies").doc(agencyId).set(
+    {
+      agencyId,
+      provider: "leadconnector",
+      updatedAt: now,
+    },
+    { merge: true },
+  );
+
+  // 2) Upsert locations (without refreshToken yet)
+  const ops: Array<(b: FirebaseFirestore.WriteBatch) => void> = [];
+  for (const locId of locationIds) {
+    const locRef = db().collection("locations").doc(locId);
+    const agLocRef = db().collection("agencies").doc(agencyId).collection("locations").doc(locId);
+
+    ops.push((b) =>
+      b.set(
+        locRef,
+        {
+          locationId: locId,
+          agencyId,
+          provider: "leadconnector",
+          isInstalled: true,
+          updatedAt: now,
+          installedAt: now,
+        },
+        { merge: true },
+      ),
+    );
+
+    ops.push((b) =>
+      b.set(
+        agLocRef,
+        {
+          locationId: locId,
+          agencyId,
+          updatedAt: now,
+          installedAt: now,
+        },
+        { merge: true },
+      ),
+    );
+  }
+  await commitInChunks(ops);
+
+  // 3) Try minting refresh tokens for each location (best-effort)
+  const agencyAccess = await getAccessTokenForAgency(agencyId);
+  if (!agencyAccess) {
+    olog("install: no agency access token to mint", { agencyId, locations: locationIds.length });
+    return NextResponse.json({ ok: true, minted: 0 }, { status: 200 });
+  }
+
+  let minted = 0;
+  for (const locId of locationIds) {
+    try {
+      const resp = await fetch(ghlMintLocationTokenUrl(), {
+        method: "POST",
+        headers: { ...lcHeaders(agencyAccess), "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId: agencyId, locationId: locId }),
+      });
+      const txt = await resp.text().catch(() => "");
+      if (!resp.ok) {
+        olog("install: mint failed", { agencyId, locationId: locId, status: resp.status, sample: txt.slice(0, 300) });
+        continue;
+      }
+      let mintedRefresh = "";
+      try {
+        const j = JSON.parse(txt) as { data?: { refresh_token?: string }; refresh_token?: string };
+        mintedRefresh = j?.data?.refresh_token ?? j?.refresh_token ?? "";
+      } catch {
+        /* ignore parse errors */
+      }
+
+      if (mintedRefresh) {
+        await db().collection("locations").doc(locId).set(
+          { refreshToken: mintedRefresh, isInstalled: true, updatedAt: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+        minted++;
+      } else {
+        olog("install: mint missing refresh_token", { agencyId, locationId: locId });
+      }
+    } catch (e) {
+      olog("install: mint error", { agencyId, locationId: locId, err: String(e) });
+    }
+  }
+
+  return NextResponse.json({ ok: true, agencyId, locations: locationIds.length, minted }, { status: 200 });
+}
+
 export async function POST(req: Request) {
-  let payload: UninstallPayload | null = null;
+  let payloadUnknown: unknown;
   try {
-    payload = (await req.json()) as UninstallPayload;
+    payloadUnknown = (await req.json()) as unknown;
   } catch {
     return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
   }
 
-  const isUninstall =
-    !!payload &&
-    (("type" in payload && payload.type === "UNINSTALL") ||
-      ("event" in payload && payload.event === "AppUninstall"));
-  if (!isUninstall) return NextResponse.json({ ok: true }, { status: 200 });
+  // ---------- INSTALL ----------
+  if (isInstallPayload(payloadUnknown)) {
+    return handleInstall(payloadUnknown);
+  }
 
-  const agencyIdFromPayload =
-    payload && "companyId" in payload && typeof payload.companyId === "string" ? payload.companyId : null;
-  const locationIdFromPayload =
-    payload && "locationId" in payload && typeof payload.locationId === "string" ? payload.locationId : null;
+  // ---------- UNINSTALL ----------
+  if (!isUninstallPayload(payloadUnknown)) {
+    return NextResponse.json({ ok: true }, { status: 200 });
+  }
+
+  const raw = payloadUnknown as Record<string, unknown>;
+  const agencyIdFromPayload = readCompanyId(raw) || null;
+  const locationIdFromPayload = readLocationId(raw) || null;
 
   let agencyId: string | null = agencyIdFromPayload;
   const locationId: string | null = locationIdFromPayload;
@@ -256,14 +425,11 @@ export async function POST(req: Request) {
   // --- CASE A: Location uninstall ---
   if (locationId) {
     try {
-      // Harmless flag in case other code reads it mid-flight
       await db().collection("locations").doc(locationId).set({ isInstalled: false }, { merge: true });
-
       await cascadeDeleteLocation(locationId, agencyId);
       olog("location cascade delete complete", { agencyId, locationId });
     } catch (e) {
       olog("location cascade delete failed", { agencyId, locationId, err: String(e) });
-      // We still proceed to menu logic below (it checks remaining installs)
     }
   }
 
