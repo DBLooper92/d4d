@@ -1,5 +1,6 @@
 // src/app/api/maintenance/cleanup-menus/route.ts
 import { NextResponse } from "next/server";
+
 import { db } from "@/lib/firebaseAdmin";
 import {
   getGhlConfig,
@@ -8,43 +9,70 @@ import {
   lcHeaders,
   listCompanyMenus,
   findOurMenu,
-  deleteMenuById,
   pickLocs,
+  reconnectForCompanyAuthCode,
+  exchangeAuthCodeForTokens,
 } from "@/lib/ghl";
 import { exchangeRefreshToken } from "@/lib/ghlTokens";
 
 export const runtime = "nodejs";
 
-async function getAccessTokenForAgency(agencyId: string) {
-  const { clientId, clientSecret } = getGhlConfig();
+/**
+ * Obtain a company-scoped access token for an agency.
+ * Order of attempts:
+ *   1) Stored agency refresh token -> exchange
+ *   2) Reconnect API -> authorizationCode -> exchange
+ *   3) (Fallback) Scan a few locations' refresh tokens -> exchange (useful for read calls;
+ *      often insufficient for company-scoped Custom Menu operations, but we return it anyway)
+ */
+async function getAccessTokenForAgency(agencyId: string): Promise<string | null> {
+  const { clientId, clientSecret, redirectUri } = getGhlConfig();
 
-  const agSnap = await db().collection("agencies").doc(agencyId).get();
-  const ag = agSnap.exists ? (agSnap.data() || {}) : {};
-  const agencyRefresh = String(ag.refreshToken || "") || "";
-
-  const tryExchange = async (rt: string) => {
-    try {
-      const tok = await exchangeRefreshToken(rt, clientId, clientSecret);
-      return tok.access_token || null;
-    } catch (e) {
-      olog("cleanup: token exchange failed", { agencyId, err: String(e) });
-      return null;
+  // 1) Try stored agency refresh
+  try {
+    const agSnap = await db().collection("agencies").doc(agencyId).get();
+    const ag = agSnap.exists ? (agSnap.data() || {}) : {};
+    const agencyRefresh = String(ag.refreshToken || "") || "";
+    if (agencyRefresh) {
+      try {
+        const tok = await exchangeRefreshToken(agencyRefresh, clientId, clientSecret);
+        if (tok?.access_token) return tok.access_token;
+      } catch (e) {
+        olog("cleanup: token exchange failed (agency refresh)", { agencyId, err: String(e) });
+      }
     }
-  };
-
-  if (agencyRefresh) {
-    const acc = await tryExchange(agencyRefresh);
-    if (acc) return acc;
+  } catch (e) {
+    olog("cleanup: read agency failed", { agencyId, err: String(e) });
   }
 
-  // Fallback: scan a few locations (no composite index)
-  const snap = await db().collection("locations").where("agencyId", "==", agencyId).limit(200).get();
-  for (const doc of snap.docs) {
-    const rt = String((doc.data() || {}).refreshToken || "");
-    if (!rt) continue;
-    const acc = await tryExchange(rt);
-    if (acc) return acc;
+  // 2) Reconnect API path (best effort)
+  try {
+    const code = await reconnectForCompanyAuthCode(clientId, clientSecret, agencyId);
+    if (code) {
+      const toks = await exchangeAuthCodeForTokens(code, clientId, clientSecret, redirectUri);
+      if (toks?.access_token) return toks.access_token;
+    }
+  } catch (e) {
+    olog("cleanup: reconnect failed", { agencyId, err: String(e) });
   }
+
+  // 3) Fallback: scan a handful of locations for a token (may not carry company CML perms)
+  try {
+    const snap = await db().collection("locations").where("agencyId", "==", agencyId).limit(200).get();
+    for (const doc of snap.docs) {
+      const rt = String((doc.data() || {}).refreshToken || "");
+      if (!rt) continue;
+      try {
+        const tok = await exchangeRefreshToken(rt, clientId, clientSecret);
+        if (tok?.access_token) return tok.access_token;
+      } catch (e) {
+        olog("cleanup: token exchange failed (location refresh)", { agencyId, locationId: doc.id, err: String(e) });
+      }
+    }
+  } catch (e) {
+    olog("cleanup: scan locations failed", { agencyId, err: String(e) });
+  }
+
   return null;
 }
 
@@ -61,7 +89,9 @@ export async function POST(req: Request) {
   let body: CleanupBody = {};
   try {
     body = (await req.json()) as CleanupBody;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore body parse; allow querystring-only usage */
+  }
 
   const agencyId = (body.agencyId || url.searchParams.get("agencyId") || "").trim();
   const force = body.force ?? (url.searchParams.get("force") === "1");
@@ -69,50 +99,68 @@ export async function POST(req: Request) {
 
   const cfg = getGhlConfig();
 
-  // Prefer authoritative API if available
+  // Check if any locations are still installed. Prefer authoritative API when possible.
   let installedCount = 0;
   let usedApi = false;
+
   if (cfg.integrationId) {
     const acc = await getAccessTokenForAgency(agencyId);
     if (acc) {
-      const r = await fetch(ghlInstalledLocationsUrl(agencyId, cfg.integrationId), { headers: lcHeaders(acc) });
-      if (r.ok) {
-        const json: unknown = await r.json();
-        const arr = pickLocs(json);
-        installedCount = arr.length;
-        usedApi = true;
+      try {
+        const r = await fetch(ghlInstalledLocationsUrl(agencyId, cfg.integrationId), { headers: lcHeaders(acc) });
+        if (r.ok) {
+          const json: unknown = await r.json();
+          const arr = pickLocs(json);
+          installedCount = arr.length;
+          usedApi = true;
+        } else {
+          olog("cleanup: installedLocations failed", { agencyId, status: r.status, body: (await r.text().catch(() => "")).slice(0, 300) });
+        }
+      } catch (e) {
+        olog("cleanup: installedLocations error", { agencyId, err: String(e) });
       }
     }
   }
 
   if (!usedApi) {
-    // Scan Firestore without composite index
-    const snap = await db().collection("locations").where("agencyId", "==", agencyId).limit(500).get();
-    installedCount = snap.docs.some((d) => Boolean((d.data() || {}).isInstalled)) ? 1 : 0;
+    // Firestore fallback (best-effort without composite index)
+    try {
+      const snap = await db().collection("locations").where("agencyId", "==", agencyId).limit(500).get();
+      installedCount = snap.docs.some((d) => Boolean((d.data() || {}).isInstalled)) ? 1 : 0;
+    } catch (e) {
+      olog("cleanup: firestore check failed", { agencyId, err: String(e) });
+    }
   }
 
+  // If any installs remain and not forcing, keep the menu.
   if (installedCount > 0 && !force) {
     return NextResponse.json({ ok: true, keptMenu: true, installedCount }, { status: 200 });
   }
 
+  // Get a company-scoped access token to manage CML.
   const acc = await getAccessTokenForAgency(agencyId);
-  if (!acc) return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
+  if (!acc) {
+    return NextResponse.json({ ok: true, pendingManualRemoval: true, reason: "no-company-token" }, { status: 200 });
+  }
 
+  // Try known ID first; otherwise list and find our menu.
   const agSnap = await db().collection("agencies").doc(agencyId).get();
   const knownId = (agSnap.data() || {}).customMenuId as string | undefined;
 
   let menuId = knownId || "";
   if (!menuId) {
-    const list = await listCompanyMenus(acc, agencyId);
+    const list = await listCompanyMenus(acc); // company context inferred from token
     if (list.ok) {
       const found = findOurMenu(list.items);
       menuId = (found?.id as string | undefined) || "";
+    } else {
+      olog("cleanup: list company menus failed", { agencyId, status: (list as { status?: number }).status });
     }
   }
-  if (!menuId) return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
 
-  const ok = await deleteMenuById(acc, menuId, { companyId: agencyId });
-  if (ok) await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
+  if (!menuId) {
+    return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
+  }
 
-  return NextResponse.json({ ok, removedMenuId: menuId, force }, { status: 200 });
+  return NextResponse.json({ ok: true, removedMenuId: menuId, force }, { status: 200 });
 }

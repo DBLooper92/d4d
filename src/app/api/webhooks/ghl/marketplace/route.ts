@@ -146,7 +146,7 @@ export async function POST(req: Request): Promise<Response> {
 
   let menuId = knownId || "";
   if (!menuId) {
-    const list = await listCompanyMenus(agencyAccessToken, agencyId);
+    const list = await listCompanyMenus(agencyAccessToken);
     if (list.ok) {
       const found = findOurMenu(list.items);
       menuId = (found?.id as string | undefined) || "";
@@ -159,7 +159,7 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
   }
 
-  const ok = await deleteMenuById(agencyAccessToken, menuId, { companyId: agencyId });
+  const ok = await deleteMenuById(agencyAccessToken, menuId);
 
   if (ok) {
     await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });

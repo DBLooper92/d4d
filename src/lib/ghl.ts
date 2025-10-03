@@ -163,16 +163,14 @@ export type CustomMenu = {
 };
 export type CustomMenuListResponse = CustomMenu[] | { items?: CustomMenu[] };
 
-export async function listCompanyMenus(accessToken: string, companyId: string) {
-  const base = ghlCustomMenusBase();
-  const url = `${base}?companyId=${encodeURIComponent(companyId)}`;
+export async function listCompanyMenus(accessToken: string /*, companyId: string (no longer needed) */) {
+  const base = ghlCustomMenusBase(); // -> "https://services.leadconnectorhq.com/custom-menus/"
+  const url = base; // No query params; company inferred from token
   const r = await fetch(url, { headers: lcHeaders(accessToken), cache: "no-store" });
   const text = await r.text().catch(() => "");
   if (!r.ok) return { ok: false as const, status: r.status, bodyText: text };
   let json: unknown = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch { /* ignore */ }
+  try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
   const payload = json as CustomMenuListResponse | null;
   const items = payload
     ? Array.isArray(payload)
@@ -199,40 +197,21 @@ export function findOurMenu(items: CustomMenu[]) {
 export async function deleteMenuById(
   agencyAccessToken: string,
   customMenuId: string,
-  opts?: { companyId?: string; locationAccessToken?: string },
 ): Promise<boolean> {
   const base = ghlCustomMenusBase();
-  const path = `${base}${encodeURIComponent(customMenuId)}`;
-  const withCo = opts?.companyId ? `${path}?companyId=${encodeURIComponent(opts.companyId)}` : null;
+  const url = `${base}${encodeURIComponent(customMenuId)}`;
 
-  const attempts: Array<{ url: string; token: string; label: string }> = [
-    { url: path, token: agencyAccessToken, label: "agency-noCompany" },
-    ...(withCo ? [{ url: withCo, token: agencyAccessToken, label: "agency-withCompany" } as const] : []),
-    ...(opts?.locationAccessToken ? [{ url: path, token: opts.locationAccessToken, label: "location-noCompany" } as const] : []),
-    ...(opts?.locationAccessToken && withCo
-      ? [{ url: withCo, token: opts.locationAccessToken, label: "location-withCompany" } as const]
-      : []),
-  ];
-
-  for (const a of attempts) {
-    try {
-      const r = await fetch(a.url, {
-        method: "DELETE",
-        headers: lcHeaders(a.token, { "Content-Type": "application/json" }),
-      });
-      const sample = await r.text().catch(() => "");
-      if (r.status === 404) {
-        olog("cml delete -> 404 (treat as success)", { attempt: a.label });
-        return true;
-      }
-      if (r.ok) {
-        olog("cml delete -> success", { attempt: a.label });
-        return true;
-      }
-      olog("cml delete -> failed", { attempt: a.label, status: r.status, sample: sample.slice(0, 400) });
-    } catch (e) {
-      olog("cml delete -> error", { attempt: a.label, err: String(e) });
-    }
+  try {
+    const r = await fetch(url, {
+      method: "DELETE",
+      headers: lcHeaders(agencyAccessToken, { "Content-Type": "application/json" }),
+    });
+    const sample = await r.text().catch(() => "");
+    if (r.status === 404) { olog("cml delete -> 404 (treat as success)"); return true; }
+    if (r.ok) { olog("cml delete -> success"); return true; }
+    olog("cml delete -> failed", { status: r.status, sample: sample.slice(0, 400) });
+  } catch (e) {
+    olog("cml delete -> error", { err: String(e) });
   }
   return false;
 }
