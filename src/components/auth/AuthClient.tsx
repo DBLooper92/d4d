@@ -9,7 +9,10 @@ import {
   signOut,
   type Auth,
 } from "firebase/auth";
+import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import { getFirebaseAuth } from "@/lib/firebaseClient";
+import { ADMIN_DASHBOARD_ROUTE } from "@/lib/routes";
 
 type SsoContext = {
   activeLocationId?: string | null;
@@ -18,7 +21,6 @@ type SsoContext = {
   email?: string | null;
 };
 
-// Accept both formats: single AES string OR object {iv,cipherText,tag}
 type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
 type EncryptedAny = string | EncryptedPayloadObject;
 
@@ -36,30 +38,24 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
     const timeout = setTimeout(() => {
       if (!done) resolve(null);
     }, 3000);
-
     try {
       window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
-
       const onMsg = (ev: MessageEvent<unknown>) => {
         const data = ev?.data as unknown;
-
         if (isObj(data) && data["message"] === "REQUEST_USER_DATA_RESPONSE") {
           const mm = data as MarketplaceMessage;
-
           const maybe =
             "encryptedData" in mm
               ? (mm.encryptedData as unknown)
               : "payload" in mm
               ? (mm.payload as unknown)
               : null;
-
           const okString = typeof maybe === "string" && !!maybe;
           const okObj =
             isObj(maybe) &&
             typeof (maybe as EncryptedPayloadObject).iv === "string" &&
             typeof (maybe as EncryptedPayloadObject).cipherText === "string" &&
             typeof (maybe as EncryptedPayloadObject).tag === "string";
-
           if (okString || okObj) {
             done = true;
             clearTimeout(timeout);
@@ -69,16 +65,13 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
           }
         }
       };
-
       window.addEventListener("message", onMsg as EventListener);
     } catch {
       clearTimeout(timeout);
       resolve(null);
     }
   });
-
   if (!encrypted) return null;
-
   try {
     const r = await fetch("/api/user-context/decode", {
       method: "POST",
@@ -86,8 +79,7 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
       body: JSON.stringify({ encryptedData: encrypted }),
     });
     if (!r.ok) return null;
-    const json = (await r.json()) as SsoContext;
-    return json;
+    return (await r.json()) as SsoContext;
   } catch {
     return null;
   }
@@ -97,7 +89,6 @@ function pickLikelyLocationId(url: URL) {
   const search = url.searchParams;
   const fromQS = search.get("location_id") || search.get("locationId") || search.get("location") || "";
   if (fromQS && fromQS.trim()) return fromQS.trim();
-
   const hash = url.hash || "";
   if (hash) {
     try {
@@ -108,15 +99,11 @@ function pickLikelyLocationId(url: URL) {
       const segs = h.split(/[/?&]/).filter(Boolean);
       const maybeId = segs.find((s) => s.length >= 12);
       if (maybeId) return maybeId.trim();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
-
   const segs = url.pathname.split("/").filter(Boolean);
   const maybeId = segs.length >= 2 ? segs[1] : "";
   if (maybeId && maybeId.length >= 12) return maybeId.trim();
-
   return "";
 }
 function pickLikelyAgencyId(url: URL) {
@@ -136,7 +123,12 @@ function visibleError(code: string): string {
   return "Something went wrong. Please try again.";
 }
 
+function buildDashboardRoute(qs: URLSearchParams): Route {
+  const query = qs.toString();
+  return query ? (`/pages/AdminDashboard?${query}` as Route) : ADMIN_DASHBOARD_ROUTE;
+}
 export default function AuthClient() {
+  const router = useRouter();
   const [auth, setAuth] = useState<Auth | null>(null);
   useEffect(() => {
     setAuth(getFirebaseAuth());
@@ -167,13 +159,20 @@ export default function AuthClient() {
       if (u) {
         setUid(u.uid);
         setUserEmail(u.email || null);
+        const url = new URL(window.location.href);
+        const loc = pickLikelyLocationId(url);
+        const ag = pickLikelyAgencyId(url);
+        const qs = new URLSearchParams();
+        if (loc) qs.set("location_id", loc);
+        if (ag) qs.set("agencyId", ag);
+        router.replace(buildDashboardRoute(qs));
       } else {
         setUid(null);
         setUserEmail(null);
       }
     });
     return () => unsub();
-  }, [auth]);
+  }, [auth, router]);
 
   useEffect(() => {
     (async () => {
@@ -186,8 +185,7 @@ export default function AuthClient() {
         window.history.replaceState({}, "", url.toString());
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [contextFromUrl.locationId]);
 
   async function handleRegister() {
     setErr(null);
@@ -205,23 +203,17 @@ export default function AuthClient() {
     }
     setBusy(true);
     try {
-      // 1) Gather Marketplace SSO first (for location + agency id only)
       let { locationId, agencyId } = contextFromUrl;
       const sso = await getMarketplaceUserContext();
       locationId = locationId || sso?.activeLocationId || "";
       agencyId = agencyId || sso?.activeCompanyId || "";
-
       if (!locationId) {
         throw new Error(
-          "We couldn't detect your Location ID. Please open this app from your GHL custom menu (it includes the location_id automatically)."
+          "We couldn't detect your Location ID. Please open this app from your GHL custom menu (it includes the location_id automatically).",
         );
       }
-
-      // 2) Create Firebase user
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const idToken = await cred.user.getIdToken(true);
-
-      // 3) Finalize profile (no GHL user id/role is stored)
       const resp = await fetch("/api/auth/complete-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -238,6 +230,10 @@ export default function AuthClient() {
         const parsed = (await resp.json().catch(() => ({}))) as { error?: string };
         throw new Error(parsed?.error || `Signup finalize failed (${resp.status})`);
       }
+      const qs = new URLSearchParams();
+      qs.set("location_id", locationId);
+      if (agencyId) qs.set("agencyId", agencyId);
+      router.replace(buildDashboardRoute(qs));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg.toLowerCase().includes("firebase:") ? visibleError(msg) : msg);
@@ -281,153 +277,175 @@ export default function AuthClient() {
 
   if (!auth) {
     return (
-      <main className="p-6 max-w-md mx-auto">
-        <h1 className="text-2xl font-semibold mb-4">Loading...</h1>
-        <p className="text-gray-600">Preparing authentication...</p>
+      <main className="p-6 max-w-3xl mx-auto">
+        <section className="hero card">
+          <h1 className="text-2xl font-semibold">Loading...</h1>
+          <p className="text-gray-600 mt-1">Preparing authentication...</p>
+        </section>
       </main>
     );
   }
 
   if (uid) {
     return (
-      <main className="p-6">
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <p className="mt-2 text-gray-700">You are logged in as {userEmail || uid}.</p>
-
-        <div className="mt-6 flex items-center gap-3">
-          <button
-            onClick={handleSignOut}
-            disabled={busy}
-            className="rounded-xl border px-4 py-2 hover:bg-gray-50 disabled:opacity-60"
-          >
-            {busy ? "Signing you out..." : "Sign out"}
-          </button>
-        </div>
+      <main className="p-6 max-w-3xl mx-auto">
+        <section className="card">
+          <h1 className="text-xl font-semibold">Welcome back</h1>
+          <p className="mt-2 text-gray-700">
+            Redirecting to your dashboard... {userEmail ? <span className="badge">{userEmail}</span> : null}
+          </p>
+          <div className="mt-6 flex items-center gap-3">
+            <button onClick={handleSignOut} disabled={busy} className="btn">
+              {busy ? "Signing you out..." : "Sign out"}
+            </button>
+          </div>
+        </section>
       </main>
     );
   }
 
   return (
-    <main className="p-6 max-w-md mx-auto">
-      <h1 className="text-2xl font-semibold mb-4">Welcome</h1>
+    <main className="p-6 max-w-5xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+        <div className="md:col-span-2">
+          <section className="hero card">
+            <h1 className="text-2xl font-semibold">Driving for Dollars</h1>
+            <p className="text-gray-600 mt-1">Sign in or create an admin account to get started.</p>
+            <ul className="text-sm text-gray-600 mt-3" style={{ listStyle: "disc", paddingLeft: "1.25rem" }}>
+              <li>Light-only UI (no dark mode)</li>
+              <li>After signup/login you&apos;re routed to the Admin Dashboard</li>
+              <li>
+                Open from your GHL custom menu so <code>location_id</code> is auto-passed
+              </li>
+            </ul>
+          </section>
+        </div>
 
-      <div className="mb-4 inline-flex rounded-xl border overflow-hidden">
-        <button
-          className={`px-4 py-2 ${mode === "login" ? "bg-gray-100" : ""}`}
-          onClick={() => {
-            setMode("login");
-            setErr(null);
-          }}
-        >
-          Login
-        </button>
-        <button
-          className={`px-4 py-2 ${mode === "register" ? "bg-gray-100" : ""}`}
-          onClick={() => {
-            setMode("register");
-            setErr(null);
-          }}
-        >
-          Register
-        </button>
+        <div className="md:col-span-3">
+          <section className="card">
+            <div className="mb-4 inline-flex rounded-xl border overflow-hidden">
+              <button
+                className={`px-4 py-2 ${mode === "login" ? "bg-gray-50" : ""}`}
+                onClick={() => {
+                  setMode("login");
+                  setErr(null);
+                }}
+                type="button"
+              >
+                Login
+              </button>
+              <button
+                className={`px-4 py-2 ${mode === "register" ? "bg-gray-50" : ""}`}
+                onClick={() => {
+                  setMode("register");
+                  setErr(null);
+                }}
+                type="button"
+              >
+                Register
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (mode === "login") {
+                  void handleLogin();
+                } else {
+                  void handleRegister();
+                }
+              }}
+              className="space-y-4"
+            >
+              {mode === "register" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm mb-1">First name</label>
+                    <input
+                      value={firstName}
+                      onChange={(ev) => setFirst(ev.target.value)}
+                      className="input"
+                      autoComplete="given-name"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Last name</label>
+                    <input
+                      value={lastName}
+                      onChange={(ev) => setLast(ev.target.value)}
+                      className="input"
+                      autoComplete="family-name"
+                      required
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm mb-1">Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(ev) => setEmail(ev.target.value)}
+                  className="input"
+                  autoComplete="email"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm mb-1">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(ev) => setPassword(ev.target.value)}
+                  className="input"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  required
+                  minLength={6}
+                />
+              </div>
+
+              {mode === "register" && (
+                <div>
+                  <label className="block text-sm mb-1">Confirm password</label>
+                  <input
+                    type="password"
+                    value={confirm}
+                    onChange={(ev) => setConfirm(ev.target.value)}
+                    className="input"
+                    autoComplete="new-password"
+                    required
+                    minLength={6}
+                  />
+                </div>
+              )}
+
+              {err && <p className="text-sm text-red-600">{err}</p>}
+
+              <button type="submit" disabled={busy} className="btn primary w-full">
+                {busy
+                  ? mode === "login"
+                    ? "Logging in..."
+                    : "Creating account..."
+                  : mode === "login"
+                    ? "Login"
+                    : "Register"}
+              </button>
+
+              <p className="text-xs text-gray-500 mt-2">
+                Tip: open this from your GHL custom menu so the <code>location_id</code> is auto-passed.
+              </p>
+            </form>
+          </section>
+        </div>
       </div>
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (mode === "login") {
-            void handleLogin();
-          } else {
-            void handleRegister();
-          }
-        }}
-        className="space-y-3"
-      >
-        {mode === "register" && (
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm mb-1">First name</label>
-              <input
-                value={firstName}
-                onChange={(ev) => setFirst(ev.target.value)}
-                className="w-full rounded-xl border px-3 py-2"
-                autoComplete="given-name"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm mb-1">Last name</label>
-              <input
-                value={lastName}
-                onChange={(ev) => setLast(ev.target.value)}
-                className="w-full rounded-xl border px-3 py-2"
-                autoComplete="family-name"
-                required
-              />
-            </div>
-          </div>
-        )}
-
-        <div>
-          <label className="block text-sm mb-1">Email</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(ev) => setEmail(ev.target.value)}
-            className="w-full rounded-xl border px-3 py-2"
-            autoComplete="email"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm mb-1">Password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(ev) => setPassword(ev.target.value)}
-            className="w-full rounded-xl border px-3 py-2"
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-            required
-            minLength={6}
-          />
-        </div>
-
-        {mode === "register" && (
-          <div>
-            <label className="block text-sm mb-1">Confirm password</label>
-            <input
-              type="password"
-              value={confirm}
-              onChange={(ev) => setConfirm(ev.target.value)}
-              className="w-full rounded-xl border px-3 py-2"
-              autoComplete="new-password"
-              required
-              minLength={6}
-            />
-          </div>
-        )}
-
-        {err && <p className="text-sm text-red-600 mt-2">{err}</p>}
-
-        <button
-          type="submit"
-          disabled={busy}
-          className="mt-2 w-full rounded-xl border px-4 py-2 hover:bg-gray-50 disabled:opacity-60"
-        >
-          {busy
-            ? mode === "login"
-              ? "Logging in..."
-              : "Creating account..."
-            : mode === "login"
-              ? "Login"
-              : "Register"}
-        </button>
-
-        <p className="text-xs text-gray-500 mt-3">
-          Tip: open this from your GHL custom menu so the <code>location_id</code> is auto-passed.
-        </p>
-      </form>
     </main>
   );
 }
+
+
+
+
+

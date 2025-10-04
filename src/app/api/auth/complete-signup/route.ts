@@ -1,3 +1,4 @@
+// src/app/api/auth/complete-signup/route.ts
 import { NextResponse } from "next/server";
 import { getAdminApp, db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -46,7 +47,7 @@ export async function POST(req: Request) {
             agencyId = String(locData.agencyId).trim();
           }
         }
-      } catch { /* allow agencyId to remain null */ }
+      } catch {}
     }
 
     const admin = getAdminApp();
@@ -57,7 +58,6 @@ export async function POST(req: Request) {
     const userEmail = (decoded.email || email || "").trim();
 
     const now = FieldValue.serverTimestamp();
-
     const usersRef = db().collection("users").doc(uid);
     const locUserRef = db().collection("locations").doc(locationId).collection("users").doc(uid);
 
@@ -71,6 +71,8 @@ export async function POST(req: Request) {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         updatedAt: now,
+        role: "admin" as const,
+        isAdmin: true,
       };
 
       if (!uSnap.exists) {
@@ -84,9 +86,7 @@ export async function POST(req: Request) {
         );
       }
 
-      // Basic membership document (no role stored here anymore)
       const locProfile = { ...baseProfile };
-
       if (!luSnap.exists) {
         tx.set(locUserRef, { ...locProfile, createdAt: now });
       } else {

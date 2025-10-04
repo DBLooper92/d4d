@@ -1,11 +1,8 @@
+// src/components/agency/AgencyLocations.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 
-/**
- * Minimal SSO decode helper to pull agency/company id when opened inside GHL at the agency level.
- * We only need activeCompanyId here.
- */
 type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
 type EncryptedAny = string | EncryptedPayloadObject;
 
@@ -22,7 +19,6 @@ function isObj(v: unknown): v is Record<string, unknown> {
 }
 
 async function getAgencyFromMarketplace(): Promise<string | null> {
-  // Ask parent for the encrypted payload
   const encrypted = await new Promise<EncryptedAny | null>((resolve) => {
     let done = false;
     const timeout = setTimeout(() => {
@@ -121,17 +117,14 @@ export default function AgencyLocations() {
       setLoading(true);
       setErr(null);
 
-      // 1) Prefer agency from URL if present
       let finalAgency = agencyFromUrl;
-
-      // 2) Otherwise, try marketplace SSO (when opened at agency level)
       if (!finalAgency) {
         finalAgency = (await getAgencyFromMarketplace()) || "";
       }
 
       if (!finalAgency) {
         setErr(
-          "We couldn't detect your Agency ID. Open this app from your Agency-level custom menu or pass ?agencyId=AGENCY_ID in the URL."
+          "We couldn't detect your Agency ID. Open this app from your Agency-level custom menu or pass ?agencyId=AGENCY_ID in the URL.",
         );
         setLoading(false);
         return;
@@ -157,44 +150,95 @@ export default function AgencyLocations() {
     })();
   }, [agencyFromUrl]);
 
-  return (
-    <main className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-3">All locations</h1>
-      {agencyId && <p className="text-sm text-gray-600 mb-4">Agency: <code>{agencyId}</code></p>}
+  const stats = useMemo(() => {
+    const total = items?.length ?? 0;
+    const installed = items?.filter((loc) => loc.isInstalled).length ?? 0;
+    const notInstalled = total - installed;
+    return { total, installed, notInstalled };
+  }, [items]);
 
-      {loading && <p className="text-gray-700">Loading locations...</p>}
+  return (
+    <main className="p-6 max-w-5xl mx-auto">
+      <header className="hero card">
+        <h1 className="text-2xl font-semibold">Agency Locations</h1>
+        <p className="text-gray-600 mt-1">
+          {agencyId ? (
+            <>
+              Agency: {" "}
+              <span className="badge" style={{ background: "var(--blue-50)", borderColor: "var(--blue-100)" }}>
+                {agencyId}
+              </span>
+            </>
+          ) : (
+            "Detecting agency..."
+          )}
+        </p>
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="card">
+            <div className="text-sm text-gray-600">Total</div>
+            <div className="text-xl font-semibold">
+              {loading ? <div className="skel" style={{ height: 24, width: 60 }} /> : stats.total}
+            </div>
+          </div>
+          <div className="card">
+            <div className="text-sm text-gray-600">Installed</div>
+            <div className="text-xl font-semibold">
+              {loading ? <div className="skel" style={{ height: 24, width: 60 }} /> : stats.installed}
+            </div>
+          </div>
+          <div className="card">
+            <div className="text-sm text-gray-600">Not installed</div>
+            <div className="text-xl font-semibold">
+              {loading ? <div className="skel" style={{ height: 24, width: 60 }} /> : stats.notInstalled}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {loading && (
+        <section className="mt-4 grid gap-2">
+          {Array.from({ length: 5 }).map((_, idx) => (
+            <div key={idx} className="card">
+              <div className="skel" style={{ height: 20, width: "60%" }} />
+              <div className="skel" style={{ height: 14, width: "30%", marginTop: 8 }} />
+            </div>
+          ))}
+        </section>
+      )}
 
       {!loading && err && (
-        <p className="text-red-600">
-          {err}
-        </p>
+        <section className="mt-4 card" style={{ borderColor: "#fecaca" }}>
+          <p className="text-red-600">{err}</p>
+        </section>
       )}
 
       {!loading && !err && items && items.length === 0 && (
-        <p className="text-gray-700">No locations found for this agency.</p>
+        <section className="mt-4 card">
+          <p className="text-gray-700">
+            No locations found for this agency. Once sub-accounts are added, they will appear here with install status.
+          </p>
+        </section>
       )}
 
       {!loading && !err && items && items.length > 0 && (
-        <div className="mt-4 divide-y rounded-xl border">
+        <section className="mt-4 grid gap-2">
           {items.map((loc) => (
-            <div key={loc.locationId} className="p-3 flex items-center justify-between">
+            <div key={loc.locationId} className="card flex items-center justify-between">
               <div>
                 <div className="font-medium">
                   {loc.name || "(no name)"}{" "}
                   <span className="text-xs text-gray-500">[{loc.locationId}]</span>
                 </div>
+                <div className="text-xs text-gray-500 mt-1">Updated: {String(loc.updatedAt ?? "-")}</div>
               </div>
               <div className="text-sm">
-                {loc.isInstalled ? (
-                  <span className="px-2 py-1 rounded-lg border">Installed</span>
-                ) : (
-                  <span className="px-2 py-1 rounded-lg border bg-gray-50">Not installed</span>
-                )}
+                {loc.isInstalled ? <span className="chip ok">Installed</span> : <span className="chip">Not installed</span>}
               </div>
             </div>
           ))}
-        </div>
+        </section>
       )}
     </main>
   );
 }
+
