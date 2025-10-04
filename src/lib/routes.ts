@@ -1,4 +1,3 @@
 // src/lib/routes.ts
-import type { Route } from "next";
-
-export const ADMIN_DASHBOARD_ROUTE: Route = "/pages/AdminDashboard";
+// ✅ remove the import of `Route`
+export const ADMIN_DASHBOARD_ROUTE = "/pages/AdminDashboard" as const;

@@ -26,10 +26,10 @@ export default async function AdminDashboard({ searchParams }: Props) {
         <p className="text-gray-600 mt-1">
           {agencyId && (
             <>
-              Agency: {" "}
-              <span className="badge" style={{ background: "var(--blue-50)", borderColor: "var(--blue-100)" }}>{agencyId}</span> ·{" "}
+              Agency: <span className="badge" style={{ background: "var(--blue-50)", borderColor: "var(--blue-100)" }}>{agencyId}</span>
             </>
           )}
+          {agencyId && locationId && <span> {" - "} </span>}
           {locationId && (
             <>
               Location: <span className="badge">{locationId}</span>
@@ -63,4 +63,3 @@ export default async function AdminDashboard({ searchParams }: Props) {
     </main>
   );
 }
-

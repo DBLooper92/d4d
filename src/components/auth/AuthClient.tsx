@@ -123,10 +123,12 @@ function visibleError(code: string): string {
   return "Something went wrong. Please try again.";
 }
 
-function buildDashboardRoute(qs: URLSearchParams): Route {
+// buildDashboardHref returns a string
+function buildDashboardHref(qs: URLSearchParams): string {
   const query = qs.toString();
-  return query ? (`/pages/AdminDashboard?${query}` as Route) : ADMIN_DASHBOARD_ROUTE;
+  return query ? `${ADMIN_DASHBOARD_ROUTE}?${query}` : ADMIN_DASHBOARD_ROUTE;
 }
+
 export default function AuthClient() {
   const router = useRouter();
   const [auth, setAuth] = useState<Auth | null>(null);
@@ -165,7 +167,7 @@ export default function AuthClient() {
         const qs = new URLSearchParams();
         if (loc) qs.set("location_id", loc);
         if (ag) qs.set("agencyId", ag);
-        router.replace(buildDashboardRoute(qs));
+        router.replace(buildDashboardHref(qs) as unknown as Route);
       } else {
         setUid(null);
         setUserEmail(null);
@@ -233,7 +235,7 @@ export default function AuthClient() {
       const qs = new URLSearchParams();
       qs.set("location_id", locationId);
       if (agencyId) qs.set("agencyId", agencyId);
-      router.replace(buildDashboardRoute(qs));
+      router.replace(buildDashboardHref(qs) as unknown as Route);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg.toLowerCase().includes("firebase:") ? visibleError(msg) : msg);
@@ -430,8 +432,8 @@ export default function AuthClient() {
                     ? "Logging in..."
                     : "Creating account..."
                   : mode === "login"
-                    ? "Login"
-                    : "Register"}
+                  ? "Login"
+                  : "Register"}
               </button>
 
               <p className="text-xs text-gray-500 mt-2">
@@ -444,8 +446,3 @@ export default function AuthClient() {
     </main>
   );
 }
-
-
-
-
-
