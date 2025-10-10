@@ -186,7 +186,7 @@ export function findOurMenu(items: CustomMenu[]) {
     (m) =>
       (m.title || "").toLowerCase() === "driving for dollars" &&
       typeof m.url === "string" &&
-      m.url.startsWith("https://app.driving4dollars.co/app"),
+      m.url.startsWith("https://admin.driving4dollars.co/app"),
   );
 }
 

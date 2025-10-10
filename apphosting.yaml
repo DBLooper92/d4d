@@ -8,7 +8,7 @@ runConfig:
 
 env:
   - variable: NEXT_PUBLIC_APP_BASE_URL
-    value: https://app.driving4dollars.co
+    value: https://admin.driving4dollars.co
   - variable: OAUTH_LOG
     value: on
 

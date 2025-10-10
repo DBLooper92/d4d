@@ -68,7 +68,7 @@ async function ensureCml(
       (m) =>
         (m.title || "").toLowerCase() === "driving for dollars" &&
         typeof m.url === "string" &&
-        m.url.startsWith("https://app.driving4dollars.co/app"),
+        m.url.startsWith("https://admin.driving4dollars.co/app"),
     );
     if (existing?.id) return existing.id;
     if (existing) return null;
@@ -82,7 +82,7 @@ async function ensureCml(
   // Menu should appear for both agency and location contexts.
   const baseBody = {
     title: "Driving for Dollars",
-    url: "https://app.driving4dollars.co/app?location_id={{location.id}}",
+    url: "https://admin.driving4dollars.co/app?location_id={{location.id}}",
     // visibility flags that the API accepts (do NOT send `visibility`)
     showOnCompany: false,
     showOnLocation: true,
