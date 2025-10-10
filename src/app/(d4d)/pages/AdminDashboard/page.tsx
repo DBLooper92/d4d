@@ -1,4 +1,6 @@
-// src/app/(d4d)/pages/AdminDashboard/page.tsx
+﻿// src/app/(d4d)/pages/AdminDashboard/page.tsx
+import NavStrip from "@/components/shared/NavStrip";
+
 type PageParamRecord = Record<string, string | string[] | undefined>;
 type SearchParamRecord = Record<string, string | string[] | undefined>;
 
@@ -21,6 +23,7 @@ export default async function AdminDashboard({ searchParams }: Props) {
 
   return (
     <main className="p-6 max-w-6xl mx-auto">
+      <NavStrip />
       <header className="hero card">
         <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
         <p className="text-gray-600 mt-1">

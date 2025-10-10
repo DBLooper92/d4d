@@ -1,4 +1,4 @@
-// File: src/app/(d4d)/app/map/page.tsx
+﻿// File: src/app/(d4d)/app/map/page.tsx
 //
 // A placeholder page for map functionality and address submission.  By
 // putting this inside the `(d4d)` route group we ensure that all
@@ -6,11 +6,14 @@
 // placeholder content with your map component(s) and address
 // submission workflow when you implement those features.
 
+import NavStrip from "@/components/shared/NavStrip";
+
 export const dynamic = "auto";
 
 export default function MapPage() {
   return (
-    <main className="p-6 max-w-4xl mx-auto">
+    <main className="p-6 max-w-6xl mx-auto">
+      <NavStrip />
       <h1 className="text-2xl font-semibold">Map &amp; Address Submission</h1>
       <p className="text-gray-700 mt-2">
         This page will contain your interactive map and tools for capturing

@@ -1,4 +1,4 @@
-// src/components/agency/AgencyLocations.tsx
+﻿// src/components/agency/AgencyLocations.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -81,6 +81,20 @@ async function getAgencyFromMarketplace(): Promise<string | null> {
   }
 }
 
+async function getAgencyFromServerFallback(): Promise<string | null> {
+  try {
+    const r = await fetch("/api/user-context/fallback-user", {
+      method: "GET",
+      headers: { "Cache-Control": "no-store" },
+    });
+    if (!r.ok) return null;
+    const json = (await r.json()) as { activeCompanyId?: string | null; companyId?: string | null };
+    return (json.activeCompanyId || json.companyId || null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function pickAgencyFromUrl(u: URL) {
   const fromQS =
     u.searchParams.get("agency_id") ||
@@ -118,8 +132,15 @@ export default function AgencyLocations() {
       setErr(null);
 
       let finalAgency = agencyFromUrl;
+
       if (!finalAgency) {
+        // 1) Try Marketplace postMessage (existing behavior)
         finalAgency = (await getAgencyFromMarketplace()) || "";
+      }
+
+      if (!finalAgency) {
+        // 2) Server-side fallback when Marketplace message isn't available in iframe
+        finalAgency = (await getAgencyFromServerFallback()) || "";
       }
 
       if (!finalAgency) {
@@ -241,4 +262,3 @@ export default function AgencyLocations() {
     </main>
   );
 }
-
