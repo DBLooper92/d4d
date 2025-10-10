@@ -12,11 +12,10 @@ import {
 import { useRouter } from "next/navigation";
 import type { Route } from "next";
 import { getFirebaseAuth } from "@/lib/firebaseClient";
-import { ADMIN_DASHBOARD_ROUTE } from "@/lib/routes";
+import { DASHBOARD_ROUTE } from "@/lib/routes";
 
 type SsoContext = {
   activeLocationId?: string | null;
-  // we intentionally ignore company fields here
 };
 
 type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
@@ -35,7 +34,7 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
     let done = false;
     const timeout = setTimeout(() => {
       if (!done) resolve(null);
-    }, 5000); // give it a little longer inside iframe
+    }, 5000);
 
     try {
       window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
@@ -91,7 +90,6 @@ function pickLikelyLocationId(url: URL) {
   const fromQS = search.get("location_id") || search.get("locationId") || search.get("location") || "";
   if (fromQS && fromQS.trim()) return fromQS.trim();
 
-  // accept hash deep-link forms too
   const hash = url.hash || "";
   if (hash) {
     try {
@@ -117,7 +115,7 @@ function visibleError(code: string): string {
 
 function buildDashboardHref(qs: URLSearchParams): string {
   const query = qs.toString();
-  return query ? `${ADMIN_DASHBOARD_ROUTE}?${query}` : ADMIN_DASHBOARD_ROUTE;
+  return query ? `${DASHBOARD_ROUTE}?${query}` : DASHBOARD_ROUTE;
 }
 
 export default function AuthClient() {
@@ -192,9 +190,7 @@ export default function AuthClient() {
       const sso = await getMarketplaceUserContext();
       locationId = locationId || sso?.activeLocationId || "";
       if (!locationId) {
-        throw new Error(
-          "We couldn't detect your Location ID. Open from your GHL sub-account custom menu (it auto-passes location_id).",
-        );
+        throw new Error("We couldn't detect your Location ID. Open from your sub-account custom menu.");
       }
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const idToken = await cred.user.getIdToken(true);
@@ -206,7 +202,7 @@ export default function AuthClient() {
           email: email.trim(),
           firstName: firstName.trim(),
           lastName: lastName.trim(),
-          agencyId: null, // we ignore agency here; backend can infer from location doc if needed
+          agencyId: null,
           locationId,
         }),
       });
@@ -290,7 +286,7 @@ export default function AuthClient() {
             <p className="text-gray-600 mt-1">Sign in or create an admin account to get started.</p>
             <ul className="text-sm text-gray-600 mt-3" style={{ listStyle: "disc", paddingLeft: "1.25rem" }}>
               <li>Open from your sub-account custom menu so <code>location_id</code> is auto-passed</li>
-              <li>After signup/login you&apos;re routed to the Admin Dashboard</li>
+              <li>After signup/login you&apos;re routed to the Dashboard</li>
             </ul>
           </section>
         </div>
@@ -313,6 +309,7 @@ export default function AuthClient() {
     Register
   </button>
 </div>
+
 
 
             <form

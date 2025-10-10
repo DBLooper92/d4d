@@ -1,4 +1,6 @@
 // src/app/(d4d)/app/page.tsx
+import RequireLocationAuth from "@/components/auth/RequireLocationAuth";
+
 type PageParamRecord = Record<string, string | string[] | undefined>;
 type SearchParamRecord = Record<string, string | string[] | undefined>;
 
@@ -47,25 +49,27 @@ export default async function AppPage({ searchParams }: Props) {
     );
   }
 
-  // Location-level Dashboard (top-right Invite Drivers button)
   const qs = `?location_id=${encodeURIComponent(locationId)}`;
 
-  return (
+  // Location-level Dashboard (auth-gated)
+return (
+  <RequireLocationAuth>
     <main className="p-6 max-w-4xl mx-auto">
-      <header className="hero card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
-          <p className="text-gray-600 mt-1">
-            Location: <span className="badge">{locationId}</span>
-          </p>
-        </div>
-        <a className="btn primary" href={`/app/invites${qs}`}>Invite Drivers</a>
-      </header>
 
-      {/* Add simple content here as you build features */}
-      <section className="mt-4 card">
-        <p className="text-gray-700">Welcome! Your minimal location dashboard is ready.</p>
-      </section>
-    </main>
+        <header className="hero card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <h1 className="text-2xl font-semibold">Dashboard</h1>
+            <p className="text-gray-600 mt-1">
+              Location: <span className="badge">{locationId}</span>
+            </p>
+          </div>
+          <a className="btn primary" href={`/app/invites${qs}`}>Invite Drivers</a>
+        </header>
+
+        <section className="mt-4 card">
+          <p className="text-gray-700">Welcome! Your minimal location dashboard is ready.</p>
+        </section>
+      </main>
+    </RequireLocationAuth>
   );
 }
