@@ -44,7 +44,11 @@ export default async function AdminDashboard({ searchParams }: Props) {
           <div className="mt-3 flex gap-2 flex-wrap">
             <a className="btn" href="/app">Open App Home</a>
             <a className="btn" href="/api/installed?_debug=1">Check Install State</a>
-            <a className="btn primary" href="#">Invite Drivers (soon)</a>
+            {/* Link into the `invites` page within the (d4d) group.  Route groups
+                don't appear in the URL, so this resolves to `/app/invites`. */}
+            <a className="btn primary" href="/app/invites">Invite Drivers</a>
+            {/* Link into the map page where drivers can capture properties. */}
+            <a className="btn" href="/app/map">Map &amp; Capture</a>
           </div>
         </div>
         <div className="card">

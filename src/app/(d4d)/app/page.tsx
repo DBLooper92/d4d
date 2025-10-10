@@ -1,3 +1,12 @@
+// File: src/app/(d4d)/app/page.tsx
+//
+// This page has been relocated into the `(d4d)` route group to ensure
+// that all new Driving for Dollars logic lives under a single
+// directory.  Grouping under `(d4d)` does not change the public
+// route (it remains `/app`), but it makes the project easier to
+// maintain as additional features such as employee invitations and
+// map functionality are added.
+
 type PageParamRecord = Record<string, string | string[] | undefined>;
 type SearchParamRecord = Record<string, string | string[] | undefined>;
 
