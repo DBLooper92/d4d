@@ -19,7 +19,6 @@ function pick(sp: SearchParamRecord, k: string) {
 export default async function AdminDashboard({ searchParams }: Props) {
   const sp = ((await searchParams) ?? {}) as SearchParamRecord;
   const locationId = pick(sp, "location_id") || pick(sp, "locationId") || pick(sp, "location");
-  const agencyId = pick(sp, "agencyId") || pick(sp, "companyId");
 
   return (
     <main className="p-6 max-w-6xl mx-auto">
@@ -27,17 +26,7 @@ export default async function AdminDashboard({ searchParams }: Props) {
       <header className="hero card">
         <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
         <p className="text-gray-600 mt-1">
-          {agencyId && (
-            <>
-              Agency: <span className="badge" style={{ background: "var(--blue-50)", borderColor: "var(--blue-100)" }}>{agencyId}</span>
-            </>
-          )}
-          {agencyId && locationId && <span> {" - "} </span>}
-          {locationId && (
-            <>
-              Location: <span className="badge">{locationId}</span>
-            </>
-          )}
+          {locationId ? <>Location: <span className="badge">{locationId}</span></> : "No location in URL"}
         </p>
       </header>
 
@@ -47,10 +36,7 @@ export default async function AdminDashboard({ searchParams }: Props) {
           <div className="mt-3 flex gap-2 flex-wrap">
             <a className="btn" href="/app">Open App Home</a>
             <a className="btn" href="/api/installed?_debug=1">Check Install State</a>
-            {/* Link into the `invites` page within the (d4d) group.  Route groups
-                don't appear in the URL, so this resolves to `/app/invites`. */}
             <a className="btn primary" href="/app/invites">Invite Drivers</a>
-            {/* Link into the map page where drivers can capture properties. */}
             <a className="btn" href="/app/map">Map &amp; Capture</a>
           </div>
         </div>

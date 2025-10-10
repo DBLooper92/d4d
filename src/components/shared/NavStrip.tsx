@@ -3,12 +3,22 @@
 
 import { useMemo } from "react";
 
+function pickLocationOnly(u: URL): string {
+  const s = u.searchParams;
+  return (
+    s.get("location_id") ||
+    s.get("locationId") ||
+    s.get("location") ||
+    ""
+  )?.trim() || "";
+}
+
 export default function NavStrip() {
-  const search = useMemo(() => {
+  const qs = useMemo(() => {
     try {
       const u = new URL(window.location.href);
-      // Preserve any qs like ?agencyId=... or ?location_id=...
-      return u.search || "";
+      const loc = pickLocationOnly(u);
+      return loc ? `?location_id=${encodeURIComponent(loc)}` : "";
     } catch {
       return "";
     }
@@ -17,7 +27,7 @@ export default function NavStrip() {
   const link = (path: string, label: string, primary = false) => (
     <a
       key={path}
-      href={`${path}${search}`}
+      href={`${path}${qs}`}
       className={`btn ${primary ? "primary" : ""}`}
       style={{ textDecoration: "none" }}
     >

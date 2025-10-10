@@ -1,19 +1,9 @@
-// File: src/app/(d4d)/app/page.tsx
-//
-// This page has been relocated into the `(d4d)` route group to ensure
-// that all new Driving for Dollars logic lives under a single
-// directory.  Grouping under `(d4d)` does not change the public
-// route (it remains `/app`), but it makes the project easier to
-// maintain as additional features such as employee invitations and
-// map functionality are added.
-
+// src/app/(d4d)/app/page.tsx
 type PageParamRecord = Record<string, string | string[] | undefined>;
 type SearchParamRecord = Record<string, string | string[] | undefined>;
 
-import AgencyLocations from "@/components/agency/AgencyLocations";
 import AuthClient from "@/components/auth/AuthClient";
 
-// This is the Next.js route segment option. Keep the exact export name "dynamic".
 export const dynamic = "auto";
 
 type Props = {
@@ -21,7 +11,7 @@ type Props = {
   searchParams?: Promise<SearchParamRecord>;
 };
 
-function pickParam(sp: SearchParamRecord, key: string): string {
+function pick(sp: SearchParamRecord, key: string): string {
   const raw = sp?.[key];
   if (Array.isArray(raw)) return (raw[0] || "").trim();
   return (raw || "").trim();
@@ -31,15 +21,24 @@ export default async function AppPage({ searchParams }: Props) {
   const resolved = ((await searchParams) ?? {}) as SearchParamRecord;
 
   const locationId =
-    pickParam(resolved, "location_id") ||
-    pickParam(resolved, "locationId") ||
-    pickParam(resolved, "location");
+    pick(resolved, "location_id") ||
+    pick(resolved, "locationId") ||
+    pick(resolved, "location");
 
-  // If a location is present -> sub-account flow (Auth screen: register/login)
-  // Otherwise -> agency flow (All locations list)
-  if (locationId) {
-    return <AuthClient />;
+  if (!locationId) {
+    // Hard fail (by design): this app must be opened from a sub-account CML
+    // configured like:  https://app.driving4dollars.co/app?location_id={{location.id}}
+    return (
+      <main style={{ padding: 24 }}>
+        <h1>Sub-account Only</h1>
+        <p style={{ marginTop: 8 }}>
+          No <code>location_id</code> detected. Open this app from your sub-account’s custom menu link
+          configured with <code>?location_id=&#123;&#123;location.id&#125;&#125;</code>.
+        </p>
+      </main>
+    );
   }
 
-  return <AgencyLocations />;
+  // We have a location_id → go straight to auth/registration flow.
+  return <AuthClient />;
 }

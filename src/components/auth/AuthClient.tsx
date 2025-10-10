@@ -16,9 +16,7 @@ import { ADMIN_DASHBOARD_ROUTE } from "@/lib/routes";
 
 type SsoContext = {
   activeLocationId?: string | null;
-  activeCompanyId?: string | null;
-  userName?: string | null;
-  email?: string | null;
+  // we intentionally ignore company fields here
 };
 
 type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
@@ -37,7 +35,8 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
     let done = false;
     const timeout = setTimeout(() => {
       if (!done) resolve(null);
-    }, 3000);
+    }, 5000); // give it a little longer inside iframe
+
     try {
       window.parent.postMessage({ message: "REQUEST_USER_DATA" }, "*");
       const onMsg = (ev: MessageEvent<unknown>) => {
@@ -45,17 +44,17 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
         if (isObj(data) && data["message"] === "REQUEST_USER_DATA_RESPONSE") {
           const mm = data as MarketplaceMessage;
           const maybe =
-            "encryptedData" in mm
-              ? (mm.encryptedData as unknown)
-              : "payload" in mm
-              ? (mm.payload as unknown)
-              : null;
+            "encryptedData" in mm ? (mm.encryptedData as unknown)
+            : "payload" in mm ? (mm.payload as unknown)
+            : null;
+
           const okString = typeof maybe === "string" && !!maybe;
           const okObj =
             isObj(maybe) &&
             typeof (maybe as EncryptedPayloadObject).iv === "string" &&
             typeof (maybe as EncryptedPayloadObject).cipherText === "string" &&
             typeof (maybe as EncryptedPayloadObject).tag === "string";
+
           if (okString || okObj) {
             done = true;
             clearTimeout(timeout);
@@ -71,7 +70,9 @@ async function getMarketplaceUserContext(): Promise<SsoContext | null> {
       resolve(null);
     }
   });
+
   if (!encrypted) return null;
+
   try {
     const r = await fetch("/api/user-context/decode", {
       method: "POST",
@@ -89,6 +90,8 @@ function pickLikelyLocationId(url: URL) {
   const search = url.searchParams;
   const fromQS = search.get("location_id") || search.get("locationId") || search.get("location") || "";
   if (fromQS && fromQS.trim()) return fromQS.trim();
+
+  // accept hash deep-link forms too
   const hash = url.hash || "";
   if (hash) {
     try {
@@ -96,20 +99,9 @@ function pickLikelyLocationId(url: URL) {
       const asParams = new URLSearchParams(h);
       const fromHash = asParams.get("location_id") || asParams.get("locationId") || asParams.get("location") || "";
       if (fromHash && fromHash.trim()) return fromHash.trim();
-      const segs = h.split(/[/?&]/).filter(Boolean);
-      const maybeId = segs.find((s) => s.length >= 12);
-      if (maybeId) return maybeId.trim();
     } catch {}
   }
-  const segs = url.pathname.split("/").filter(Boolean);
-  const maybeId = segs.length >= 2 ? segs[1] : "";
-  if (maybeId && maybeId.length >= 12) return maybeId.trim();
   return "";
-}
-function pickLikelyAgencyId(url: URL) {
-  const search = url.searchParams;
-  const fromQS = search.get("agency_id") || search.get("agencyId") || search.get("companyId") || "";
-  return (fromQS || "").trim();
 }
 
 type Mode = "login" | "register";
@@ -123,7 +115,6 @@ function visibleError(code: string): string {
   return "Something went wrong. Please try again.";
 }
 
-// buildDashboardHref returns a string
 function buildDashboardHref(qs: URLSearchParams): string {
   const query = qs.toString();
   return query ? `${ADMIN_DASHBOARD_ROUTE}?${query}` : ADMIN_DASHBOARD_ROUTE;
@@ -150,11 +141,12 @@ export default function AuthClient() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const contextFromUrl = useMemo(() => {
-    if (typeof window === "undefined") return { locationId: "", agencyId: "" };
+    if (typeof window === "undefined") return { locationId: "" };
     const u = new URL(window.location.href);
-    return { locationId: pickLikelyLocationId(u), agencyId: pickLikelyAgencyId(u) };
+    return { locationId: pickLikelyLocationId(u) };
   }, []);
 
+  // Redirect when signed in
   useEffect(() => {
     if (!auth) return;
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -163,10 +155,8 @@ export default function AuthClient() {
         setUserEmail(u.email || null);
         const url = new URL(window.location.href);
         const loc = pickLikelyLocationId(url);
-        const ag = pickLikelyAgencyId(url);
         const qs = new URLSearchParams();
         if (loc) qs.set("location_id", loc);
-        if (ag) qs.set("agencyId", ag);
         router.replace(buildDashboardHref(qs) as unknown as Route);
       } else {
         setUid(null);
@@ -176,6 +166,7 @@ export default function AuthClient() {
     return () => unsub();
   }, [auth, router]);
 
+  // Best-effort enhancement: if locationId missing, try SSO (some CMLs auto-provide it)
   useEffect(() => {
     (async () => {
       if (contextFromUrl.locationId || typeof window === "undefined") return;
@@ -183,7 +174,6 @@ export default function AuthClient() {
       if (sso?.activeLocationId) {
         const url = new URL(window.location.href);
         url.searchParams.set("location_id", sso.activeLocationId);
-        if (sso.activeCompanyId) url.searchParams.set("agencyId", sso.activeCompanyId);
         window.history.replaceState({}, "", url.toString());
       }
     })();
@@ -191,27 +181,19 @@ export default function AuthClient() {
 
   async function handleRegister() {
     setErr(null);
-    if (!auth) {
-      setErr("Auth not ready yet. Please try again.");
-      return;
-    }
+    if (!auth) { setErr("Auth not ready yet. Please try again."); return; }
     if (!email.trim() || !password.trim() || !firstName.trim() || !lastName.trim()) {
-      setErr("Please fill in all fields.");
-      return;
+      setErr("Please fill in all fields."); return;
     }
-    if (password !== confirm) {
-      setErr("Passwords do not match.");
-      return;
-    }
+    if (password !== confirm) { setErr("Passwords do not match."); return; }
     setBusy(true);
     try {
-      let { locationId, agencyId } = contextFromUrl;
+      let { locationId } = contextFromUrl;
       const sso = await getMarketplaceUserContext();
       locationId = locationId || sso?.activeLocationId || "";
-      agencyId = agencyId || sso?.activeCompanyId || "";
       if (!locationId) {
         throw new Error(
-          "We couldn't detect your Location ID. Please open this app from your GHL custom menu (it includes the location_id automatically).",
+          "We couldn't detect your Location ID. Open from your GHL sub-account custom menu (it auto-passes location_id).",
         );
       }
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
@@ -224,7 +206,7 @@ export default function AuthClient() {
           email: email.trim(),
           firstName: firstName.trim(),
           lastName: lastName.trim(),
-          agencyId: agencyId || null,
+          agencyId: null, // we ignore agency here; backend can infer from location doc if needed
           locationId,
         }),
       });
@@ -234,7 +216,6 @@ export default function AuthClient() {
       }
       const qs = new URLSearchParams();
       qs.set("location_id", locationId);
-      if (agencyId) qs.set("agencyId", agencyId);
       router.replace(buildDashboardHref(qs) as unknown as Route);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -246,14 +227,8 @@ export default function AuthClient() {
 
   async function handleLogin() {
     setErr(null);
-    if (!auth) {
-      setErr("Auth not ready yet. Please try again.");
-      return;
-    }
-    if (!email.trim() || !password.trim()) {
-      setErr("Please enter your email and password.");
-      return;
-    }
+    if (!auth) { setErr("Auth not ready yet. Please try again."); return; }
+    if (!email.trim() || !password.trim()) { setErr("Please enter your email and password."); return; }
     setBusy(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -314,48 +289,37 @@ export default function AuthClient() {
             <h1 className="text-2xl font-semibold">Driving for Dollars</h1>
             <p className="text-gray-600 mt-1">Sign in or create an admin account to get started.</p>
             <ul className="text-sm text-gray-600 mt-3" style={{ listStyle: "disc", paddingLeft: "1.25rem" }}>
-              <li>Light-only UI (no dark mode)</li>
+              <li>Open from your sub-account custom menu so <code>location_id</code> is auto-passed</li>
               <li>After signup/login you&apos;re routed to the Admin Dashboard</li>
-              <li>
-                Open from your GHL custom menu so <code>location_id</code> is auto-passed
-              </li>
             </ul>
           </section>
         </div>
 
         <div className="md:col-span-3">
           <section className="card">
-            <div className="mb-4 inline-flex rounded-xl border overflow-hidden">
-              <button
-                className={`px-4 py-2 ${mode === "login" ? "bg-gray-50" : ""}`}
-                onClick={() => {
-                  setMode("login");
-                  setErr(null);
-                }}
-                type="button"
-              >
-                Login
-              </button>
-              <button
-                className={`px-4 py-2 ${mode === "register" ? "bg-gray-50" : ""}`}
-                onClick={() => {
-                  setMode("register");
-                  setErr(null);
-                }}
-                type="button"
-              >
-                Register
-              </button>
-            </div>
+<div className="mb-4 inline-flex rounded-xl border overflow-hidden">
+  <button
+    className={`px-4 py-2 ${mode === "login" ? "bg-gray-50" : ""}`}
+    onClick={() => { setMode("login"); setErr(null); }}
+    type="button"
+  >
+    Login
+  </button>
+  <button
+    className={`px-4 py-2 ${mode === "register" ? "bg-gray-50" : ""}`}
+    onClick={() => { setMode("register"); setErr(null); }}
+    type="button"
+  >
+    Register
+  </button>
+</div>
+
 
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (mode === "login") {
-                  void handleLogin();
-                } else {
-                  void handleRegister();
-                }
+                if (mode === "login") void handleLogin();
+                else void handleRegister();
               }}
               className="space-y-4"
             >
@@ -363,82 +327,37 @@ export default function AuthClient() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm mb-1">First name</label>
-                    <input
-                      value={firstName}
-                      onChange={(ev) => setFirst(ev.target.value)}
-                      className="input"
-                      autoComplete="given-name"
-                      required
-                    />
+                    <input value={firstName} onChange={(ev) => setFirst(ev.target.value)} className="input" required />
                   </div>
                   <div>
                     <label className="block text-sm mb-1">Last name</label>
-                    <input
-                      value={lastName}
-                      onChange={(ev) => setLast(ev.target.value)}
-                      className="input"
-                      autoComplete="family-name"
-                      required
-                    />
+                    <input value={lastName} onChange={(ev) => setLast(ev.target.value)} className="input" required />
                   </div>
                 </div>
               )}
 
               <div>
                 <label className="block text-sm mb-1">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(ev) => setEmail(ev.target.value)}
-                  className="input"
-                  autoComplete="email"
-                  required
-                />
+                <input type="email" value={email} onChange={(ev) => setEmail(ev.target.value)} className="input" required />
               </div>
 
               <div>
                 <label className="block text-sm mb-1">Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(ev) => setPassword(ev.target.value)}
-                  className="input"
-                  autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  required
-                  minLength={6}
-                />
+                <input type="password" value={password} onChange={(ev) => setPassword(ev.target.value)} className="input" required minLength={6} />
               </div>
 
               {mode === "register" && (
                 <div>
                   <label className="block text-sm mb-1">Confirm password</label>
-                  <input
-                    type="password"
-                    value={confirm}
-                    onChange={(ev) => setConfirm(ev.target.value)}
-                    className="input"
-                    autoComplete="new-password"
-                    required
-                    minLength={6}
-                  />
+                  <input type="password" value={confirm} onChange={(ev) => setConfirm(ev.target.value)} className="input" required minLength={6} />
                 </div>
               )}
 
               {err && <p className="text-sm text-red-600">{err}</p>}
 
               <button type="submit" disabled={busy} className="btn primary w-full">
-                {busy
-                  ? mode === "login"
-                    ? "Logging in..."
-                    : "Creating account..."
-                  : mode === "login"
-                  ? "Login"
-                  : "Register"}
+                {busy ? (mode === "login" ? "Logging in..." : "Creating account...") : (mode === "login" ? "Login" : "Register")}
               </button>
-
-              <p className="text-xs text-gray-500 mt-2">
-                Tip: open this from your GHL custom menu so the <code>location_id</code> is auto-passed.
-              </p>
             </form>
           </section>
         </div>
