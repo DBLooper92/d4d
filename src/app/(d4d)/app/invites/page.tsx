@@ -1,6 +1,6 @@
 ﻿// src/app/(d4d)/app/invites/page.tsx
 import RequireLocationAuth from "@/components/auth/RequireLocationAuth";
-import LocationUsersList from "@/components/location/LocationUsersList";
+import InviteList from "@/components/invites/InviteList";
 
 type PageParamRecord = Record<string, string | string[] | undefined>;
 type SearchParamRecord = Record<string, string | string[] | undefined>;
@@ -42,13 +42,13 @@ export default async function InviteDriversPage({ searchParams }: Props) {
           <a className="btn" href={`/app${qs}`}>Dashboard</a>
         </header>
 
-        {locationId ? (
-          <LocationUsersList locationId={locationId} />
-        ) : (
-          <section className="mt-4 card">
-            <p className="text-gray-700">Cannot load users without a location_id.</p>
-          </section>
-        )}
+        <section className="mt-4">
+          {locationId ? (
+            <InviteList locationId={locationId} />
+          ) : (
+            <div className="card">Add <code>?location_id=...</code> to the URL and refresh.</div>
+          )}
+        </section>
       </main>
     </RequireLocationAuth>
   );
