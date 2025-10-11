@@ -73,7 +73,7 @@ export default function InviteList({ locationId }: { locationId: string }) {
   if (err) {
     return (
       <div className="card" style={{ borderColor: "#fecaca" }}>
-        <div className="text-red-700 font-medium">Couldn't load sub-account users</div>
+        <div className="text-red-700 font-medium">Couldn&apos;t load sub-account users</div>
         <div className="text-sm text-red-600 mt-1">{err}</div>
         <div className="text-xs text-gray-500 mt-2">
           Tip: ensure the location has a valid refresh token in Firestore and that the marketplace app has <code>users.readonly</code>.
