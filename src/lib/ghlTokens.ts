@@ -110,16 +110,20 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
   };
 }
 
-async function _refreshAccessToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }> {
-  const clientId = process.env.GHL_CLIENT_ID;
-  const clientSecret = process.env.GHL_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+async function _refreshAccessToken(
+  refreshToken: string,
+  clientId?: string,
+  clientSecret?: string
+): Promise<{ access_token: string; expires_in: number }> {
+  const cid = clientId || process.env.GHL_CLIENT_ID;
+  const csec = clientSecret || process.env.GHL_CLIENT_SECRET;
+  if (!cid || !csec) {
     throw new Error("GHL_CLIENT_ID / GHL_CLIENT_SECRET are not configured.");
   }
 
   const body = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
+    client_id: cid,
+    client_secret: csec,
     grant_type: "refresh_token",
     refresh_token: refreshToken,
   });
@@ -138,9 +142,19 @@ async function _refreshAccessToken(refreshToken: string): Promise<{ access_token
   return (await res.json()) as { access_token: string; expires_in: number };
 }
 
-/** PUBLIC: used by existing routes that expect this exact name */
-export async function exchangeRefreshToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }> {
-  return _refreshAccessToken(refreshToken);
+/** PUBLIC: legacy compat — supports 1 or 3 args */
+export function exchangeRefreshToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }>;
+export function exchangeRefreshToken(
+  refreshToken: string,
+  clientId: string,
+  clientSecret: string
+): Promise<{ access_token: string; expires_in: number }>;
+export function exchangeRefreshToken(
+  refreshToken: string,
+  clientId?: string,
+  clientSecret?: string
+): Promise<{ access_token: string; expires_in: number }> {
+  return _refreshAccessToken(refreshToken, clientId, clientSecret);
 }
 
 /** PUBLIC: obtain a valid access token for a given locationId (auto-refresh + persist) */
@@ -157,7 +171,7 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
     throw new Error("No refresh token available for this location.");
   }
 
-  // Refresh
+  // Refresh using env client creds (or whatever _refreshAccessToken resolves from env)
   const refreshed = await _refreshAccessToken(t.refreshToken);
 
   // Compute new expiry (LeadConnector returns seconds)
@@ -165,7 +179,10 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
 
   // Write back to the same doc/paths we read
   if (t._docRefPath && t._writeAccessPath && t._writeExpiresPath) {
-    const [collection, docId] = t._docRefPath.split("/").slice(-2);
+    const parts = t._docRefPath.split("/");
+    const collection = parts.slice(0, -1).join("/");
+    const docId = parts.at(-1)!;
+
     const update: Record<string, unknown> = {};
     update[t._writeAccessPath] = refreshed.access_token;
     update[t._writeExpiresPath] = newExpires;
