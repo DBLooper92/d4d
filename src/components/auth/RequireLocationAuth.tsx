@@ -1,4 +1,3 @@
-// src/components/auth/RequireLocationAuth.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -13,15 +12,20 @@ export default function RequireLocationAuth({
 }) {
   const [auth, setAuth] = useState<Auth | null>(null);
   const [uid, setUid] = useState<string | null>(null);
+  const [checked, setChecked] = useState(false); // NEW: have we resolved initial auth?
 
   useEffect(() => {
     const a = getFirebaseAuth();
     setAuth(a);
-    const unsub = onAuthStateChanged(a, (u) => setUid(u ? u.uid : null));
+    const unsub = onAuthStateChanged(a, (u) => {
+      setUid(u ? u.uid : null);
+      setChecked(true);
+    });
     return () => unsub();
   }, []);
 
-  if (!auth) {
+  // Still initializing Firebase or haven't resolved initial auth state yet
+  if (!auth || !checked) {
     return (
       <main className="p-6 max-w-3xl mx-auto">
         <section className="hero card">
@@ -32,11 +36,11 @@ export default function RequireLocationAuth({
     );
   }
 
-  // If no user, show the sign in / register flow (it will keep the location_id and redirect on success)
+  // Initial auth resolved: if not signed in, show login/register
   if (!uid) {
     return <AuthClient />;
   }
 
-  // Authenticated → render the intended page
+  // Signed in → render the intended page without redirecting away
   return <>{children}</>;
 }
