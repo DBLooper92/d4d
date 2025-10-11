@@ -11,6 +11,8 @@ export type GhlUser = {
   role?: string | null;
 };
 
+const API_VERSION = process.env.GHL_API_VERSION || "2021-07-28";
+
 export async function ghlFetch<T>(
   path: string,
   opts: { accessToken: string; query?: Record<string, string | number | boolean | undefined> }
@@ -25,6 +27,7 @@ export async function ghlFetch<T>(
     headers: {
       Authorization: `Bearer ${opts.accessToken}`,
       Accept: "application/json",
+      Version: API_VERSION,
     },
     cache: "no-store",
   });

@@ -7,26 +7,11 @@ type GhlUser = {
   id: string;
   name?: string | null;
   email?: string | null;
+  role?: string | null;
 };
 
-type ApiOk = { users?: unknown } | { data?: { users?: unknown } };
+type ApiOk = { users?: GhlUser[] } | { data?: { users?: GhlUser[] } };
 type ApiErr = { error?: { code?: string; message?: string } };
-
-function extractUsers(json: ApiOk): GhlUser[] {
-  // { users: [...] }
-  if ("users" in json && Array.isArray((json as { users?: unknown }).users)) {
-    return (json as { users: unknown[] }).users as GhlUser[];
-  }
-  // { data: { users: [...] } }
-  if (
-    "data" in json &&
-    typeof (json as { data?: unknown }).data === "object" &&
-    Array.isArray((json as { data: { users?: unknown } }).data.users)
-  ) {
-    return (json as { data: { users: unknown[] } }).data.users as GhlUser[];
-  }
-  return [];
-}
 
 export default function InviteList({ locationId }: { locationId: string }) {
   const [loading, setLoading] = useState(true);
@@ -43,21 +28,25 @@ export default function InviteList({ locationId }: { locationId: string }) {
           headers: { "Cache-Control": "no-store" },
         });
         const text = await r.text();
-        let json: ApiOk & ApiErr;
+        let parsed: ApiOk & ApiErr;
         try {
-          json = JSON.parse(text);
+          parsed = JSON.parse(text) as ApiOk & ApiErr;
         } catch {
           throw new Error(`Non-JSON from API (${r.status})`);
         }
 
-        if (!r.ok || json.error) {
-          const code = json.error?.code || `HTTP_${r.status}`;
-          const msg = json.error?.message || "Failed to load users.";
+        if (!r.ok || parsed.error) {
+          const code = parsed.error?.code || `HTTP_${r.status}`;
+          const msg = parsed.error?.message || "Failed to load users.";
           throw new Error(`${code}: ${msg}`);
         }
 
-        const list = extractUsers(json);
-        if (!cancelled) setItems(list);
+        const list =
+          (("users" in parsed && parsed.users) ||
+            ("data" in parsed && parsed.data?.users) ||
+            []) as unknown;
+
+        if (!cancelled) setItems(Array.isArray(list) ? list : []);
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
       } finally {
@@ -84,7 +73,7 @@ export default function InviteList({ locationId }: { locationId: string }) {
   if (err) {
     return (
       <div className="card" style={{ borderColor: "#fecaca" }}>
-        <div className="text-red-700 font-medium">Couldn’t load sub-account users</div>
+        <div className="text-red-700 font-medium">Couldn't load sub-account users</div>
         <div className="text-sm text-red-600 mt-1">{err}</div>
         <div className="text-xs text-gray-500 mt-2">
           Tip: ensure the location has a valid refresh token in Firestore and that the marketplace app has <code>users.readonly</code>.
