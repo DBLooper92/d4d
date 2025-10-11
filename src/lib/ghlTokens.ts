@@ -88,6 +88,23 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
         };
       }
     }
+
+    // Top-level fields fallback (locations/{id}.refreshToken, etc.)
+    {
+      const access = typeof data.accessToken === "string" ? data.accessToken : null;
+      const refresh = typeof data.refreshToken === "string" ? data.refreshToken : null;
+      const expires = data.expiresAt;
+      if (access || refresh) {
+        return {
+          accessToken: access,
+          refreshToken: refresh,
+          expiresAtMs: coerceMs(expires),
+          _docRefPath: locRef.path,
+          _writeAccessPath: "accessToken",
+          _writeExpiresPath: "expiresAt",
+        };
+      }
+    }
   }
 
   // C) oauth_tokens/{locationId}
