@@ -3,25 +3,10 @@ import { db } from "@/lib/firebaseAdmin";
 
 /**
  * ===== FIELD MAPPINGS (adjust to your current schema if needed) =====
- *
  * We try these locations, in order, to find the token payload for a location:
- *
- *   A) locations/{locationId}
- *      - oauth.accessToken
- *      - oauth.refreshToken
- *      - oauth.expiresAt (ms epoch or ISO)
- *
- *   B) locations/{locationId}
- *      - ghl.accessToken
- *      - ghl.refreshToken
- *      - ghl.expiresAt
- *
- *   C) oauth_tokens/{locationId}
- *      - accessToken
- *      - refreshToken
- *      - expiresAt
- *
- * If access token is missing/expired, we refresh with refresh_token and update the same doc.
+ *   A) locations/{locationId} -> oauth.accessToken / oauth.refreshToken / oauth.expiresAt
+ *   B) locations/{locationId} -> ghl.accessToken   / ghl.refreshToken   / ghl.expiresAt
+ *   C) oauth_tokens/{locationId} -> accessToken / refreshToken / expiresAt
  */
 
 type AnyObj = Record<string, unknown>;
@@ -49,10 +34,8 @@ function coerceMs(v: unknown): number | null {
 export type StoredToken = {
   accessToken: string | null;
   refreshToken: string | null;
-  expiresAtMs: number | null; // epoch ms when access token expires
-  // docRefPath: where we should write back on refresh
+  expiresAtMs: number | null;
   _docRefPath: string | null;
-  // field paths to update on refresh
   _writeAccessPath: string | null;
   _writeExpiresPath: string | null;
 };
@@ -65,33 +48,37 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
     const data = (locSnap.data() || {}) as AnyObj;
 
     // Option A: oauth.*
-    let access = readAtPath(data, "oauth.accessToken");
-    let refresh = readAtPath(data, "oauth.refreshToken");
-    let expires = readAtPath(data, "oauth.expiresAt");
-    if (typeof access === "string" || typeof refresh === "string") {
-      return {
-        accessToken: (access as string) || null,
-        refreshToken: (refresh as string) || null,
-        expiresAtMs: coerceMs(expires),
-        _docRefPath: locRef.path,
-        _writeAccessPath: "oauth.accessToken",
-        _writeExpiresPath: "oauth.expiresAt",
-      };
+    {
+      const access = readAtPath(data, "oauth.accessToken");
+      const refresh = readAtPath(data, "oauth.refreshToken");
+      const expires = readAtPath(data, "oauth.expiresAt");
+      if (typeof access === "string" || typeof refresh === "string") {
+        return {
+          accessToken: (access as string) || null,
+          refreshToken: (refresh as string) || null,
+          expiresAtMs: coerceMs(expires),
+          _docRefPath: locRef.path,
+          _writeAccessPath: "oauth.accessToken",
+          _writeExpiresPath: "oauth.expiresAt",
+        };
+      }
     }
 
     // Option B: ghl.*
-    access = readAtPath(data, "ghl.accessToken");
-    refresh = readAtPath(data, "ghl.refreshToken");
-    expires = readAtPath(data, "ghl.expiresAt");
-    if (typeof access === "string" || typeof refresh === "string") {
-      return {
-        accessToken: (access as string) || null,
-        refreshToken: (refresh as string) || null,
-        expiresAtMs: coerceMs(expires),
-        _docRefPath: locRef.path,
-        _writeAccessPath: "ghl.accessToken",
-        _writeExpiresPath: "ghl.expiresAt",
-      };
+    {
+      const access = readAtPath(data, "ghl.accessToken");
+      const refresh = readAtPath(data, "ghl.refreshToken");
+      const expires = readAtPath(data, "ghl.expiresAt");
+      if (typeof access === "string" || typeof refresh === "string") {
+        return {
+          accessToken: (access as string) || null,
+          refreshToken: (refresh as string) || null,
+          expiresAtMs: coerceMs(expires),
+          _docRefPath: locRef.path,
+          _writeAccessPath: "ghl.accessToken",
+          _writeExpiresPath: "ghl.expiresAt",
+        };
+      }
     }
   }
 
@@ -123,7 +110,7 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
   };
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }> {
+async function _refreshAccessToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }> {
   const clientId = process.env.GHL_CLIENT_ID;
   const clientSecret = process.env.GHL_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
@@ -151,6 +138,12 @@ async function refreshAccessToken(refreshToken: string): Promise<{ access_token:
   return (await res.json()) as { access_token: string; expires_in: number };
 }
 
+/** PUBLIC: used by existing routes that expect this exact name */
+export async function exchangeRefreshToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }> {
+  return _refreshAccessToken(refreshToken);
+}
+
+/** PUBLIC: obtain a valid access token for a given locationId (auto-refresh + persist) */
 export async function getValidAccessTokenForLocation(locationId: string): Promise<string> {
   const t = await readTokenForLocation(locationId);
   const now = Date.now();
@@ -165,7 +158,7 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
   }
 
   // Refresh
-  const refreshed = await refreshAccessToken(t.refreshToken);
+  const refreshed = await _refreshAccessToken(t.refreshToken);
 
   // Compute new expiry (LeadConnector returns seconds)
   const newExpires = now + refreshed.expires_in * 1000;
@@ -173,7 +166,6 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
   // Write back to the same doc/paths we read
   if (t._docRefPath && t._writeAccessPath && t._writeExpiresPath) {
     const [collection, docId] = t._docRefPath.split("/").slice(-2);
-    // Support nested paths via FieldPath shorthand
     const update: Record<string, unknown> = {};
     update[t._writeAccessPath] = refreshed.access_token;
     update[t._writeExpiresPath] = newExpires;
