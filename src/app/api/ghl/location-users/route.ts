@@ -9,7 +9,14 @@ function err(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-type GhlUsersSearchOk =
+/**
+ * The HighLevel "get users by location" endpoint returns a payload with a top‑level
+ * `users` array when the request is scoped to a location access token. In some
+ * cases (older versions of the API) the array may be nested under a `data`
+ * property. This union reflects both shapes so the response can be safely
+ * narrowed when extracting the list of users.
+ */
+type GhlUsersResponse =
   | { users?: Array<{ id: string; name?: string; email?: string; role?: string }> }
   | { data?: { users?: Array<{ id: string; name?: string; email?: string; role?: string }> } };
 
@@ -27,9 +34,19 @@ export async function GET(req: Request) {
       return err(401, "TOKEN_UNAVAILABLE", msg);
     }
 
-    const json = await ghlFetch<GhlUsersSearchOk>("/users/search", {
+    /**
+     * The v2 Users API exposes two ways to list users. The `/users/search` endpoint
+     * requires a `companyId` and is intended for agency‑level tokens. When
+     * operating with a location‑level access token (which is what the app uses),
+     * the recommended endpoint is `GET /users/` which automatically scopes the
+     * results to the active location. See the documentation for "Get User by
+     * Location" in the HighLevel API for details【362954652847587†L5310-L5334】. Using
+     * this endpoint avoids the need to know the parent company ID and aligns
+     * with the OAuth scope `users.readonly`.
+     */
+    const json = await ghlFetch<GhlUsersResponse>("/users/", {
       accessToken,
-      query: { locationId },
+      query: {},
     });
 
     const users =
@@ -39,7 +56,13 @@ export async function GET(req: Request) {
 
     return NextResponse.json(
       { users },
-      { status: 200, headers: { "Cache-Control": "no-store" } }
+      {
+        status: 200,
+        headers: {
+          // disable CDN and browser caching; location permissions may change
+          "Cache-Control": "no-store",
+        },
+      },
     );
   } catch (e) {
     const msg = (e as Error).message || String(e);
