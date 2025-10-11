@@ -1,5 +1,7 @@
 // src/lib/ghlTokens.ts
+
 import { db } from "@/lib/firebaseAdmin";
+import { ghlTokenUrl } from "./ghl";
 
 /**
  * ===== FIELD MAPPINGS (adjust to your current schema if needed) =====
@@ -31,6 +33,13 @@ function coerceMs(v: unknown): number | null {
   return null;
 }
 
+export type RefreshExchangeResponse = {
+  access_token: string;
+  scope?: string;          // <-- your existing routes read this
+  token_type?: string;
+  expires_in: number;      // seconds
+};
+
 export type StoredToken = {
   accessToken: string | null;
   refreshToken: string | null;
@@ -41,13 +50,12 @@ export type StoredToken = {
 };
 
 async function readTokenForLocation(locationId: string): Promise<StoredToken> {
-  // Try locations/{id}
+  // A) locations/{id} oauth.*
   const locRef = db().collection("locations").doc(locationId);
   const locSnap = await locRef.get();
   if (locSnap.exists) {
     const data = (locSnap.data() || {}) as AnyObj;
 
-    // Option A: oauth.*
     {
       const access = readAtPath(data, "oauth.accessToken");
       const refresh = readAtPath(data, "oauth.refreshToken");
@@ -64,7 +72,7 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
       }
     }
 
-    // Option B: ghl.*
+    // B) locations/{id} ghl.*
     {
       const access = readAtPath(data, "ghl.accessToken");
       const refresh = readAtPath(data, "ghl.refreshToken");
@@ -82,7 +90,7 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
     }
   }
 
-  // Option C: oauth_tokens/{locationId}
+  // C) oauth_tokens/{locationId}
   const tokRef = db().collection("oauth_tokens").doc(locationId);
   const tokSnap = await tokRef.get();
   if (tokSnap.exists) {
@@ -110,58 +118,70 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
   };
 }
 
-async function _refreshAccessToken(
+async function _doRefresh(
   refreshToken: string,
-  clientId?: string,
-  clientSecret?: string
-): Promise<{ access_token: string; expires_in: number }> {
-  const cid = clientId || process.env.GHL_CLIENT_ID;
-  const csec = clientSecret || process.env.GHL_CLIENT_SECRET;
-  if (!cid || !csec) {
-    throw new Error("GHL_CLIENT_ID / GHL_CLIENT_SECRET are not configured.");
-  }
-
-  const body = new URLSearchParams({
-    client_id: cid,
-    client_secret: csec,
+  clientId: string,
+  clientSecret: string
+): Promise<RefreshExchangeResponse> {
+  const form = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken,
+    client_id: clientId,
+    client_secret: clientSecret,
   });
 
-  const res = await fetch("https://services.leadconnectorhq.com/oauth/token", {
+  const r = await fetch(ghlTokenUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-    body,
+    body: form,
     cache: "no-store",
   });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`GHL token refresh failed ${res.status}: ${text || res.statusText}`);
+  const raw = await r.text();
+  if (!r.ok) {
+    throw new Error(`refresh exchange failed: ${r.status} ${raw.slice(0, 400)}`);
   }
-  return (await res.json()) as { access_token: string; expires_in: number };
+
+  try {
+    return JSON.parse(raw) as RefreshExchangeResponse;
+  } catch {
+    throw new Error(`refresh exchange bad JSON: ${raw.slice(0, 400)}`);
+  }
 }
 
-/** PUBLIC: legacy compat — supports 1 or 3 args */
-export function exchangeRefreshToken(refreshToken: string): Promise<{ access_token: string; expires_in: number }>;
+/**
+ * PUBLIC: Legacy/compat function used across the codebase.
+ * Supports BOTH signatures:
+ *   1) exchangeRefreshToken(refreshToken, clientId, clientSecret)  // your original
+ *   2) exchangeRefreshToken(refreshToken)                          // env-based fallback
+ */
 export function exchangeRefreshToken(
   refreshToken: string,
   clientId: string,
   clientSecret: string
-): Promise<{ access_token: string; expires_in: number }>;
+): Promise<RefreshExchangeResponse>;
+export function exchangeRefreshToken(refreshToken: string): Promise<RefreshExchangeResponse>;
 export function exchangeRefreshToken(
   refreshToken: string,
   clientId?: string,
   clientSecret?: string
-): Promise<{ access_token: string; expires_in: number }> {
-  return _refreshAccessToken(refreshToken, clientId, clientSecret);
+): Promise<RefreshExchangeResponse> {
+  const cid = clientId ?? process.env.GHL_CLIENT_ID;
+  const csec = clientSecret ?? process.env.GHL_CLIENT_SECRET;
+  if (!cid || !csec) {
+    throw new Error("GHL_CLIENT_ID / GHL_CLIENT_SECRET are not configured.");
+  }
+  return _doRefresh(refreshToken, cid, csec);
 }
 
-/** PUBLIC: obtain a valid access token for a given locationId (auto-refresh + persist) */
+/**
+ * PUBLIC: Obtain a valid access token for a given location (auto-refresh + persist).
+ * Uses the flexible mapping documented at the top of this file.
+ */
 export async function getValidAccessTokenForLocation(locationId: string): Promise<string> {
   const t = await readTokenForLocation(locationId);
   const now = Date.now();
-  const skewMs = 60 * 1000; // refresh 1min early
+  const skewMs = 60 * 1000; // refresh 1 minute early
 
   if (t.accessToken && t.expiresAtMs && t.expiresAtMs > now + skewMs) {
     return t.accessToken;
@@ -171,11 +191,8 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
     throw new Error("No refresh token available for this location.");
   }
 
-  // Refresh using env client creds (or whatever _refreshAccessToken resolves from env)
-  const refreshed = await _refreshAccessToken(t.refreshToken);
-
-  // Compute new expiry (LeadConnector returns seconds)
-  const newExpires = now + refreshed.expires_in * 1000;
+  const tok = await exchangeRefreshToken(t.refreshToken); // uses env creds if not passed
+  const newExpiresMs = now + tok.expires_in * 1000;
 
   // Write back to the same doc/paths we read
   if (t._docRefPath && t._writeAccessPath && t._writeExpiresPath) {
@@ -184,11 +201,11 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
     const docId = parts.at(-1)!;
 
     const update: Record<string, unknown> = {};
-    update[t._writeAccessPath] = refreshed.access_token;
-    update[t._writeExpiresPath] = newExpires;
+    update[t._writeAccessPath] = tok.access_token;
+    update[t._writeExpiresPath] = newExpiresMs;
 
     await db().collection(collection).doc(docId).set(update, { merge: true });
   }
 
-  return refreshed.access_token;
+  return tok.access_token;
 }
