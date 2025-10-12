@@ -14,6 +14,7 @@ type Body = {
   lastName: string;
   agencyId?: string | null;
   locationId: string;
+  ghlUserId?: string | null;
 };
 
 type UserDoc = {
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
       lastName,
       agencyId: agencyIdIn,
       locationId,
+      ghlUserId: ghlUserIdIn,
     } = (await req.json()) as Body;
 
     if (!idToken) return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
@@ -96,40 +98,52 @@ export async function POST(req: Request) {
       }
     });
 
-    // Attempt to look up and persist the corresponding GHL user ID based on email.
-    // The HighLevel "Get User by Location" endpoint returns an array of users for a
-    // given location when provided with the `locationId` query parameter【724459568743161†L0-L18】.
-    // After creating the Firebase auth user, we fetch the list of users from GHL
-    // and match on email to retrieve the external user ID.  Any failures here
-    // should not abort signup; they are logged silently.
-    try {
-      const locId = String(locationId || "").trim();
-      const emailLc = (userEmail || email || "").trim().toLowerCase();
-      if (locId && emailLc) {
-        const accessToken = await getValidAccessTokenForLocation(locId);
-        const resp = await ghlFetch<{ users?: Array<{ id: string; email?: string }>; data?: { users?: Array<{ id: string; email?: string }> } }>(
-          "/users/",
-          {
-            accessToken,
-            query: { locationId: locId },
-          },
-        );
-        const list =
-          (resp as { users?: Array<{ id: string; email?: string }> }).users ??
-          (resp as { data?: { users?: Array<{ id: string; email?: string }> } }).data?.users ??
-          [];
-        const match = Array.isArray(list)
-          ? list.find((u) => typeof u?.email === "string" && u.email.trim().toLowerCase() === emailLc)
-          : undefined;
-        const ghlId = match?.id;
-        if (typeof ghlId === "string" && ghlId.trim()) {
-          const update = { ghlUserId: ghlId.trim() } as Record<string, unknown>;
-          await db().collection("users").doc(uid).set(update, { merge: true });
-          await db().collection("locations").doc(locId).collection("users").doc(uid).set(update, { merge: true });
-        }
+    // Persist the supplied GHL userId if provided (prefer this over lookup).
+    if (ghlUserIdIn && typeof ghlUserIdIn === "string" && ghlUserIdIn.trim()) {
+      const id = ghlUserIdIn.trim();
+      try {
+        const update = { ghlUserId: id } as Record<string, unknown>;
+        await db().collection("users").doc(uid).set(update, { merge: true });
+        await db().collection("locations").doc(locationId).collection("users").doc(uid).set(update, { merge: true });
+      } catch {
+        /* ignore */
       }
-    } catch {
-      // Swallow any errors while syncing GHL user ID.  These will not block user creation.
+    } else {
+      // Attempt to look up and persist the corresponding GHL user ID based on email.
+      // The HighLevel "Get User by Location" endpoint returns an array of users for a
+      // given location when provided with the `locationId` query parameter【724459568743161†L15-L18】.
+      // After creating the Firebase auth user, we fetch the list of users from GHL
+      // and match on email to retrieve the external user ID.  Any failures here
+      // should not abort signup; they are logged silently.
+      try {
+        const locId = String(locationId || "").trim();
+        const emailLc = (userEmail || email || "").trim().toLowerCase();
+        if (locId && emailLc) {
+          const accessToken = await getValidAccessTokenForLocation(locId);
+          const resp = await ghlFetch<{ users?: Array<{ id: string; email?: string }>; data?: { users?: Array<{ id: string; email?: string }> } }>(
+            "/users/",
+            {
+              accessToken,
+              query: { locationId: locId },
+            },
+          );
+          const list =
+            (resp as { users?: Array<{ id: string; email?: string }> }).users ??
+            (resp as { data?: { users?: Array<{ id: string; email?: string }> } }).data?.users ??
+            [];
+          const match = Array.isArray(list)
+            ? list.find((u) => typeof u?.email === "string" && u.email.trim().toLowerCase() === emailLc)
+            : undefined;
+          const ghlId = match?.id;
+          if (typeof ghlId === "string" && ghlId.trim()) {
+            const update = { ghlUserId: ghlId.trim() } as Record<string, unknown>;
+            await db().collection("users").doc(uid).set(update, { merge: true });
+            await db().collection("locations").doc(locId).collection("users").doc(uid).set(update, { merge: true });
+          }
+        }
+      } catch {
+        // Swallow any errors while syncing GHL user ID.  These will not block user creation.
+      }
     }
 
     return NextResponse.json({ ok: true, uid }, { status: 200, headers: { "Cache-Control": "no-store" } });

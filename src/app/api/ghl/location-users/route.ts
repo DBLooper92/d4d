@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
 import { ghlFetch } from "@/lib/ghlClient";
+import { db } from "@/lib/firebaseAdmin";
 
 export const runtime = "nodejs";
 
@@ -59,6 +60,49 @@ export async function GET(req: Request) {
       (json as { users?: Array<{ id: string; name?: string; email?: string; role?: string }> }).users ??
       (json as { data?: { users?: Array<{ id: string; name?: string; email?: string; role?: string }> } }).data?.users ??
       [];
+
+    // Attempt to persist the GHL user ID on our own user records.
+    // In many installations, the `complete-signup` route executes before a valid
+    // location access token exists or before the GHL user list reflects the newly
+    // created sub‑account user.  To ensure every mapped user record has a
+    // `ghlUserId`, we perform a best‑effort update here by matching on email.
+    // Any failures are swallowed; the primary response remains unaffected.
+    (async () => {
+      try {
+        // Coerce locationId into a string to satisfy Firestore collection path.
+        const locId = String(locationId);
+        if (!locId) return;
+        // Process each returned user concurrently.  Use a Set to avoid
+        // duplicate work for duplicate emails.
+        const seen = new Set<string>();
+        await Promise.all(
+          users.map(async (u) => {
+            const ghlId = typeof u?.id === "string" ? u.id.trim() : "";
+            const email = typeof u?.email === "string" ? u.email.trim().toLowerCase() : "";
+            if (!ghlId || !email || seen.has(email)) return;
+            seen.add(email);
+            // Update all root users with matching email.
+            const rootSnap = await db().collection("users").where("email", "==", email).get();
+            const rootUpdates = rootSnap.docs.map((doc) =>
+              doc.ref.set({ ghlUserId: ghlId }, { merge: true }),
+            );
+            // Update location‑scoped users with matching email.
+            const locSnap = await db()
+              .collection("locations")
+              .doc(locId)
+              .collection("users")
+              .where("email", "==", email)
+              .get();
+            const locUpdates = locSnap.docs.map((doc) =>
+              doc.ref.set({ ghlUserId: ghlId }, { merge: true }),
+            );
+            await Promise.all([...rootUpdates, ...locUpdates]);
+          }),
+        );
+      } catch {
+        /* ignore errors */
+      }
+    })().catch(() => {/* ignore */});
 
     return NextResponse.json(
       { users },

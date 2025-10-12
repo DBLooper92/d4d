@@ -78,13 +78,27 @@ export async function POST(req: Request) {
       console.info("[oauth] sso decode keys", { keys });
     } catch { /* noop */ }
 
-    // Only return what we need now
+    // Only return what we need now, plus the HighLevel userId (if present).  The
+    // decrypted payload may contain nested `user.id` or top‑level `userId`/`id`.
     const companyId = pickString(raw, ["companyId", "agencyId", "company", "agency"]);
     const type = pickString(raw, ["type"]);
     const activeLocation = pickString(raw, ["activeLocation", "activeLocationId", "locationId"]);
     const userName = pickString(raw, ["userName"]);
     const email = pickString(raw, ["email"]);
-
+    let userId: string | null = null;
+    try {
+      if (raw && typeof raw === "object") {
+        const userObj = (raw as Record<string, unknown>)["user"] as Record<string, unknown> | undefined;
+        const nestedId = userObj && typeof userObj["id"] === "string" ? (userObj["id"] as string).trim() : "";
+        if (nestedId) {
+          userId = nestedId;
+        } else {
+          userId = pickString(raw, ["userId", "id"]);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     return NextResponse.json(
       {
         activeLocationId: activeLocation ?? null,
@@ -92,6 +106,7 @@ export async function POST(req: Request) {
         type: type ?? null,
         userName: userName ?? null,
         email: email ?? null,
+        userId: userId ?? null,
       },
       { status: 200, headers: { "Cache-Control": "no-store" } },
     );
