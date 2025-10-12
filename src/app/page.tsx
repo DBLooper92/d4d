@@ -1,15 +1,12 @@
-import pkg from "@/../package.json";
-
 export default function Page() {
   return (
     <main style={{ padding: 24 }}>
-      <h1>D4D Ready</h1>
-      <p>Next.js App Router on Firebase App Hosting.</p>
-      <p>
-        Version: <code>{pkg.version}</code>
-      </p>
-      <p>
-        <a href="/api/health">/api/health</a> | <a href="/api/public-env">/api/public-env</a> | <a href="/api/version">/api/version</a>
+      <h1>Driving for Dollars</h1>
+      <p className="mt-2">Welcome! Use the custom menu inside your GoHighLevel sub‑account to launch the app.</p>
+      <p className="mt-4">
+        <a className="btn primary" href="/app">
+          Go to App
+        </a>
       </p>
     </main>
   );

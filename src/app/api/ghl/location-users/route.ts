@@ -44,9 +44,15 @@ export async function GET(req: Request) {
      * this endpoint avoids the need to know the parent company ID and aligns
      * with the OAuth scope `users.readonly`.
      */
+    // Always pass the locationId as a query parameter.  The official
+    // "Get User by Location" endpoint documentation specifies that a
+    // `locationId` query parameter is required【724459568743161†L0-L18】.  While
+    // recent versions of the API will automatically scope `/users/` when
+    // using a sub‑account token, providing the ID explicitly ensures
+    // compatibility with all documented behaviours.
     const json = await ghlFetch<GhlUsersResponse>("/users/", {
       accessToken,
-      query: {},
+      query: { locationId },
     });
 
     const users =
