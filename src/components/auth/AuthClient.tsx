@@ -16,6 +16,11 @@ import { DASHBOARD_ROUTE } from "@/lib/routes";
 
 type SsoContext = {
   activeLocationId?: string | null;
+  activeCompanyId?: string | null;
+  userId?: string | null;
+  userName?: string | null;
+  email?: string | null;
+  type?: string | null;
 };
 
 type EncryptedPayloadObject = { iv: string; cipherText: string; tag: string };
@@ -195,7 +200,7 @@ export default function AuthClient() {
       // Capture the HighLevel userId from the SSO context if available.  This
       // allows the server to persist the GHL user ID without relying on an
       // email match after registration.
-      const ghlUserId = (sso as any)?.userId || null;
+      const ghlUserId = sso?.userId ?? null;
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const idToken = await cred.user.getIdToken(true);
       const resp = await fetch("/api/auth/complete-signup", {
