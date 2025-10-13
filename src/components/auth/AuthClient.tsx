@@ -143,6 +143,31 @@ export default function AuthClient() {
   const [uid, setUid] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
+  /**
+   * Hold the HighLevel SSO context if available.
+   *
+   * On mount we request the encrypted user context from the parent frame (GHL)
+   * and decode it server‑side via `/api/user-context/decode`.  Storing it in
+   * state ensures that repeated calls don’t re‑issue the postMessage request
+   * unnecessarily and provides synchronous access when the user clicks
+   * Register.  If the user opens the app outside of GHL, this will remain
+   * null and fallbacks (email matching) apply.
+   */
+  const [ssoContext, setSsoContext] = useState<SsoContext | null>(null);
+
+  useEffect(() => {
+    // Fetch the marketplace user context once when the component mounts.  The
+    // helper returns null if no context is available or if decryption fails.
+    (async () => {
+      try {
+        const ctx = await getMarketplaceUserContext();
+        setSsoContext(ctx);
+      } catch {
+        // ignore; will remain null
+      }
+    })();
+  }, []);
+
   const contextFromUrl = useMemo(() => {
     if (typeof window === "undefined") return { locationId: "" };
     const u = new URL(window.location.href);
@@ -173,14 +198,17 @@ export default function AuthClient() {
   useEffect(() => {
     (async () => {
       if (contextFromUrl.locationId || typeof window === "undefined") return;
-      const sso = await getMarketplaceUserContext();
+      // Prefer the cached SSO context if available.  If not present, fetch
+      // just once on demand.  This avoids multiple calls to the marketplace
+      // context helper and mitigates race conditions.
+      const sso = ssoContext ?? (await getMarketplaceUserContext());
       if (sso?.activeLocationId) {
         const url = new URL(window.location.href);
         url.searchParams.set("location_id", sso.activeLocationId);
         window.history.replaceState({}, "", url.toString());
       }
     })();
-  }, [contextFromUrl.locationId]);
+  }, [contextFromUrl.locationId, ssoContext]);
 
   async function handleRegister() {
     setErr(null);
@@ -191,8 +219,12 @@ export default function AuthClient() {
     if (password !== confirm) { setErr("Passwords do not match."); return; }
     setBusy(true);
     try {
+      // Determine the active location ID from the URL or the SSO context.  When
+      // running inside the HighLevel marketplace, the SSO context includes
+      // `activeLocationId` which we can trust.  Avoid requesting the context
+      // multiple times by using the cached value if present.
       let { locationId } = contextFromUrl;
-      const sso = await getMarketplaceUserContext();
+      const sso = ssoContext ?? (await getMarketplaceUserContext());
       locationId = locationId || sso?.activeLocationId || "";
       if (!locationId) {
         throw new Error("We couldn't detect your Location ID. Open from your sub-account custom menu.");
