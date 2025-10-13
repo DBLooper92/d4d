@@ -197,10 +197,11 @@ export default function AuthClient() {
       if (!locationId) {
         throw new Error("We couldn't detect your Location ID. Open from your sub-account custom menu.");
       }
-      // Capture the HighLevel userId from the SSO context if available.  This
-      // allows the server to persist the GHL user ID without relying on an
-      // email match after registration.
+      // Capture identifiers returned by HighLevel's SSO context so the server
+      // can persist them without additional API lookups.
       const ghlUserId = sso?.userId ?? null;
+      const ghlCompanyId = sso?.activeCompanyId ?? null;
+      const ghlLocationId = sso?.activeLocationId ?? null;
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const idToken = await cred.user.getIdToken(true);
       const resp = await fetch("/api/auth/complete-signup", {
@@ -214,6 +215,8 @@ export default function AuthClient() {
           agencyId: null,
           locationId,
           ghlUserId,
+          ghlCompanyId,
+          ghlLocationId,
         }),
       });
       if (!resp.ok) {

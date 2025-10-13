@@ -191,6 +191,36 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Bad token JSON" }, { status: 502 });
   }
 
+  const installerUserId = typeof tokens?.userId === "string" ? tokens.userId : null;
+  if (installerUserId && typeof tokens?.companyId === "string" && tokens.companyId.trim()) {
+    try {
+      await db()
+        .collection("ghl_installs")
+        .doc(tokens.companyId.trim())
+        .set(
+          {
+            companyId: tokens.companyId ?? null,
+            locationId: tokens.locationId ?? null,
+            installerUserId,
+            scopes: tokens.scope ?? null,
+            updatedAt: Date.now(),
+          },
+          { merge: true },
+        );
+    } catch (error) {
+      olog("failed to persist installer user", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  ck.set("ghl_installer_uid", installerUserId ?? "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: true,
+    path: "/",
+  });
+
   const agencyId = tokens.companyId || null;
   const locationId = tokens.locationId || null;
   const scopeArr = scopeListFromTokenScope(tokens.scope);
@@ -387,4 +417,3 @@ export async function GET(request: Request) {
 
   return NextResponse.redirect(ui.toString(), { status: 302 });
 }
-

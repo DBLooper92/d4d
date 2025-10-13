@@ -3,12 +3,15 @@ const API_VERSION = "2021-07-28";
 
 export type OAuthTokens = {
   access_token: string;
-  refresh_token: string;
+  refresh_token?: string;
   scope?: string;
-  expires_in: number;
-  token_type: string;
-  companyId?: string;  // agencyId
-  locationId?: string; // sub-account id
+  expires_in?: number;
+
+  // Context
+  userType?: "Company" | "Location";
+  companyId?: string;          // present for both Company/Location tokens
+  locationId?: string | null;  // present when userType is Location (or minted location token)
+  userId?: string | null;      // <-- add this (present in token response; ID of the installer/current user)
 };
 
 export const OAUTH_LOG = String(process.env.OAUTH_LOG || "off").toLowerCase() === "on";
