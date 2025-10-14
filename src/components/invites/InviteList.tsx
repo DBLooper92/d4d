@@ -18,6 +18,54 @@ export default function InviteList({ locationId }: { locationId: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [items, setItems] = useState<GhlUser[]>([]);
 
+  /**
+   * Track invite state for each user. The key is the user ID and the value
+   * reflects whether an invite is currently being sent, has been sent, or
+   * encountered an error. This allows the UI to display per‑row status and
+   * prevent duplicate submissions.
+   */
+  const [inviteState, setInviteState] = useState<
+    Record<string, { sending: boolean; sent: boolean; error?: string | null }>
+  >({});
+
+  async function handleInvite(u: GhlUser) {
+    // Ensure we have an email; inviting without an email is not supported.
+    if (!u.email) {
+      setInviteState((prev) => ({
+        ...prev,
+        [u.id]: { sending: false, sent: false, error: "No email available" },
+      }));
+      return;
+    }
+    // Optimistically mark as sending.
+    setInviteState((prev) => ({
+      ...prev,
+      [u.id]: { sending: true, sent: false, error: null },
+    }));
+    try {
+      const res = await fetch("/api/invites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locationId, email: u.email, firstName: u.name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        const msg = data.error?.message || res.statusText;
+        throw new Error(msg || "Failed to send invite");
+      }
+      setInviteState((prev) => ({
+        ...prev,
+        [u.id]: { sending: false, sent: true, error: null },
+      }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setInviteState((prev) => ({
+        ...prev,
+        [u.id]: { sending: false, sent: false, error: msg },
+      }));
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -95,9 +143,25 @@ export default function InviteList({ locationId }: { locationId: string }) {
             <div className="text-xs text-gray-500 mt-1">GHL User ID: {u.id}</div>
             {u.email ? <div className="text-xs text-gray-500">{u.email}</div> : null}
           </div>
-          <button className="btn primary" type="button" onClick={() => {/* no-op for now */}}>
-            Invite
-          </button>
+          <div className="flex flex-col items-end">
+            <button
+              className="btn primary"
+              type="button"
+              disabled={inviteState[u.id]?.sending || inviteState[u.id]?.sent}
+              onClick={() => handleInvite(u)}
+            >
+              {inviteState[u.id]?.sending
+                ? "Sending..."
+                : inviteState[u.id]?.sent
+                ? "Sent"
+                : "Invite"}
+            </button>
+            {inviteState[u.id]?.error ? (
+              <div className="text-xs text-red-600 mt-1 w-40 text-right break-words">
+                {inviteState[u.id]?.error}
+              </div>
+            ) : null}
+          </div>
         </div>
       ))}
     </div>
