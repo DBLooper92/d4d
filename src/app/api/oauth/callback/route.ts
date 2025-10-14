@@ -46,9 +46,7 @@ async function ensureCml(
     let json: unknown = null;
     try {
       json = text ? JSON.parse(text) : null;
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
     return { ok: r.ok, status: r.status, bodyText: text, json };
   };
 
@@ -83,7 +81,6 @@ async function ensureCml(
   const baseBody = {
     title: "Driving for Dollars",
     url: "https://admin.driving4dollars.co/app?location_id={{location.id}}",
-    // visibility flags that the API accepts (do NOT send `visibility`)
     showOnCompany: false,
     showOnLocation: true,
     showToAllLocations: true,
@@ -124,10 +121,6 @@ async function ensureCml(
 }
 
 export async function GET(request: Request) {
-  // (unchanged from your version)
-  // ... FULL CONTENT IDENTICAL TO YOUR CURRENT FILE EXCEPT THE baseBody ABOVE ...
-  // Copy your existing handler here verbatim to avoid diff drift.
-  // For brevity in this response, keep your current logic; only the ensureCml() above changed.
   const url = new URL(request.url);
   const code = url.searchParams.get("code") || "";
 
@@ -191,35 +184,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Bad token JSON" }, { status: 502 });
   }
 
-  const installerUserId = typeof tokens?.userId === "string" ? tokens.userId : null;
-  if (installerUserId && typeof tokens?.companyId === "string" && tokens.companyId.trim()) {
-    try {
-      await db()
-        .collection("ghl_installs")
-        .doc(tokens.companyId.trim())
-        .set(
-          {
-            companyId: tokens.companyId ?? null,
-            locationId: tokens.locationId ?? null,
-            installerUserId,
-            scopes: tokens.scope ?? null,
-            updatedAt: Date.now(),
-          },
-          { merge: true },
-        );
-    } catch (error) {
-      olog("failed to persist installer user", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  ck.set("ghl_installer_uid", installerUserId ?? "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: true,
-    path: "/",
-  });
+  // Removed legacy installer persistence:
+  // Previously wrote to `ghl_installs` and set an installer cookie; both are gone.
 
   const agencyId = tokens.companyId || null;
   const locationId = tokens.locationId || null;

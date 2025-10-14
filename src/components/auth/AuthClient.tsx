@@ -107,7 +107,19 @@ function pickLikelyLocationId(url: URL) {
   return "";
 }
 
-type Mode = "login" | "register";
+// A UI step representing the current stage of the auth flow.
+type UiStep = "select" | "register" | "login";
+
+// Slim user shape for the “Get Users by Location” list
+type GhlUser = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+};
+
+type ApiOk = { users?: GhlUser[] } | { data?: { users?: GhlUser[] } };
+type ApiErr = { error?: { code?: string; message?: string } };
 
 function visibleError(code: string): string {
   const c = code.toLowerCase();
@@ -130,7 +142,16 @@ export default function AuthClient() {
     setAuth(getFirebaseAuth());
   }, []);
 
-  const [mode, setMode] = useState<Mode>("login");
+  // Step state
+  const [step, setStep] = useState<UiStep>("select");
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+
+  // User list for the location
+  const [users, setUsers] = useState<GhlUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState<boolean>(false);
+  const [usersErr, setUsersErr] = useState<string | null>(null);
+
+  // Form state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -143,27 +164,16 @@ export default function AuthClient() {
   const [uid, setUid] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  /**
-   * Hold the HighLevel SSO context if available.
-   *
-   * On mount we request the encrypted user context from the parent frame (GHL)
-   * and decode it server‑side via `/api/user-context/decode`.  Storing it in
-   * state ensures that repeated calls don’t re‑issue the postMessage request
-   * unnecessarily and provides synchronous access when the user clicks
-   * Register.  If the user opens the app outside of GHL, this will remain
-   * null and fallbacks (email matching) apply.
-   */
+  // SSO context (if running inside GHL)
   const [ssoContext, setSsoContext] = useState<SsoContext | null>(null);
 
   useEffect(() => {
-    // Fetch the marketplace user context once when the component mounts.  The
-    // helper returns null if no context is available or if decryption fails.
     (async () => {
       try {
         const ctx = await getMarketplaceUserContext();
         setSsoContext(ctx);
       } catch {
-        // ignore; will remain null
+        /* ignore */
       }
     })();
   }, []);
@@ -194,13 +204,10 @@ export default function AuthClient() {
     return () => unsub();
   }, [auth, router]);
 
-  // Best-effort enhancement: if locationId missing, try SSO (some CMLs auto-provide it)
+  // Fill in missing location_id from SSO if available
   useEffect(() => {
     (async () => {
       if (contextFromUrl.locationId || typeof window === "undefined") return;
-      // Prefer the cached SSO context if available.  If not present, fetch
-      // just once on demand.  This avoids multiple calls to the marketplace
-      // context helper and mitigates race conditions.
       const sso = ssoContext ?? (await getMarketplaceUserContext());
       if (sso?.activeLocationId) {
         const url = new URL(window.location.href);
@@ -210,32 +217,128 @@ export default function AuthClient() {
     })();
   }, [contextFromUrl.locationId, ssoContext]);
 
+  // Handlers to move between steps
+  function handleSelectUser(userId: string) {
+    setSelectedUserId(userId);
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("ghl_user_id", userId);
+        window.history.replaceState({}, "", url.toString());
+      } catch {}
+    }
+    setStep("register");
+  }
+  function handleBackToSelect() {
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("ghl_user_id");
+        window.history.replaceState({}, "", url.toString());
+      } catch {}
+    }
+    setSelectedUserId(null);
+    setStep("select");
+  }
+  function handleGoToLogin() {
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("ghl_user_id");
+        window.history.replaceState({}, "", url.toString());
+      } catch {}
+    }
+    setSelectedUserId(null);
+    setStep("login");
+  }
+  function handleLoginBack() {
+    setStep("select");
+  }
+
+  // Preselect from ?ghl_user_id
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const suid = sp.get("ghl_user_id");
+      if (suid && suid.trim()) {
+        setSelectedUserId(suid.trim());
+        setStep("register");
+      }
+    } catch {}
+  }, []);
+
+  // Load users when on the selection step
+  useEffect(() => {
+    if (step !== "select") return;
+    let cancelled = false;
+    (async () => {
+      setUsersLoading(true);
+      setUsersErr(null);
+      try {
+        const loc = contextFromUrl.locationId || ssoContext?.activeLocationId || "";
+        if (!loc) {
+          setUsersErr("We couldn't detect your Location ID. Open the app from your sub-account custom menu.");
+          setUsers([]);
+          return;
+        }
+        const resp = await fetch(`/api/ghl/location-users?location_id=${encodeURIComponent(loc)}`, {
+          headers: { "Cache-Control": "no-store" },
+        });
+        const text = await resp.text();
+        let parsed: ApiOk & ApiErr;
+        try {
+          parsed = JSON.parse(text) as ApiOk & ApiErr;
+        } catch {
+          throw new Error(`Non-JSON from API (${resp.status})`);
+        }
+        if (!resp.ok || parsed.error) {
+          const code = parsed.error?.code || `HTTP_${resp.status}`;
+          const msg = parsed.error?.message || "Failed to load users.";
+          throw new Error(`${code}: ${msg}`);
+        }
+        const list = ("users" in parsed && parsed.users) || ("data" in parsed && parsed.data?.users) || [];
+        if (!cancelled) setUsers(Array.isArray(list) ? list : []);
+      } catch (e) {
+        if (!cancelled) {
+          setUsersErr(e instanceof Error ? e.message : String(e));
+          setUsers([]);
+        }
+      } finally {
+        if (!cancelled) setUsersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, contextFromUrl.locationId, ssoContext]);
+
   async function handleRegister() {
     setErr(null);
     if (!auth) { setErr("Auth not ready yet. Please try again."); return; }
-    if (!email.trim() || !password.trim() || !firstName.trim() || !lastName.trim()) {
-      setErr("Please fill in all fields."); return;
-    }
+    if (!email.trim() || !password.trim() || !firstName.trim() || !lastName.trim()) { setErr("Please fill in all fields."); return; }
     if (password !== confirm) { setErr("Passwords do not match."); return; }
     setBusy(true);
     try {
-      // Determine the active location ID from the URL or the SSO context.  When
-      // running inside the HighLevel marketplace, the SSO context includes
-      // `activeLocationId` which we can trust.  Avoid requesting the context
-      // multiple times by using the cached value if present.
+      if (!selectedUserId) {
+        setErr("Please select a HighLevel user before registering.");
+        setBusy(false);
+        return;
+      }
+      // location id from URL or SSO
       let { locationId } = contextFromUrl;
       const sso = ssoContext ?? (await getMarketplaceUserContext());
       locationId = locationId || sso?.activeLocationId || "";
-      if (!locationId) {
-        throw new Error("We couldn't detect your Location ID. Open from your sub-account custom menu.");
-      }
-      // Capture identifiers returned by HighLevel's SSO context so the server
-      // can persist them without additional API lookups.
-      const ghlUserId = sso?.userId ?? null;
+      if (!locationId) throw new Error("We couldn't detect your Location ID. Open from your sub-account custom menu.");
+
+      // IDs to persist
+      const ghlUserId = selectedUserId ?? null;
       const ghlCompanyId = sso?.activeCompanyId ?? null;
       const ghlLocationId = sso?.activeLocationId ?? null;
+
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       const idToken = await cred.user.getIdToken(true);
+
       const resp = await fetch("/api/auth/complete-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -255,6 +358,7 @@ export default function AuthClient() {
         const parsed = (await resp.json().catch(() => ({}))) as { error?: string };
         throw new Error(parsed?.error || `Signup finalize failed (${resp.status})`);
       }
+
       const qs = new URLSearchParams();
       qs.set("location_id", locationId);
       router.replace(buildDashboardHref(qs) as unknown as Route);
@@ -293,6 +397,8 @@ export default function AuthClient() {
     }
   }
 
+  // ----- Renders -----
+
   if (!auth) {
     return (
       <main className="p-6 max-w-3xl mx-auto">
@@ -322,83 +428,164 @@ export default function AuthClient() {
     );
   }
 
+  if (step === "select") {
+    return (
+      <main className="p-6 max-w-5xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+          <div className="md:col-span-2">
+            <section className="hero card">
+              <h1 className="text-2xl font-semibold">Driving for Dollars</h1>
+              <p className="text-gray-600 mt-1">Please select the master user for this account.</p>
+              <p className="text-sm text-gray-600 mt-2">Choose your name from the list below to continue.</p>
+            </section>
+          </div>
+          <div className="md:col-span-3">
+            <section className="card">
+              {usersLoading ? (
+                <div className="grid gap-2">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="card">
+                      <div className="skel" style={{ height: 20, width: "50%" }} />
+                    </div>
+                  ))}
+                </div>
+              ) : usersErr ? (
+                <div className="card" style={{ borderColor: "#fecaca" }}>
+                  <div className="text-red-700 font-medium">Couldn&apos;t load sub-account users</div>
+                  <div className="text-sm text-red-600 mt-1">{usersErr}</div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    Tip: ensure the location has a valid refresh token in Firestore and that the marketplace app has <code>users.readonly</code>.
+                  </div>
+                </div>
+              ) : !users.length ? (
+                <div className="card">No users returned for this location.</div>
+              ) : (
+                <div className="grid gap-2">
+                  {users.map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => handleSelectUser(u.id)}
+                      className="card text-left hover:bg-gray-50 cursor-pointer w-full"
+                    >
+                      <div className="font-medium">{u.name || u.email || "(unnamed user)"}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="mt-4 text-right">
+                <button type="button" onClick={handleGoToLogin} className="text-sm text-blue-600 underline">
+                  Already have an account? Login
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (step === "login") {
+    return (
+      <main className="p-6 max-w-5xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+          <div className="md:col-span-2">
+            <section className="hero card">
+              <h1 className="text-2xl font-semibold">Driving for Dollars</h1>
+              <p className="text-gray-600 mt-1">Sign in to continue.</p>
+              <ul className="text-sm text-gray-600 mt-3" style={{ listStyle: "disc", paddingLeft: "1.25rem" }}>
+                <li>Open from your sub-account custom menu so <code>location_id</code> is auto-passed</li>
+                <li>After login you&apos;ll be routed to your Dashboard</li>
+              </ul>
+            </section>
+          </div>
+          <div className="md:col-span-3">
+            <section className="card">
+              <div className="mb-4">
+                <button type="button" onClick={handleLoginBack} className="text-sm text-blue-600 underline">
+                  &larr; Back to user selection
+                </button>
+              </div>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void handleLogin();
+                }}
+                className="space-y-4"
+              >
+                <div>
+                  <label className="block text-sm mb-1">Email</label>
+                  <input type="email" value={email} onChange={(ev) => setEmail(ev.target.value)} className="input" required />
+                </div>
+                <div>
+                  <label className="block text-sm mb-1">Password</label>
+                  <input type="password" value={password} onChange={(ev) => setPassword(ev.target.value)} className="input" required minLength={6} />
+                </div>
+                {err && <p className="text-sm text-red-600">{err}</p>}
+                <button type="submit" disabled={busy} className="btn primary w-full">
+                  {busy ? "Logging in..." : "Login"}
+                </button>
+              </form>
+            </section>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // default: register
   return (
     <main className="p-6 max-w-5xl mx-auto">
       <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
         <div className="md:col-span-2">
           <section className="hero card">
             <h1 className="text-2xl font-semibold">Driving for Dollars</h1>
-            <p className="text-gray-600 mt-1">Sign in or create an admin account to get started.</p>
+            <p className="text-gray-600 mt-1">Create your admin account.</p>
             <ul className="text-sm text-gray-600 mt-3" style={{ listStyle: "disc", paddingLeft: "1.25rem" }}>
               <li>Open from your sub-account custom menu so <code>location_id</code> is auto-passed</li>
-              <li>After signup/login you&apos;re routed to the Dashboard</li>
+              <li>After registration you&apos;ll be routed to the Dashboard</li>
             </ul>
           </section>
         </div>
-
         <div className="md:col-span-3">
           <section className="card">
-<div className="mb-4 inline-flex rounded-xl border overflow-hidden">
-  <button
-    className={`px-4 py-2 ${mode === "login" ? "bg-gray-50" : ""}`}
-    onClick={() => { setMode("login"); setErr(null); }}
-    type="button"
-  >
-    Login
-  </button>
-  <button
-    className={`px-4 py-2 ${mode === "register" ? "bg-gray-50" : ""}`}
-    onClick={() => { setMode("register"); setErr(null); }}
-    type="button"
-  >
-    Register
-  </button>
-</div>
-
-
-
+            <div className="mb-4">
+              <button type="button" onClick={handleBackToSelect} className="text-sm text-blue-600 underline">
+                &larr; Back to user selection
+              </button>
+            </div>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (mode === "login") void handleLogin();
-                else void handleRegister();
+                void handleRegister();
               }}
               className="space-y-4"
             >
-              {mode === "register" && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm mb-1">First name</label>
-                    <input value={firstName} onChange={(ev) => setFirst(ev.target.value)} className="input" required />
-                  </div>
-                  <div>
-                    <label className="block text-sm mb-1">Last name</label>
-                    <input value={lastName} onChange={(ev) => setLast(ev.target.value)} className="input" required />
-                  </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm mb-1">First name</label>
+                  <input value={firstName} onChange={(ev) => setFirst(ev.target.value)} className="input" required />
                 </div>
-              )}
-
+                <div>
+                  <label className="block text-sm mb-1">Last name</label>
+                  <input value={lastName} onChange={(ev) => setLast(ev.target.value)} className="input" required />
+                </div>
+              </div>
               <div>
                 <label className="block text-sm mb-1">Email</label>
                 <input type="email" value={email} onChange={(ev) => setEmail(ev.target.value)} className="input" required />
               </div>
-
               <div>
                 <label className="block text-sm mb-1">Password</label>
                 <input type="password" value={password} onChange={(ev) => setPassword(ev.target.value)} className="input" required minLength={6} />
               </div>
-
-              {mode === "register" && (
-                <div>
-                  <label className="block text-sm mb-1">Confirm password</label>
-                  <input type="password" value={confirm} onChange={(ev) => setConfirm(ev.target.value)} className="input" required minLength={6} />
-                </div>
-              )}
-
+              <div>
+                <label className="block text-sm mb-1">Confirm password</label>
+                <input type="password" value={confirm} onChange={(ev) => setConfirm(ev.target.value)} className="input" required minLength={6} />
+              </div>
               {err && <p className="text-sm text-red-600">{err}</p>}
-
               <button type="submit" disabled={busy} className="btn primary w-full">
-                {busy ? (mode === "login" ? "Logging in..." : "Creating account...") : (mode === "login" ? "Login" : "Register")}
+                {busy ? "Creating account..." : "Register"}
               </button>
             </form>
           </section>

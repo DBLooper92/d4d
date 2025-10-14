@@ -2,8 +2,6 @@
 import { NextResponse } from "next/server";
 import { getAdminApp, db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
-import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
-import { ghlFetch } from "@/lib/ghlClient";
 
 export const runtime = "nodejs";
 
@@ -118,51 +116,15 @@ export async function POST(req: Request) {
           updatedAt: Date.now(),
         },
       } as Record<string, unknown>;
-      if (userIdValue) {
-        payload.ghlUserId = userIdValue;
-      }
+      if (userIdValue) payload.ghlUserId = userIdValue;
+
       await Promise.all([usersRef.set(payload, { merge: true }), locUserRef.set(payload, { merge: true })]);
     };
 
     try {
       await persistGhlProfile(ghlUserId);
     } catch {
-      /* ignore profile persistence errors */
-    }
-
-    if (!ghlUserId) {
-      // Attempt to look up and persist the corresponding GHL user ID based on email.
-      // The HighLevel "Get User by Location" endpoint returns an array of users for a
-      // given location when provided with the `locationId` query parameter.
-      // After creating the Firebase auth user, we fetch the list of users from GHL
-      // and match on email to retrieve the external user ID.  Any failures here
-      // should not abort signup; they are logged silently.
-      try {
-        const emailLc = (userEmail || email || "").trim().toLowerCase();
-        if (normalizedLocationId && emailLc) {
-          const accessToken = await getValidAccessTokenForLocation(normalizedLocationId);
-          const resp = await ghlFetch<{ users?: Array<{ id: string; email?: string }>; data?: { users?: Array<{ id: string; email?: string }> } }>(
-            "/users/",
-            {
-              accessToken,
-              query: { locationId: normalizedLocationId },
-            },
-          );
-          const list =
-            (resp as { users?: Array<{ id: string; email?: string }> }).users ??
-            (resp as { data?: { users?: Array<{ id: string; email?: string }> } }).data?.users ??
-            [];
-          const match = Array.isArray(list)
-            ? list.find((u) => typeof u?.email === "string" && u.email.trim().toLowerCase() === emailLc)
-            : undefined;
-          const ghlId = match?.id;
-          if (typeof ghlId === "string" && ghlId.trim()) {
-            await persistGhlProfile(ghlId.trim());
-          }
-        }
-      } catch {
-        // Swallow any errors while syncing GHL user ID.  These will not block user creation.
-      }
+      /* ignore */
     }
 
     return NextResponse.json({ ok: true, uid }, { status: 200, headers: { "Cache-Control": "no-store" } });
