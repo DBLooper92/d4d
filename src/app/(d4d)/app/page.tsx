@@ -41,8 +41,6 @@ export default async function AppPage({ searchParams }: Props) {
             <li>The app will open with the correct <code>location_id</code>.</li>
           </ol>
           <p className="text-sm text-gray-600 mt-3">
-            If you see this screen again, it means the link didn’t include <code>location_id</code>.
-            Edit the CML to: <code>?location_id=&#123;&#123;location.id&#125;&#125;</code>
           </p>
         </section>
       </main>
