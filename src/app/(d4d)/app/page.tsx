@@ -28,8 +28,7 @@ export default async function AppPage({ searchParams }: Props) {
         <header className="hero card">
           <h1 className="text-2xl font-semibold">Driving for Dollars — Installed</h1>
           <p className="text-gray-700 mt-2">
-            Thanks for installing. To use the app, open it from a sub-account’s sidebar (the custom menu link passes
-            <code> location_id </code> automatically).
+            Thanks for installing. To use the app, open it from a sub-account’s sidebar.
           </p>
         </header>
 
