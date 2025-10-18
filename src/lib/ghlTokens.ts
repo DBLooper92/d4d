@@ -1,12 +1,12 @@
-// src/lib/ghlTokens.ts
+// File: src/lib/ghlTokens.ts
 import { db, Timestamp } from "@/lib/firebaseAdmin";
 import { ghlFetch } from "@/lib/ghlHttp";
 
 // Data shape we persist (superset for compatibility)
 type TokenDoc = {
   locationId: string;
-  companyId?: string;      // aka agencyId in some places
-  agencyId?: string;       // alias – map to companyId if present
+  companyId?: string;      // aka agencyId
+  agencyId?: string;       // alias
   userType?: "Company" | "Location";
   scopes?: string;
 
@@ -14,14 +14,14 @@ type TokenDoc = {
   refreshToken?: string;
 
   accessTokenExpiresAt?: FirebaseFirestore.Timestamp;
-  expiresAt?: number;
+  expiresAt?: number; // epoch seconds (legacy)
 
   agencyAccessToken?: string;
   agencyRefreshToken?: string;
   agencyAccessTokenExpiresAt?: FirebaseFirestore.Timestamp;
 };
 
-// Read from several possible locations (your screenshot shows root locations/{id})
+// Read from several possible locations
 const tokenDocCandidates = (locationId: string) => ([
   db().collection("locations").doc(locationId),
   db().collection("oauth").doc("locations").collection("byId").doc(locationId),
@@ -42,18 +42,15 @@ function coalesceTokenDocs(parts: Array<{ data?: TokenDoc }>): TokenDoc {
     merged.userType = merged.userType || d.userType;
     merged.scopes = merged.scopes || d.scopes;
 
-    // Prefer freshest access token/expiry if present
     if (d.accessToken) merged.accessToken = merged.accessToken || d.accessToken;
     if (d.accessTokenExpiresAt) merged.accessTokenExpiresAt = merged.accessTokenExpiresAt || d.accessTokenExpiresAt;
     if (typeof d.expiresAt === "number") merged.expiresAt = merged.expiresAt || d.expiresAt;
 
-    // Keep any refresh tokens we find
     if (d.refreshToken) merged.refreshToken = merged.refreshToken || d.refreshToken;
     if (d.agencyAccessToken) merged.agencyAccessToken = merged.agencyAccessToken || d.agencyAccessToken;
     if (d.agencyRefreshToken) merged.agencyRefreshToken = merged.agencyRefreshToken || d.agencyRefreshToken;
     if (d.agencyAccessTokenExpiresAt) merged.agencyAccessTokenExpiresAt = merged.agencyAccessTokenExpiresAt || d.agencyAccessTokenExpiresAt;
   }
-  // Normalize expiresAt -> Timestamp if only numeric present
   if (!merged.accessTokenExpiresAt && typeof merged.expiresAt === "number") {
     merged.accessTokenExpiresAt = Timestamp.fromMillis(merged.expiresAt * 1000);
   }
@@ -69,7 +66,6 @@ async function loadTokenDoc(locationId: string): Promise<Loaded> {
     data: snap.exists ? (snap.data() as TokenDoc) : undefined,
   }));
 
-  // If none exist, create the last candidate and return a stub
   if (existing.every(e => !e.data)) {
     const lastRef = cands[cands.length - 1];
     await lastRef.set({ locationId }, { merge: true });
@@ -77,11 +73,9 @@ async function loadTokenDoc(locationId: string): Promise<Loaded> {
     return { ref: lastRef, data: (snap.data() as TokenDoc) ?? { locationId } };
   }
 
-  // Merge data across all existing candidates, then pick the most "complete" ref to persist back to.
   const merged = coalesceTokenDocs(existing);
   const chosen = existing.find(e =>
-    e.data &&
-    (e.data.refreshToken || e.data.accessToken || e.data.agencyAccessToken)
+    e.data && (e.data.refreshToken || e.data.accessToken || e.data.agencyAccessToken)
   ) || existing.find(e => e.data) || existing[existing.length - 1];
 
   const companyId = merged.companyId ?? merged.agencyId;
@@ -97,15 +91,12 @@ async function loadTokenDoc(locationId: string): Promise<Loaded> {
 function toEpochSeconds(ts?: FirebaseFirestore.Timestamp | null): number | undefined {
   return ts ? Math.floor(ts.toMillis() / 1000) : undefined;
 }
-
 function isExpired(ts?: FirebaseFirestore.Timestamp | null, skewSec = 90): boolean {
   if (!ts) return true;
-  const now = Date.now();
-  return ts.toMillis() <= now + skewSec * 1000;
+  return ts.toMillis() <= Date.now() + skewSec * 1000;
 }
 
 // ---- Refresh helpers ----
-
 type RefreshParams = {
   refreshToken: string;
   userType?: "Company" | "Location";
@@ -114,7 +105,6 @@ type RefreshParams = {
   redirectUri?: string;
 };
 
-// POST /oauth/token (grant_type=refresh_token)
 async function refreshAccessToken(params: Required<Pick<RefreshParams,"refreshToken"|"clientId"|"clientSecret">> & {
   userType?: "Company" | "Location";
   redirectUri?: string;
@@ -143,9 +133,7 @@ async function refreshAccessToken(params: Required<Pick<RefreshParams,"refreshTo
   });
 }
 
-// Support both old and new call styles:
-//   exchangeRefreshToken(rt, clientId, clientSecret)
-//   exchangeRefreshToken({ refreshToken, clientId, clientSecret, userType?, redirectUri? })
+// Support legacy call signature
 export async function exchangeRefreshToken(
   a: string | RefreshParams,
   b?: string,
@@ -159,7 +147,7 @@ export async function exchangeRefreshToken(
   return refreshAccessToken({ refreshToken, clientId, clientSecret, userType, redirectUri });
 }
 
-// POST /oauth/locationToken
+// POST /oauth/locationToken via agency
 async function mintLocationTokenFromAgency(params: {
   agencyAccessToken: string;
   companyId: string;
@@ -200,39 +188,65 @@ export async function getValidLocationAccessToken(
   const { ref, data } = await loadTokenDoc(locationId);
 
   const companyId = data.companyId ?? data.agencyId;
+  const assumedUserType = (data.userType || (data.refreshToken ? "Location" : undefined)) as "Location" | "Company" | undefined;
 
-  if (data.userType === "Location" && data.accessToken && !isExpired(data.accessTokenExpiresAt)) {
+  // 1) If we have a non-expired access token, use it (treat undefined userType as OK for location flow)
+  if (data.accessToken && !isExpired(data.accessTokenExpiresAt) && (assumedUserType === "Location" || !assumedUserType)) {
     return { token: data.accessToken, scopes: data.scopes };
   }
 
-  if (data.userType === "Location" && data.refreshToken) {
+  // 2) If we have a refresh token, always try to refresh as Location. If that fails, retry without user_type.
+  if (data.refreshToken) {
     try {
-      const r = await refreshAccessToken({
+      const r1 = await refreshAccessToken({
         refreshToken: data.refreshToken,
         clientId,
         clientSecret,
         userType: "Location",
         redirectUri,
       });
-      const expiresAtTs = Timestamp.fromMillis(Date.now() + (r.expires_in - 60) * 1000);
+      const expiresAtTs = Timestamp.fromMillis(Date.now() + (r1.expires_in - 60) * 1000);
       await ref.set({
-        userType: r.userType,
-        accessToken: r.access_token,
-        refreshToken: r.refresh_token,
+        userType: r1.userType,
+        accessToken: r1.access_token,
+        refreshToken: r1.refresh_token || data.refreshToken,
         accessTokenExpiresAt: expiresAtTs,
         expiresAt: toEpochSeconds(expiresAtTs),
-        scopes: r.scope,
-        companyId: r.companyId ?? companyId,
-        locationId: r.locationId ?? locationId,
+        scopes: r1.scope,
+        companyId: r1.companyId ?? companyId,
+        locationId: r1.locationId ?? locationId,
       }, { merge: true });
-      return { token: r.access_token, scopes: r.scope };
+      return { token: r1.access_token, scopes: r1.scope };
     } catch {
-      // fall through to agency mint
+      // Retry once without forcing user_type (some tenants/oauth configs reject the param)
+      try {
+        const r2 = await refreshAccessToken({
+          refreshToken: data.refreshToken,
+          clientId,
+          clientSecret,
+          redirectUri,
+        });
+        const expiresAtTs = Timestamp.fromMillis(Date.now() + (r2.expires_in - 60) * 1000);
+        await ref.set({
+          userType: r2.userType,
+          accessToken: r2.access_token,
+          refreshToken: r2.refresh_token || data.refreshToken,
+          accessTokenExpiresAt: expiresAtTs,
+          expiresAt: toEpochSeconds(expiresAtTs),
+          scopes: r2.scope,
+          companyId: r2.companyId ?? companyId,
+          locationId: r2.locationId ?? locationId,
+        }, { merge: true });
+        return { token: r2.access_token, scopes: r2.scope };
+      } catch {
+        // fall through to possible agency mint
+      }
     }
   }
 
-  if (data.userType === "Company" || data.agencyAccessToken || data.accessToken) {
-    const agencyToken = (data.userType === "Company" ? data.accessToken : data.agencyAccessToken) || undefined;
+  // 3) If we *know* we have an agency token (or explicit agencyAccessToken), mint a location token
+  if (assumedUserType === "Company" || data.agencyAccessToken) {
+    const agencyToken = (assumedUserType === "Company" ? data.accessToken : data.agencyAccessToken) || undefined;
     if (!agencyToken) throw new Error("No valid token for this location. Reconnect OAuth or reinstall.");
     if (!companyId) throw new Error("Missing companyId/agencyId for location; cannot mint location token.");
 
@@ -251,10 +265,11 @@ export async function getValidLocationAccessToken(
     return { token: r.access_token, scopes: r.scope };
   }
 
+  // 4) Nothing worked
   throw new Error("No valid token for this location. Reconnect OAuth or reinstall.");
 }
 
-// Back-compat name
+// Back-compat
 export async function getValidAccessTokenForLocation(args: GetTokenOpts) {
   return getValidLocationAccessToken(args);
 }
