@@ -9,17 +9,20 @@ type Search = {
   s?: string; // signature (optional)
 };
 
-export default function Page({
+export default async function Page({
+  // Next.js 15: searchParams is a Promise on server components
   searchParams,
 }: {
-  searchParams: Record<string, string | string[] | undefined>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  const sp = await searchParams;
+
   const qp: Search = {
-    l: str(searchParams.l),
-    u: str(searchParams.u),
-    e: str(searchParams.e),
-    fn: str(searchParams.fn),
-    s: str(searchParams.s),
+    l: str(sp.l),
+    u: str(sp.u),
+    e: str(sp.e),
+    fn: str(sp.fn),
+    s: str(sp.s),
   };
 
   return (
@@ -31,7 +34,6 @@ export default function Page({
 
       <form
         className="mt-6 space-y-4"
-        // TODO: point this at your real registration API endpoint
         action="#"
         onSubmit={(e) => {
           e.preventDefault();
@@ -65,10 +67,7 @@ export default function Page({
         <input type="hidden" name="ghlUserId" value={qp.u || ""} />
         <input type="hidden" name="sig" value={qp.s || ""} />
 
-        <button
-          type="submit"
-          className="btn primary"
-        >
+        <button type="submit" className="btn primary">
           Create account
         </button>
       </form>
@@ -76,11 +75,21 @@ export default function Page({
       <div className="mt-6 text-xs text-gray-500">
         <p>Debug (query params received):</p>
         <ul className="list-disc pl-5">
-          <li>locationId: <code>{qp.l || "(missing)"}</code></li>
-          <li>ghlUserId: <code>{qp.u || "(missing)"}</code></li>
-          <li>email: <code>{qp.e || "(missing)"}</code></li>
-          <li>firstName: <code>{qp.fn || "(missing)"}</code></li>
-          <li>signature: <code>{qp.s || "(none)"}</code></li>
+          <li>
+            locationId: <code>{qp.l || "(missing)"}</code>
+          </li>
+          <li>
+            ghlUserId: <code>{qp.u || "(missing)"}</code>
+          </li>
+          <li>
+            email: <code>{qp.e || "(missing)"}</code>
+          </li>
+          <li>
+            firstName: <code>{qp.fn || "(missing)"}</code>
+          </li>
+          <li>
+            signature: <code>{qp.s || "(none)"}</code>
+          </li>
         </ul>
         <p className="mt-2">
           <Link href="/">← Back to home</Link>
