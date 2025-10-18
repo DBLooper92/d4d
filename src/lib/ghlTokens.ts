@@ -1,240 +1,184 @@
-// src/lib/ghlTokens.ts
-import 'server-only';
-import { db } from '@/lib/firebaseAdmin';
+import { db, Timestamp } from "@/lib/firebaseAdmin";
+import { ghlFetch } from "@/lib/ghlHttp";
 
-// --- Constants that are safe at build time ---
-const API_BASE = 'https://services.leadconnectorhq.com';
-const VERSION = '2021-07-28';
-const TOKENS_COLL = 'ghlTokens';
-
-// --- Types ---
-type StoredToken = {
-  userType: 'Company' | 'Location';
-  accessToken: string;
+// Data shape we persist
+type TokenDoc = {
+  // Common
+  locationId: string;
+  companyId?: string;
+  userType?: "Company" | "Location";
+  scopes?: string;
+  // Active access/refresh
+  accessToken?: string;
   refreshToken?: string;
-  expiresAt?: number; // unix seconds
-  companyId?: string;
-  lastLocationTokens?: Record<
-    string,
-    { accessToken: string; refreshToken?: string; expiresAt?: number }
-  >;
+  accessTokenExpiresAt?: FirebaseFirestore.Timestamp; // server time
+  // If we only have Agency token but need Location token on demand
+  agencyAccessToken?: string;
+  agencyRefreshToken?: string;
+  agencyAccessTokenExpiresAt?: FirebaseFirestore.Timestamp;
 };
 
-type OAuthTokenResponse = {
-  access_token: string;
-  token_type: 'Bearer';
-  expires_in: number;
-  refresh_token?: string;
-  scope?: string;
-  userType?: 'Company' | 'Location';
-  companyId?: string;
-  locationId?: string;
-  userId?: string;
-};
+// Try multiple locations; return {ref,data} for the first that exists; else create at preferred.
+const tokenDocCandidates = (locationId: string) => ([
+  db.collection("oauth").doc("locations").collection("byId").doc(locationId), // oauth/locations/byId/{locationId}
+  db.collection("locations").doc(locationId).collection("private").doc("oauth"), // locations/{id}/private/oauth
+  db.collection("ghl").doc("locations").collection("byId").doc(locationId), // ghl/locations/byId/{id}
+]);
 
-// --- Helpers (no env/SDK at module scope) ---
-const epochSec = () => Math.floor(Date.now() / 1000);
-
-function envRequired(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
-
-// Lazily fetch Firestore (avoids admin init at build time)
-function fs() {
-  return db();
-}
-
-function tokenDocRef(locationId: string) {
-  return fs().collection(TOKENS_COLL).doc(locationId);
-}
-
-async function readStoredToken(locationId: string): Promise<StoredToken | null> {
-  const snap = await tokenDocRef(locationId).get();
-  return snap.exists ? (snap.data() as StoredToken) : null;
-}
-
-async function writeStoredToken(locationId: string, data: Partial<StoredToken>) {
-  await tokenDocRef(locationId).set(data, { merge: true });
-}
-
-async function postForm<T>(url: string, form: Record<string, string>): Promise<T> {
-  const body = new URLSearchParams(form);
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`POST ${url} ${res.status}: ${await res.text()}`);
-  return (await res.json()) as T;
-}
-
-async function postJson<T>(url: string, json: unknown, headers: Record<string, string>): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify(json),
-    cache: 'no-store',
-  });
-  if (!res.ok) throw new Error(`POST ${url} ${res.status}: ${await res.text()}`);
-  return (await res.json()) as T;
-}
-
-/**
- * Refresh helper that supports BOTH call shapes:
- *  A) (refreshToken, clientId, clientSecret)
- *  B) (refreshToken, userType)  -> uses env client credentials
- */
-export async function exchangeRefreshToken(
-  refreshToken: string,
-  a: 'Company' | 'Location' | string,
-  b?: string
-): Promise<OAuthTokenResponse> {
-  // Shape A (legacy): explicit client creds
-  if (typeof a === 'string' && typeof b === 'string') {
-    const clientId = a;
-    const clientSecret = b;
-    return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      user_type: 'Location',
-      redirect_uri: envRequired('GHL_REDIRECT_URI'),
-    });
+async function loadTokenDoc(locationId: string) {
+  const cands = tokenDocCandidates(locationId);
+  for (const ref of cands) {
+    const snap = await ref.get();
+    if (snap.exists) return { ref, data: snap.data() as TokenDoc };
   }
-
-  // Shape B: use env client creds + explicit userType
-  const userType = (a as 'Company' | 'Location') ?? 'Location';
-  return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
-    client_id: envRequired('GHL_CLIENT_ID'),
-    client_secret: envRequired('GHL_CLIENT_SECRET'),
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    user_type: userType,
-    redirect_uri: envRequired('GHL_REDIRECT_URI'),
-  });
+  // Create at preferred path if nothing exists.
+  const ref = cands[cands.length - 1];
+  await ref.set({ locationId }, { merge: true });
+  const snap = await ref.get();
+  return { ref, data: snap.data() as TokenDoc };
 }
 
-/** Mint a Location token from an Agency (Company) token */
-async function getLocationAccessTokenFromAgency(
-  companyId: string,
-  locationId: string,
-  agencyAccessToken: string
-) {
-  return postJson<OAuthTokenResponse>(
-    `${API_BASE}/oauth/locationToken`,
-    { companyId, locationId },
-    { Authorization: `Bearer ${agencyAccessToken}`, Version: VERSION }
-  );
+function isExpired(ts?: FirebaseFirestore.Timestamp, skewSec = 60): boolean {
+  if (!ts) return true;
+  const now = Timestamp.now().toMillis();
+  return ts.toMillis() <= now + skewSec * 1000;
 }
 
-/**
- * Returns a valid **Location** access token for the given location.
- * Handles cached minted tokens, direct Location tokens (refresh), or mint from Agency token.
- */
-export async function getValidLocationAccessToken(locationId: string, companyId?: string): Promise<string> {
-  const stored = await readStoredToken(locationId);
-  const now = epochSec();
+// ---- Refresh helpers (per GHL docs) ----
 
-  // 1) Prefer cached minted Location token
-  const cached = stored?.lastLocationTokens?.[locationId];
-  if (cached) {
-    const nearlyExpired = cached.expiresAt ? cached.expiresAt - 60 <= now : false;
-    if (nearlyExpired && cached.refreshToken) {
-      try {
-        const refreshed = await exchangeRefreshToken(cached.refreshToken, 'Location');
-        const expiresAt = now + (refreshed.expires_in ?? 0);
-        await writeStoredToken(locationId, {
-          lastLocationTokens: {
-            ...(stored?.lastLocationTokens ?? {}),
-            [locationId]: {
-              accessToken: refreshed.access_token,
-              refreshToken: refreshed.refresh_token,
-              expiresAt,
-            },
-          },
-        });
-        return refreshed.access_token;
-      } catch {
-        // fall through to mint from agency or use base token
-      }
-    }
-    if (!nearlyExpired) return cached.accessToken;
-  }
+// Refresh an access token using refresh_token (keep same user_type)
+async function refreshAccessToken(params: {
+  refreshToken: string;
+  userType: "Company" | "Location";
+  clientId: string;
+  clientSecret: string;
+  redirectUri?: string; // usually the one you used on install
+}) {
+  // application/x-www-form-urlencoded required for refresh flow. :contentReference[oaicite:6]{index=6}
+  const form = new URLSearchParams();
+  form.set("client_id", params.clientId);
+  form.set("client_secret", params.clientSecret);
+  form.set("grant_type", "refresh_token");
+  form.set("refresh_token", params.refreshToken);
+  form.set("user_type", params.userType);
+  if (params.redirectUri) form.set("redirect_uri", params.redirectUri);
 
-  // 2) If stored top-level token is a Location token, refresh/use it
-  if (stored?.userType === 'Location') {
-    const nearlyExpired = stored.expiresAt ? stored.expiresAt - 60 <= now : false;
-    if (nearlyExpired && stored.refreshToken) {
-      const refreshed = await exchangeRefreshToken(stored.refreshToken, 'Location');
-      const expiresAt = now + (refreshed.expires_in ?? 0);
-      await writeStoredToken(locationId, {
-        accessToken: refreshed.access_token,
-        refreshToken: refreshed.refresh_token,
-        expiresAt,
-      });
-      return refreshed.access_token;
-    }
-    if (stored.accessToken && !nearlyExpired) return stored.accessToken;
-  }
-
-  // 3) If we have an Agency token, mint a Location token
-  if (stored?.userType === 'Company' && stored.accessToken) {
-    const compId = stored.companyId ?? companyId;
-    if (!compId) throw new Error('Missing companyId to mint a Location token.');
-    const minted = await getLocationAccessTokenFromAgency(compId, locationId, stored.accessToken);
-    const expiresAt = now + (minted.expires_in ?? 0);
-    await writeStoredToken(locationId, {
-      lastLocationTokens: {
-        ...(stored?.lastLocationTokens ?? {}),
-        [locationId]: {
-          accessToken: minted.access_token,
-          refreshToken: minted.refresh_token,
-          expiresAt,
-        },
-      },
-    });
-    return minted.access_token;
-  }
-
-  throw new Error('No valid token for this location. Reconnect OAuth or reinstall.');
-}
-
-export async function saveInitialTokenForLocation(locationId: string, payload: OAuthTokenResponse) {
-  const expiresAt = epochSec() + (payload.expires_in ?? 0);
-  const base: Partial<StoredToken> = {
-    userType: (payload.userType ?? 'Location') as StoredToken['userType'],
-    accessToken: payload.access_token,
-    refreshToken: payload.refresh_token,
-    expiresAt,
+  type Resp = {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+    userType: "Company" | "Location";
+    scope?: string;
+    companyId?: string;
+    locationId?: string;
   };
-  if (payload.companyId) base.companyId = payload.companyId;
-  await writeStoredToken(locationId, base);
+  const r = await ghlFetch<Resp>("/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    rawBody: form.toString(),
+  });
+  return r;
 }
 
-/** GET helper that injects Version/Authorization and retries once on 401 */
-export async function ghlLocationGetJson<T>(locationId: string, url: string, companyId?: string): Promise<T> {
-  let token = await getValidLocationAccessToken(locationId, companyId);
+// Mint a Location token from an Agency token. :contentReference[oaicite:7]{index=7}
+async function mintLocationTokenFromAgency(params: {
+  agencyAccessToken: string;
+  companyId: string;
+  locationId: string;
+}) {
+  type Resp = {
+    access_token: string;
+    refresh_token?: string;
+    expires_in: number;
+    userType: "Location";
+    scope?: string;
+    locationId: string;
+    companyId?: string;
+  };
+  const r = await ghlFetch<Resp>("/oauth/locationToken", {
+    method: "POST",
+    token: params.agencyAccessToken,
+    version: "2021-07-28",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    rawBody: new URLSearchParams({
+      companyId: params.companyId,
+      locationId: params.locationId,
+    }).toString(),
+  });
+  return r;
+}
 
-  const doFetch = async (bearer: string) =>
-    fetch(url, {
-      headers: { Authorization: `Bearer ${bearer}`, Version: VERSION, Accept: 'application/json' },
-      cache: 'no-store',
+type GetTokenOpts = {
+  locationId: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUri?: string;
+};
+
+export async function getValidLocationAccessToken(opts: GetTokenOpts): Promise<{ token: string; scopes?: string }> {
+  const { locationId, clientId, clientSecret, redirectUri } = opts;
+  const { ref, data } = await loadTokenDoc(locationId);
+
+  // 1) If we already have a Location token and it's not expired, use it.
+  if (data.userType === "Location" && data.accessToken && !isExpired(data.accessTokenExpiresAt)) {
+    return { token: data.accessToken!, scopes: data.scopes };
+  }
+
+  // 2) If we have a Location refresh token -> refresh it. :contentReference[oaicite:8]{index=8}
+  if (data.userType === "Location" && data.refreshToken) {
+    try {
+      const r = await refreshAccessToken({
+        refreshToken: data.refreshToken,
+        userType: "Location",
+        clientId,
+        clientSecret,
+        redirectUri,
+      });
+      await ref.set({
+        userType: r.userType,
+        accessToken: r.access_token,
+        refreshToken: r.refresh_token,
+        accessTokenExpiresAt: Timestamp.fromMillis(Date.now() + (r.expires_in - 60) * 1000),
+        scopes: r.scope,
+        companyId: r.companyId ?? data.companyId,
+        locationId: r.locationId ?? locationId,
+      }, { merge: true });
+
+      return { token: r.access_token, scopes: r.scope };
+    } catch {
+      // refresh failed; fall through to agency-mint path
+    }
+  }
+
+  // 3) If we have an Agency (Company) token, mint a fresh Location token. :contentReference[oaicite:9]{index=9}
+  if (data.userType === "Company" || data.agencyAccessToken) {
+    const agencyToken = data.accessToken && data.userType === "Company"
+      ? data.accessToken
+      : data.agencyAccessToken;
+
+    if (!agencyToken) throw new Error("No valid token for this location. Reconnect OAuth or reinstall.");
+
+    if (!data.companyId) throw new Error("Missing companyId for location; cannot mint location token.");
+
+    const r = await mintLocationTokenFromAgency({
+      agencyAccessToken: agencyToken,
+      companyId: data.companyId,
+      locationId,
     });
 
-  let res = await doFetch(token);
-  if (res.status === 401) {
-    token = await getValidLocationAccessToken(locationId, companyId);
-    res = await doFetch(token);
-  }
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
-  return (await res.json()) as T;
-}
+    await ref.set({
+      userType: "Location",
+      accessToken: r.access_token,
+      // locationToken mint may or may not include refresh_token; if absent, we will mint again from agency on expiry.
+      refreshToken: r.refresh_token ?? data.refreshToken,
+      accessTokenExpiresAt: Timestamp.fromMillis(Date.now() + (r.expires_in - 60) * 1000),
+      scopes: r.scope,
+      locationId: r.locationId ?? locationId,
+    }, { merge: true });
 
-/** Legacy alias kept for existing imports */
-export async function getValidAccessTokenForLocation(locationId: string, companyId?: string) {
-  return getValidLocationAccessToken(locationId, companyId);
+    return { token: r.access_token, scopes: r.scope };
+  }
+
+  // 4) Nothing usable
+  throw new Error("No valid token for this location. Reconnect OAuth or reinstall.");
 }

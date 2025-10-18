@@ -1,36 +1,55 @@
-// src/app/api/ghl/location-users/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { ghlLocationGetJson } from '@/lib/ghlTokens';
+import { NextRequest, NextResponse } from "next/server";
+import { getValidLocationAccessToken } from "@/lib/ghlTokens";
+import { ghlFetch } from "@/lib/ghlHttp";
+import { env } from "@/lib/env";
 
-export const dynamic = 'force-dynamic';
+type GhlUsersResponse = { users?: unknown[] };
 
-type GhlUser = {
-  id: string;
-  firstName?: string;
-  lastName?: string;
-  name?: string;
-  email?: string;
-};
-type UsersResp = { users: GhlUser[] };
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
 
+// GET /api/ghl/location-users?location_id=...
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const locationId = searchParams.get('location_id');
+    const locationId = searchParams.get("location_id");
     if (!locationId) {
-      return NextResponse.json({ error: 'Missing location_id' }, { status: 400 });
+      return NextResponse.json({ error: "Missing location_id" }, { status: 400 });
     }
 
-    const companyId = searchParams.get('company_id') ?? undefined;
-    const url = `https://services.leadconnectorhq.com/users/?locationId=${encodeURIComponent(locationId)}`;
+    // Ensure we have a fresh Location token
+    const { token } = await getValidLocationAccessToken({
+      locationId,
+      clientId: env.GHL_CLIENT_ID,
+      clientSecret: env.GHL_CLIENT_SECRET,
+    });
 
-    const data = await ghlLocationGetJson<UsersResp>(locationId, url, companyId);
-    return NextResponse.json(data, { status: 200 });
+    // Call Get User by Location with required Version header
+    const data = await ghlFetch<GhlUsersResponse>(`/users/?locationId=${encodeURIComponent(locationId)}`, {
+      method: "GET",
+      token,
+      version: "2021-07-28",
+    });
+
+    return NextResponse.json({ users: data.users ?? [] });
   } catch (err: unknown) {
-    const message =
-      typeof err === 'object' && err !== null && 'toString' in err
-        ? String(err)
-        : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const message = errorMessage(err);
+    const reconnect = /No valid token/i.test(message);
+    const status = reconnect ? 401 : 500;
+    return NextResponse.json(
+      {
+        error: reconnect
+          ? "No valid token for this location. Reconnect OAuth or reinstall."
+          : "Failed to load users.",
+        detail: message,
+      },
+      { status }
+    );
   }
 }
