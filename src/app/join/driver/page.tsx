@@ -1,105 +1,89 @@
 // src/app/join/driver/page.tsx
 import Link from "next/link";
 
-type Search = {
-  l?: string; // locationId
-  u?: string; // ghl user id
-  e?: string; // email
-  fn?: string; // firstName
-  s?: string; // signature (optional)
-};
+export const dynamic = "force-dynamic";
 
-export default async function Page({
-  // Next.js 15: searchParams is a Promise on server components
+type SearchParams = Record<string, string | string[] | undefined>;
+
+function getParam(
+  params: SearchParams,
+  key: string,
+  fallback = ""
+): string {
+  const v = params[key];
+  if (Array.isArray(v)) return v[0] ?? fallback;
+  return v ?? fallback;
+}
+
+export default function Page({
   searchParams,
 }: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
+  searchParams?: SearchParams;
 }) {
-  const sp = await searchParams;
+  const sp = searchParams ?? {};
 
-  const qp: Search = {
-    l: str(sp.l),
-    u: str(sp.u),
-    e: str(sp.e),
-    fn: str(sp.fn),
-    s: str(sp.s),
-  };
+  const firstName = getParam(sp, "firstName");
+  const email = getParam(sp, "email");
+  const ghlUserId = getParam(sp, "ghlUserId");
+  const locationId = getParam(sp, "locationId");
+
+  // This is just a simple confirmation UI — your real signup form can live here.
+  // We render hidden fields so the POST target can capture IDs.
+  const joinAction = "/api/join/driver"; // adjust to your handler when ready
 
   return (
-    <main className="max-w-lg mx-auto p-6">
-      <h1 className="text-2xl font-semibold">Join Driving for Dollars</h1>
-      <p className="text-gray-600 mt-2">
-        {qp.fn ? `Hi ${qp.fn},` : "Hi,"} complete your account to join your team.
+    <main className="mx-auto max-w-xl p-6 space-y-6">
+      <h1 className="text-2xl font-semibold">Join Driving 4 Dollars</h1>
+
+      <p className="text-sm text-gray-600">
+        Hi {firstName || "there"}! Complete your account below.
       </p>
 
       <form
-        className="mt-6 space-y-4"
-        action="#"
-        onSubmit={(e) => {
-          e.preventDefault();
-          alert("Stub signup — wire this form to your registration API.");
-        }}
+        method="POST"
+        action={joinAction}
+        className="space-y-4 border rounded-md p-4"
       >
-        {/* Visible fields you might want to collect */}
-        <div>
+        {/* Hidden identifiers we pass through */}
+        <input type="hidden" name="ghlUserId" value={ghlUserId} />
+        <input type="hidden" name="locationId" value={locationId} />
+
+        {/* Prefill-first experience — you can expand this later */}
+        <div className="space-y-1">
           <label className="block text-sm font-medium">First name</label>
           <input
-            className="mt-1 w-full rounded border px-3 py-2"
             name="firstName"
-            defaultValue={qp.fn || ""}
+            defaultValue={firstName}
+            className="w-full rounded border px-3 py-2"
             required
           />
         </div>
 
-        <div>
+        <div className="space-y-1">
           <label className="block text-sm font-medium">Email</label>
           <input
-            className="mt-1 w-full rounded border px-3 py-2"
             type="email"
             name="email"
-            defaultValue={qp.e || ""}
+            defaultValue={email}
+            className="w-full rounded border px-3 py-2"
             required
           />
         </div>
 
-        {/* Hidden fields captured from the invite link */}
-        <input type="hidden" name="locationId" value={qp.l || ""} />
-        <input type="hidden" name="ghlUserId" value={qp.u || ""} />
-        <input type="hidden" name="sig" value={qp.s || ""} />
-
-        <button type="submit" className="btn primary">
-          Create account
+        <button
+          type="submit"
+          className="inline-flex items-center rounded bg-black px-4 py-2 text-white"
+        >
+          Create my account
         </button>
       </form>
 
-      <div className="mt-6 text-xs text-gray-500">
-        <p>Debug (query params received):</p>
-        <ul className="list-disc pl-5">
-          <li>
-            locationId: <code>{qp.l || "(missing)"}</code>
-          </li>
-          <li>
-            ghlUserId: <code>{qp.u || "(missing)"}</code>
-          </li>
-          <li>
-            email: <code>{qp.e || "(missing)"}</code>
-          </li>
-          <li>
-            firstName: <code>{qp.fn || "(missing)"}</code>
-          </li>
-          <li>
-            signature: <code>{qp.s || "(none)"}</code>
-          </li>
-        </ul>
-        <p className="mt-2">
-          <Link href="/">← Back to home</Link>
-        </p>
+      <div className="text-xs text-gray-500">
+        Trouble?{" "}
+        <Link href="/" className="underline">
+          Go home
+        </Link>
       </div>
     </main>
   );
-}
-
-function str(v: string | string[] | undefined): string | undefined {
-  if (Array.isArray(v)) return v[0];
-  return v ?? undefined;
 }

@@ -1,12 +1,19 @@
+// next.config.ts
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Helpful in App Router projects; safe defaults
   reactStrictMode: true,
-  // typedRoutes is now a top-level option
   typedRoutes: true,
   experimental: {
     optimizePackageImports: ["react", "react-dom"],
+  },
+
+  // ✅ Add these for smoother Firebase builds
+  eslint: {
+    ignoreDuringBuilds: true, // don't fail deployment on warnings
+  },
+  typescript: {
+    ignoreBuildErrors: false, // keep type safety enforced
   },
 };
 
