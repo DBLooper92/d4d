@@ -49,6 +49,7 @@ const CLIENT_SECRET = envRequired('GHL_CLIENT_SECRET');
 const REDIRECT_URI = envRequired('GHL_REDIRECT_URI');
 
 function tokenDocRef(locationId: string) {
+  // IMPORTANT: use the Firestore instance, not the db() function itself
   return firestore.collection(TOKENS_COLL).doc(locationId);
 }
 
@@ -91,6 +92,7 @@ async function postJson<T>(url: string, json: unknown, headers: Record<string, s
   return (await res.json()) as T;
 }
 
+/** Internal refresh — used by both Company & Location tokens */
 async function refreshAccessToken(refreshToken: string, userType: 'Company' | 'Location') {
   return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
     client_id: CLIENT_ID,
@@ -102,6 +104,7 @@ async function refreshAccessToken(refreshToken: string, userType: 'Company' | 'L
   });
 }
 
+/** Mint a Location token from an Agency token */
 async function getLocationAccessTokenFromAgency(companyId: string, locationId: string, agencyAccessToken: string) {
   return postJson<OAuthTokenResponse>(
     `${API_BASE}/oauth/locationToken`,
@@ -112,6 +115,7 @@ async function getLocationAccessTokenFromAgency(companyId: string, locationId: s
 
 /**
  * Returns a valid Location access token for the given location.
+ * Handles cached minted tokens, direct Location tokens (refresh), or mint from Agency token.
  */
 export async function getValidLocationAccessToken(locationId: string, companyId?: string): Promise<string> {
   const stored = await readStoredToken(locationId);
@@ -216,4 +220,18 @@ export async function ghlLocationGetJson<T>(locationId: string, url: string, com
   }
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
   return (await res.json()) as T;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Backward-compat exports (to satisfy existing imports in your codebase)     */
+/* -------------------------------------------------------------------------- */
+
+/** Legacy name used elsewhere: wraps refreshAccessToken */
+export async function exchangeRefreshToken(refreshToken: string, userType: 'Company' | 'Location') {
+  return refreshAccessToken(refreshToken, userType);
+}
+
+/** Legacy name used elsewhere: alias to getValidLocationAccessToken */
+export async function getValidAccessTokenForLocation(locationId: string, companyId?: string) {
+  return getValidLocationAccessToken(locationId, companyId);
 }
