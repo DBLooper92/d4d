@@ -8,7 +8,8 @@ import { getGhlConfig, ghlTokenUrl } from "./ghl";
  * We try these locations, in order, to find the token payload for a location:
  *   A) locations/{locationId} -> oauth.accessToken / oauth.refreshToken / oauth.expiresAt
  *   B) locations/{locationId} -> ghl.accessToken   / ghl.refreshToken   / ghl.expiresAt
- *   C) oauth_tokens/{locationId} -> accessToken / refreshToken / expiresAt
+ *   C) locations/{locationId} -> accessToken       / refreshToken       / expiresAt   (TOP-LEVEL)
+ *   D) oauth_tokens/{locationId} -> accessToken / refreshToken / expiresAt
  */
 
 type AnyObj = Record<string, unknown>;
@@ -45,6 +46,7 @@ function normalizeExpiryMs(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     const n = value;
     if (n <= 0) return null;
+    // If it's clearly seconds (10-11 digits), convert to ms.
     return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
   }
 
@@ -65,14 +67,14 @@ function normalizeExpiryMs(value: unknown): number | null {
   }
 
   if (typeof value === "object") {
-    const maybeTs = value as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
-    if (typeof maybeTs.toMillis === "function") {
-      const ms = maybeTs.toMillis();
+    const ts = value as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
+    if (typeof ts.toMillis === "function") {
+      const ms = ts.toMillis();
       return Number.isFinite(ms) ? ms : null;
     }
-    if (typeof maybeTs.seconds === "number") {
-      const baseMs = maybeTs.seconds * 1000;
-      const extra = typeof maybeTs.nanoseconds === "number" ? maybeTs.nanoseconds / 1e6 : 0;
+    if (typeof ts.seconds === "number") {
+      const baseMs = ts.seconds * 1000;
+      const extra = typeof ts.nanoseconds === "number" ? ts.nanoseconds / 1e6 : 0;
       const total = baseMs + extra;
       return Number.isFinite(total) ? Math.round(total) : null;
     }
@@ -84,7 +86,7 @@ function normalizeExpiryMs(value: unknown): number | null {
 export type RefreshExchangeResponse = {
   access_token: string;
   refresh_token?: string;
-  scope?: string;          // <-- your existing routes read this
+  scope?: string;          // many routes read/forward this
   token_type?: string;
   expires_in: number;      // seconds
 };
@@ -99,7 +101,7 @@ export type StoredToken = {
   _writeRefreshPath: string | null;
 };
 
-const TOKEN_BASE_PATHS: (string | null)[] = ["oauth", "ghl", null];
+const TOKEN_BASE_PATHS: (string | null)[] = ["oauth", "ghl", null]; // include top-level
 const AGENCY_ID_PATHS = [
   "agencyId",
   "agency.id",
@@ -111,6 +113,7 @@ const AGENCY_ID_PATHS = [
   "company.company_id",
   "agency_id",
 ];
+
 const EXPIRE_CANDIDATES = {
   camel: ["expiresAt", "expiryAt", "expiry", "expires", "expiresAtMs", "expiryMs"],
   snake: ["expires_at", "expiry_at", "expiry", "expires", "expires_at_ms", "expires_in", "expires_in_ms"],
@@ -183,7 +186,7 @@ function findAgencyId(data: AnyObj): string | null {
 }
 
 async function readTokenForLocation(locationId: string): Promise<StoredToken> {
-  // A) locations/{id} oauth.*
+  // A/B/C) locations/{id} (oauth.*, ghl.*, or top-level fields)
   const locRef = db().collection("locations").doc(locationId);
   const locSnap = await locRef.get();
   if (locSnap.exists) {
@@ -191,6 +194,7 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
     const fromLocation = extractStoredToken(data, locRef.path);
     if (fromLocation) return fromLocation;
 
+    // Also try agency mirror, if you keep a nested copy at agencies/{agencyId}/locations/{locationId}
     const agencyId = findAgencyId(data);
     if (agencyId) {
       const agLocRef = db().collection("agencies").doc(agencyId).collection("locations").doc(locationId);
@@ -203,7 +207,7 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
     }
   }
 
-  // C) oauth_tokens/{locationId}
+  // D) oauth_tokens/{locationId}
   const tokRef = db().collection("oauth_tokens").doc(locationId);
   const tokSnap = await tokRef.get();
   if (tokSnap.exists) {
@@ -245,9 +249,7 @@ async function _doRefresh(
   });
 
   const raw = await r.text();
-  if (!r.ok) {
-    throw new Error(`refresh exchange failed: ${r.status} ${raw.slice(0, 400)}`);
-  }
+  if (!r.ok) throw new Error(`refresh exchange failed: ${r.status} ${raw.slice(0, 400)}`);
 
   try {
     return JSON.parse(raw) as RefreshExchangeResponse;
@@ -259,8 +261,8 @@ async function _doRefresh(
 /**
  * PUBLIC: Legacy/compat function used across the codebase.
  * Supports BOTH signatures:
- *   1) exchangeRefreshToken(refreshToken, clientId, clientSecret)  // your original
- *   2) exchangeRefreshToken(refreshToken)                          // env-based fallback
+ *   1) exchangeRefreshToken(refreshToken, clientId, clientSecret)
+ *   2) exchangeRefreshToken(refreshToken)  // env-based fallback
  */
 export function exchangeRefreshToken(
   refreshToken: string,
@@ -320,3 +322,4 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
 
   return tok.access_token;
 }
+
