@@ -4,6 +4,22 @@ import { db } from "@/lib/firebaseAdmin";
 
 export const runtime = "nodejs";
 
+type LocationDoc = {
+  locationId?: string;
+  name?: string;
+  isInstalled?: boolean;
+  refreshToken?: string;
+  updatedAt?: unknown;
+  agencyId?: string;
+};
+
+type LocationItem = {
+  locationId: string;
+  name: string | null;
+  isInstalled: boolean;
+  updatedAt: unknown | null;
+};
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const agencyId = (url.searchParams.get("agencyId") || "").trim();
@@ -12,19 +28,19 @@ export async function GET(req: Request) {
   }
 
   try {
-    const q = await db
+    const q = await db()
       .collection("locations")
       .where("agencyId", "==", agencyId)
       .limit(500)
       .get();
 
-    const items = q.docs.map((d) => {
-      const data = d.data() || {};
+    const items: LocationItem[] = q.docs.map((d) => {
+      const data = (d.data() ?? {}) as LocationDoc;
       return {
-        locationId: data.locationId ?? d.id,
+        locationId: (data.locationId && data.locationId.trim()) || d.id,
         name: typeof data.name === "string" ? data.name : null,
         isInstalled: Boolean(data.isInstalled) || Boolean(data.refreshToken),
-        updatedAt: (data.updatedAt as unknown) ?? null,
+        updatedAt: data.updatedAt ?? null,
       };
     });
 
