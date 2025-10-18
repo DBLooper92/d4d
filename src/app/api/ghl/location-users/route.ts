@@ -8,6 +8,7 @@ const API_VERSION = process.env.GHL_API_VERSION || "2021-07-28";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Minimal user shape we care about for the UI list
 type GhlUser = {
   id: string;
   name?: string | null;
@@ -15,6 +16,7 @@ type GhlUser = {
   role?: string | null;
 };
 
+// Common response shapes seen from the API
 type GhlUsersResponseA = { users?: GhlUser[] };
 type GhlUsersResponseB = { data?: { users?: GhlUser[] } };
 
@@ -33,10 +35,17 @@ function parseUsers(payload: unknown): GhlUser[] {
   if (!isObject(payload)) return [];
   const a = (payload as GhlUsersResponseA).users;
   if (Array.isArray(a)) return a;
+
   const data = (payload as GhlUsersResponseB).data;
   if (isObject(data) && Array.isArray((data as { users?: unknown }).users)) {
     return (data as { users: GhlUser[] }).users;
   }
+
+  // Fallback: sometimes upstream returns { data: [...] }
+  if (Array.isArray((payload as { data?: unknown }).data)) {
+    return (payload as { data: GhlUser[] }).data;
+  }
+
   return [];
 }
 
@@ -44,14 +53,23 @@ async function safeJson(res: Response): Promise<unknown> {
   try {
     return await res.json();
   } catch {
-    return await res.text();
+    try {
+      const text = await res.text();
+      return { text };
+    } catch {
+      return null;
+    }
   }
 }
 
 async function fetchUsers(locationId: string) {
+  // Must be a LOCATION (sub-account) access token
   const accessToken = await getValidAccessTokenForLocation(locationId);
 
-  const upstream = await fetch(`${GHL_BASE}/locations/${locationId}/users`, {
+  const url = new URL(`${GHL_BASE}/users/`);
+  url.searchParams.set("locationId", locationId);
+
+  const upstream = await fetch(url.toString(), {
     method: "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -62,9 +80,11 @@ async function fetchUsers(locationId: string) {
   });
 
   const payload = await safeJson(upstream);
+
   if (!upstream.ok) {
-    return json(502, {
+    return json(upstream.status, {
       error: "Failed to fetch users from GHL",
+      status: upstream.status,
       details: payload,
     });
   }
@@ -94,17 +114,16 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  // Support body-based locationId (matches many existing codepaths)
+  // Support body-based locationId (matches older codepaths)
   let locationId = "";
   try {
     const body = (await req.json()) as {
       locationId?: string;
       location_id?: string;
     };
-    locationId =
-      (body.locationId || body.location_id || "").toString().trim();
+    locationId = (body.locationId || body.location_id || "").toString().trim();
   } catch {
-    // ignore JSON parse; fall through to error check below
+    // ignore JSON parse; fall through
   }
 
   if (!locationId) return json(400, { error: "locationId is required" });
