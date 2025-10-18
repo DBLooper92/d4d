@@ -2,11 +2,12 @@
 import 'server-only';
 import { db } from '@/lib/firebaseAdmin';
 
-const firestore = db();
-
+// --- Constants that are safe at build time ---
 const API_BASE = 'https://services.leadconnectorhq.com';
 const VERSION = '2021-07-28';
+const TOKENS_COLL = 'ghlTokens';
 
+// --- Types ---
 type StoredToken = {
   userType: 'Company' | 'Location';
   accessToken: string;
@@ -15,11 +16,7 @@ type StoredToken = {
   companyId?: string;
   lastLocationTokens?: Record<
     string,
-    {
-      accessToken: string;
-      refreshToken?: string;
-      expiresAt?: number;
-    }
+    { accessToken: string; refreshToken?: string; expiresAt?: number }
   >;
 };
 
@@ -35,8 +32,7 @@ type OAuthTokenResponse = {
   userId?: string;
 };
 
-const TOKENS_COLL = 'ghlTokens';
-
+// --- Helpers (no env/SDK at module scope) ---
 const epochSec = () => Math.floor(Date.now() / 1000);
 
 function envRequired(name: string): string {
@@ -45,13 +41,13 @@ function envRequired(name: string): string {
   return v;
 }
 
-const CLIENT_ID = envRequired('GHL_CLIENT_ID');
-const CLIENT_SECRET = envRequired('GHL_CLIENT_SECRET');
-const REDIRECT_URI = envRequired('GHL_REDIRECT_URI');
+// Lazily fetch Firestore (avoids admin init at build time)
+function fs() {
+  return db();
+}
 
 function tokenDocRef(locationId: string) {
-  // Use the Firestore instance, not the db() function itself
-  return firestore.collection(TOKENS_COLL).doc(locationId);
+  return fs().collection(TOKENS_COLL).doc(locationId);
 }
 
 async function readStoredToken(locationId: string): Promise<StoredToken | null> {
@@ -67,10 +63,7 @@ async function postForm<T>(url: string, form: Record<string, string>): Promise<T
   const body = new URLSearchParams(form);
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
+    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
     cache: 'no-store',
   });
@@ -81,11 +74,7 @@ async function postForm<T>(url: string, form: Record<string, string>): Promise<T
 async function postJson<T>(url: string, json: unknown, headers: Record<string, string>): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...headers,
-    },
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(json),
     cache: 'no-store',
   });
@@ -93,13 +82,17 @@ async function postJson<T>(url: string, json: unknown, headers: Record<string, s
   return (await res.json()) as T;
 }
 
-/** Internal refresh — supports BOTH (refreshToken, userType) and (refreshToken, clientId, clientSecret). */
+/**
+ * Refresh helper that supports BOTH call shapes:
+ *  A) (refreshToken, clientId, clientSecret)
+ *  B) (refreshToken, userType)  -> uses env client credentials
+ */
 export async function exchangeRefreshToken(
   refreshToken: string,
   a: 'Company' | 'Location' | string,
   b?: string
 ): Promise<OAuthTokenResponse> {
-  // Shape A (legacy callers): (refreshToken, clientId, clientSecret)
+  // Shape A (legacy): explicit client creds
   if (typeof a === 'string' && typeof b === 'string') {
     const clientId = a;
     const clientSecret = b;
@@ -109,23 +102,23 @@ export async function exchangeRefreshToken(
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
       user_type: 'Location',
-      redirect_uri: REDIRECT_URI,
+      redirect_uri: envRequired('GHL_REDIRECT_URI'),
     });
   }
 
-  // Shape B: (refreshToken, userType) → use env client credentials
+  // Shape B: use env client creds + explicit userType
   const userType = (a as 'Company' | 'Location') ?? 'Location';
   return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
-    client_id: CLIENT_ID,
-    client_secret: CLIENT_SECRET,
+    client_id: envRequired('GHL_CLIENT_ID'),
+    client_secret: envRequired('GHL_CLIENT_SECRET'),
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
     user_type: userType,
-    redirect_uri: REDIRECT_URI,
+    redirect_uri: envRequired('GHL_REDIRECT_URI'),
   });
 }
 
-/** Mint a Location token from an Agency token */
+/** Mint a Location token from an Agency (Company) token */
 async function getLocationAccessTokenFromAgency(
   companyId: string,
   locationId: string,
@@ -139,14 +132,14 @@ async function getLocationAccessTokenFromAgency(
 }
 
 /**
- * Returns a valid Location access token for the given location.
+ * Returns a valid **Location** access token for the given location.
  * Handles cached minted tokens, direct Location tokens (refresh), or mint from Agency token.
  */
 export async function getValidLocationAccessToken(locationId: string, companyId?: string): Promise<string> {
   const stored = await readStoredToken(locationId);
   const now = epochSec();
 
-  // Prefer a cached minted Location token for this location
+  // 1) Prefer cached minted Location token
   const cached = stored?.lastLocationTokens?.[locationId];
   if (cached) {
     const nearlyExpired = cached.expiresAt ? cached.expiresAt - 60 <= now : false;
@@ -172,7 +165,7 @@ export async function getValidLocationAccessToken(locationId: string, companyId?
     if (!nearlyExpired) return cached.accessToken;
   }
 
-  // If the stored top-level token is a Location token, refresh/use it
+  // 2) If stored top-level token is a Location token, refresh/use it
   if (stored?.userType === 'Location') {
     const nearlyExpired = stored.expiresAt ? stored.expiresAt - 60 <= now : false;
     if (nearlyExpired && stored.refreshToken) {
@@ -188,7 +181,7 @@ export async function getValidLocationAccessToken(locationId: string, companyId?
     if (stored.accessToken && !nearlyExpired) return stored.accessToken;
   }
 
-  // If we have an Agency token, mint a Location token for this location
+  // 3) If we have an Agency token, mint a Location token
   if (stored?.userType === 'Company' && stored.accessToken) {
     const compId = stored.companyId ?? companyId;
     if (!compId) throw new Error('Missing companyId to mint a Location token.');
@@ -196,7 +189,7 @@ export async function getValidLocationAccessToken(locationId: string, companyId?
     const expiresAt = now + (minted.expires_in ?? 0);
     await writeStoredToken(locationId, {
       lastLocationTokens: {
-        ...(stored.lastLocationTokens ?? {}),
+        ...(stored?.lastLocationTokens ?? {}),
         [locationId]: {
           accessToken: minted.access_token,
           refreshToken: minted.refresh_token,
@@ -222,19 +215,13 @@ export async function saveInitialTokenForLocation(locationId: string, payload: O
   await writeStoredToken(locationId, base);
 }
 
-/**
- * GET helper that injects Version/Authorization and retries once on 401.
- */
+/** GET helper that injects Version/Authorization and retries once on 401 */
 export async function ghlLocationGetJson<T>(locationId: string, url: string, companyId?: string): Promise<T> {
   let token = await getValidLocationAccessToken(locationId, companyId);
 
   const doFetch = async (bearer: string) =>
     fetch(url, {
-      headers: {
-        Authorization: `Bearer ${bearer}`,
-        Version: VERSION,
-        Accept: 'application/json',
-      },
+      headers: { Authorization: `Bearer ${bearer}`, Version: VERSION, Accept: 'application/json' },
       cache: 'no-store',
     });
 
@@ -247,9 +234,7 @@ export async function ghlLocationGetJson<T>(locationId: string, url: string, com
   return (await res.json()) as T;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Backward-compat alias (kept for existing imports)                          */
-/* -------------------------------------------------------------------------- */
+/** Legacy alias kept for existing imports */
 export async function getValidAccessTokenForLocation(locationId: string, companyId?: string) {
   return getValidLocationAccessToken(locationId, companyId);
 }
