@@ -4,22 +4,6 @@ import { db } from "@/lib/firebaseAdmin";
 
 export const runtime = "nodejs";
 
-type LocationDoc = {
-  locationId?: string;
-  name?: string;
-  isInstalled?: boolean;
-  refreshToken?: string;
-  updatedAt?: unknown;
-  agencyId?: string;
-};
-
-type LocationItem = {
-  locationId: string;
-  name: string | null;
-  isInstalled: boolean;
-  updatedAt: unknown | null;
-};
-
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const agencyId = (url.searchParams.get("agencyId") || "").trim();
@@ -34,22 +18,18 @@ export async function GET(req: Request) {
       .limit(500)
       .get();
 
-    const items: LocationItem[] = q.docs.map((d) => {
-      const data = (d.data() ?? {}) as LocationDoc;
+    const items = q.docs.map((d) => {
+      const data = d.data() || {};
       return {
-        locationId: (data.locationId && data.locationId.trim()) || d.id,
+        locationId: data.locationId ?? d.id,
         name: typeof data.name === "string" ? data.name : null,
         isInstalled: Boolean(data.isInstalled) || Boolean(data.refreshToken),
-        updatedAt: data.updatedAt ?? null,
+        updatedAt: (data.updatedAt as unknown) ?? null,
       };
     });
 
-    return NextResponse.json(
-      { agencyId, count: items.length, items },
-      { status: 200, headers: { "Cache-Control": "no-store" } }
-    );
+    return NextResponse.json({ agencyId, count: items.length, items }, { status: 200, headers: { "Cache-Control": "no-store" } });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: `Query failed: ${msg}` }, { status: 500 });
+    return NextResponse.json({ error: `Query failed: ${(e as Error).message}` }, { status: 500 });
   }
 }
