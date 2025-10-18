@@ -29,35 +29,78 @@ const tokenDocCandidates = (locationId: string) => ([
   db().collection("ghl").doc("locations").collection("byId").doc(locationId),
 ]);
 
-async function loadTokenDoc(locationId: string) {
-  const cands = tokenDocCandidates(locationId);
-  for (const ref of cands) {
-    const snap = await ref.get();
-    if (snap.exists) {
-      const raw = snap.data() as TokenDoc;
+type Loaded = { ref: FirebaseFirestore.DocumentReference; data: TokenDoc };
 
-      const companyId = raw.companyId ?? raw.agencyId;
-      const expiresTs = raw.accessTokenExpiresAt
-        ? raw.accessTokenExpiresAt
-        : (typeof raw.expiresAt === "number" ? Timestamp.fromMillis(raw.expiresAt * 1000) : undefined);
+function coalesceTokenDocs(parts: Array<{ data?: TokenDoc }>): TokenDoc {
+  const merged: TokenDoc = { locationId: "", scopes: undefined };
+  for (const p of parts) {
+    if (!p?.data) continue;
+    const d = p.data;
+    merged.locationId = merged.locationId || d.locationId || "";
+    merged.companyId = merged.companyId || d.companyId || d.agencyId;
+    merged.agencyId = merged.agencyId || d.agencyId || d.companyId;
+    merged.userType = merged.userType || d.userType;
+    merged.scopes = merged.scopes || d.scopes;
 
-      const data: TokenDoc = { ...raw, companyId, accessTokenExpiresAt: expiresTs };
-      return { ref, data };
-    }
+    // Prefer freshest access token/expiry if present
+    if (d.accessToken) merged.accessToken = merged.accessToken || d.accessToken;
+    if (d.accessTokenExpiresAt) merged.accessTokenExpiresAt = merged.accessTokenExpiresAt || d.accessTokenExpiresAt;
+    if (typeof d.expiresAt === "number") merged.expiresAt = merged.expiresAt || d.expiresAt;
+
+    // Keep any refresh tokens we find
+    if (d.refreshToken) merged.refreshToken = merged.refreshToken || d.refreshToken;
+    if (d.agencyAccessToken) merged.agencyAccessToken = merged.agencyAccessToken || d.agencyAccessToken;
+    if (d.agencyRefreshToken) merged.agencyRefreshToken = merged.agencyRefreshToken || d.agencyRefreshToken;
+    if (d.agencyAccessTokenExpiresAt) merged.agencyAccessTokenExpiresAt = merged.agencyAccessTokenExpiresAt || d.agencyAccessTokenExpiresAt;
   }
-  const ref = cands[cands.length - 1];
-  await ref.set({ locationId }, { merge: true });
-  const snap = await ref.get();
-  return { ref, data: snap.data() as TokenDoc };
+  // Normalize expiresAt -> Timestamp if only numeric present
+  if (!merged.accessTokenExpiresAt && typeof merged.expiresAt === "number") {
+    merged.accessTokenExpiresAt = Timestamp.fromMillis(merged.expiresAt * 1000);
+  }
+  return merged;
+}
+
+async function loadTokenDoc(locationId: string): Promise<Loaded> {
+  const cands = tokenDocCandidates(locationId);
+  const snaps = await Promise.all(cands.map(ref => ref.get()));
+
+  const existing: Array<{ ref: FirebaseFirestore.DocumentReference; data?: TokenDoc }> = snaps.map((snap, i) => ({
+    ref: cands[i],
+    data: snap.exists ? (snap.data() as TokenDoc) : undefined,
+  }));
+
+  // If none exist, create the last candidate and return a stub
+  if (existing.every(e => !e.data)) {
+    const lastRef = cands[cands.length - 1];
+    await lastRef.set({ locationId }, { merge: true });
+    const snap = await lastRef.get();
+    return { ref: lastRef, data: (snap.data() as TokenDoc) ?? { locationId } };
+  }
+
+  // Merge data across all existing candidates, then pick the most "complete" ref to persist back to.
+  const merged = coalesceTokenDocs(existing);
+  const chosen = existing.find(e =>
+    e.data &&
+    (e.data.refreshToken || e.data.accessToken || e.data.agencyAccessToken)
+  ) || existing.find(e => e.data) || existing[existing.length - 1];
+
+  const companyId = merged.companyId ?? merged.agencyId;
+  const expiresTs = merged.accessTokenExpiresAt
+    ? merged.accessTokenExpiresAt
+    : (typeof merged.expiresAt === "number" ? Timestamp.fromMillis(merged.expiresAt * 1000) : undefined);
+
+  const normalized: TokenDoc = { ...merged, companyId, accessTokenExpiresAt: expiresTs, locationId };
+
+  return { ref: chosen.ref, data: normalized };
 }
 
 function toEpochSeconds(ts?: FirebaseFirestore.Timestamp | null): number | undefined {
   return ts ? Math.floor(ts.toMillis() / 1000) : undefined;
 }
 
-function isExpired(ts?: FirebaseFirestore.Timestamp, skewSec = 60): boolean {
+function isExpired(ts?: FirebaseFirestore.Timestamp | null, skewSec = 90): boolean {
   if (!ts) return true;
-  const now = Timestamp.now().toMillis();
+  const now = Date.now();
   return ts.toMillis() <= now + skewSec * 1000;
 }
 
