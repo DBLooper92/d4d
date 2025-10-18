@@ -1,7 +1,7 @@
 // src/lib/ghlTokens.ts
 
 import { db } from "@/lib/firebaseAdmin";
-import { ghlTokenUrl } from "./ghl";
+import { getGhlConfig, ghlTokenUrl } from "./ghl";
 
 /**
  * ===== FIELD MAPPINGS (adjust to your current schema if needed) =====
@@ -21,20 +21,69 @@ function readAtPath(o: AnyObj | undefined, path: string): unknown {
   }, o);
 }
 
-function coerceMs(v: unknown): number | null {
-  if (!v) return null;
-  if (typeof v === "number") return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    if (!Number.isNaN(n) && n > 0) return n;
-    const d = Date.parse(v);
-    if (!Number.isNaN(d)) return d;
+function joinField(base: string | null, field: string): string {
+  return base ? `${base}.${field}` : field;
+}
+
+function asTokenString(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
+  return null;
+}
+
+function asString(value: unknown): string | null {
+  if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function normalizeExpiryMs(value: unknown): number | null {
+  if (value == null) return null;
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const n = value;
+    if (n <= 0) return null;
+    return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric < 1e12 ? Math.round(numeric * 1000) : Math.round(numeric);
+    }
+    const parsed = Date.parse(trimmed);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  if (typeof value === "object") {
+    const maybeTs = value as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
+    if (typeof maybeTs.toMillis === "function") {
+      const ms = maybeTs.toMillis();
+      return Number.isFinite(ms) ? ms : null;
+    }
+    if (typeof maybeTs.seconds === "number") {
+      const baseMs = maybeTs.seconds * 1000;
+      const extra = typeof maybeTs.nanoseconds === "number" ? maybeTs.nanoseconds / 1e6 : 0;
+      const total = baseMs + extra;
+      return Number.isFinite(total) ? Math.round(total) : null;
+    }
+  }
+
   return null;
 }
 
 export type RefreshExchangeResponse = {
   access_token: string;
+  refresh_token?: string;
   scope?: string;          // <-- your existing routes read this
   token_type?: string;
   expires_in: number;      // seconds
@@ -47,7 +96,91 @@ export type StoredToken = {
   _docRefPath: string | null;
   _writeAccessPath: string | null;
   _writeExpiresPath: string | null;
+  _writeRefreshPath: string | null;
 };
+
+const TOKEN_BASE_PATHS: (string | null)[] = ["oauth", "ghl", null];
+const AGENCY_ID_PATHS = [
+  "agencyId",
+  "agency.id",
+  "agency.agencyId",
+  "agency.agency_id",
+  "companyId",
+  "company.id",
+  "company.companyId",
+  "company.company_id",
+  "agency_id",
+];
+const EXPIRE_CANDIDATES = {
+  camel: ["expiresAt", "expiryAt", "expiry", "expires", "expiresAtMs", "expiryMs"],
+  snake: ["expires_at", "expiry_at", "expiry", "expires", "expires_at_ms", "expires_in", "expires_in_ms"],
+};
+
+type Style = "camel" | "snake";
+const STYLE_CANDIDATES: Record<Style, { access: string[]; refresh: string[] }> = {
+  camel: { access: ["accessToken"], refresh: ["refreshToken"] },
+  snake: { access: ["access_token"], refresh: ["refresh_token"] },
+};
+
+function pickField(data: AnyObj, base: string | null, candidates: string[]) {
+  for (const field of candidates) {
+    const path = joinField(base, field);
+    const raw = readAtPath(data, path);
+    if (raw !== undefined && raw !== null) {
+      return { raw, path };
+    }
+  }
+  return { raw: undefined, path: null };
+}
+
+function ensureWritePath(base: string | null, candidates: string[], preferred: string | null): string {
+  if (preferred) return preferred;
+  const first = candidates[0];
+  return joinField(base, first);
+}
+
+function extractStoredToken(data: AnyObj, docRefPath: string, basePaths = TOKEN_BASE_PATHS): StoredToken | null {
+  for (const base of basePaths) {
+    for (const style of ["camel", "snake"] as const) {
+      const accessCandidates = STYLE_CANDIDATES[style].access;
+      const refreshCandidates = STYLE_CANDIDATES[style].refresh;
+      const expireCandidates = EXPIRE_CANDIDATES[style];
+
+      const accessInfo = pickField(data, base, accessCandidates);
+      const refreshInfo = pickField(data, base, refreshCandidates);
+      const expiresInfo = pickField(data, base, expireCandidates);
+
+      const accessToken = asTokenString(accessInfo.raw);
+      const refreshToken = asTokenString(refreshInfo.raw);
+      if (!accessToken && !refreshToken) continue;
+
+      const expiresAtMs = normalizeExpiryMs(expiresInfo.raw);
+      const writeAccessPath = ensureWritePath(base, accessCandidates, accessInfo.path);
+      const writeExpiresPath = ensureWritePath(base, expireCandidates, expiresInfo.path);
+      const writeRefreshPath = refreshInfo.path ?? null;
+
+      return {
+        accessToken,
+        refreshToken,
+        expiresAtMs,
+        _docRefPath: docRefPath,
+        _writeAccessPath: writeAccessPath,
+        _writeExpiresPath: writeExpiresPath,
+        _writeRefreshPath: writeRefreshPath,
+      };
+    }
+  }
+  return null;
+}
+
+function findAgencyId(data: AnyObj): string | null {
+  for (const path of AGENCY_ID_PATHS) {
+    const raw = readAtPath(data, path);
+    const str = asString(raw);
+    if (str) return str;
+  }
+  return null;
+}
 
 async function readTokenForLocation(locationId: string): Promise<StoredToken> {
   // A) locations/{id} oauth.*
@@ -55,54 +188,17 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
   const locSnap = await locRef.get();
   if (locSnap.exists) {
     const data = (locSnap.data() || {}) as AnyObj;
+    const fromLocation = extractStoredToken(data, locRef.path);
+    if (fromLocation) return fromLocation;
 
-    {
-      const access = readAtPath(data, "oauth.accessToken");
-      const refresh = readAtPath(data, "oauth.refreshToken");
-      const expires = readAtPath(data, "oauth.expiresAt");
-      if (typeof access === "string" || typeof refresh === "string") {
-        return {
-          accessToken: (access as string) || null,
-          refreshToken: (refresh as string) || null,
-          expiresAtMs: coerceMs(expires),
-          _docRefPath: locRef.path,
-          _writeAccessPath: "oauth.accessToken",
-          _writeExpiresPath: "oauth.expiresAt",
-        };
-      }
-    }
-
-    // B) locations/{id} ghl.*
-    {
-      const access = readAtPath(data, "ghl.accessToken");
-      const refresh = readAtPath(data, "ghl.refreshToken");
-      const expires = readAtPath(data, "ghl.expiresAt");
-      if (typeof access === "string" || typeof refresh === "string") {
-        return {
-          accessToken: (access as string) || null,
-          refreshToken: (refresh as string) || null,
-          expiresAtMs: coerceMs(expires),
-          _docRefPath: locRef.path,
-          _writeAccessPath: "ghl.accessToken",
-          _writeExpiresPath: "ghl.expiresAt",
-        };
-      }
-    }
-
-    // Top-level fields fallback (locations/{id}.refreshToken, etc.)
-    {
-      const access = typeof data.accessToken === "string" ? data.accessToken : null;
-      const refresh = typeof data.refreshToken === "string" ? data.refreshToken : null;
-      const expires = data.expiresAt;
-      if (access || refresh) {
-        return {
-          accessToken: access,
-          refreshToken: refresh,
-          expiresAtMs: coerceMs(expires),
-          _docRefPath: locRef.path,
-          _writeAccessPath: "accessToken",
-          _writeExpiresPath: "expiresAt",
-        };
+    const agencyId = findAgencyId(data);
+    if (agencyId) {
+      const agLocRef = db().collection("agencies").doc(agencyId).collection("locations").doc(locationId);
+      const agLocSnap = await agLocRef.get();
+      if (agLocSnap.exists) {
+        const agLocData = (agLocSnap.data() || {}) as AnyObj;
+        const fromMirror = extractStoredToken(agLocData, agLocRef.path);
+        if (fromMirror) return fromMirror;
       }
     }
   }
@@ -112,17 +208,10 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
   const tokSnap = await tokRef.get();
   if (tokSnap.exists) {
     const d = (tokSnap.data() || {}) as AnyObj;
-    const access = d.accessToken as string | undefined;
-    const refresh = d.refreshToken as string | undefined;
-    const expires = d.expiresAt;
-    return {
-      accessToken: access || null,
-      refreshToken: refresh || null,
-      expiresAtMs: coerceMs(expires),
-      _docRefPath: tokRef.path,
-      _writeAccessPath: "accessToken",
-      _writeExpiresPath: "expiresAt",
-    };
+    const fromTokenDoc =
+      extractStoredToken(d, tokRef.path, [null]) ||
+      extractStoredToken(d, tokRef.path, TOKEN_BASE_PATHS);
+    if (fromTokenDoc) return fromTokenDoc;
   }
 
   return {
@@ -132,6 +221,7 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
     _docRefPath: null,
     _writeAccessPath: null,
     _writeExpiresPath: null,
+    _writeRefreshPath: null,
   };
 }
 
@@ -208,7 +298,8 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
     throw new Error("No refresh token available for this location.");
   }
 
-  const tok = await exchangeRefreshToken(t.refreshToken); // uses env creds if not passed
+  const { clientId, clientSecret } = getGhlConfig();
+  const tok = await exchangeRefreshToken(t.refreshToken, clientId, clientSecret);
   const newExpiresMs = now + tok.expires_in * 1000;
 
   // Write back to the same doc/paths we read
@@ -220,6 +311,9 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
     const update: Record<string, unknown> = {};
     update[t._writeAccessPath] = tok.access_token;
     update[t._writeExpiresPath] = newExpiresMs;
+    if (tok.refresh_token && t._writeRefreshPath) {
+      update[t._writeRefreshPath] = tok.refresh_token;
+    }
 
     await db().collection(collection).doc(docId).set(update, { merge: true });
   }
