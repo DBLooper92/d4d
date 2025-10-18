@@ -1,14 +1,12 @@
 // src/app/api/ghl/location-users/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
+import { getValidAccessTokenForLocation, ghlFetch } from "@/lib/ghlTokens";
 
-const GHL_BASE = "https://services.leadconnectorhq.com";
-const API_VERSION = process.env.GHL_API_VERSION || "2021-07-28";
+const GHL_BASE = process.env.GHL_API_BASE || "https://services.leadconnectorhq.com";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Minimal user shape we care about for the UI list
 type GhlUser = {
   id: string;
   name?: string | null;
@@ -16,7 +14,6 @@ type GhlUser = {
   role?: string | null;
 };
 
-// Common response shapes seen from the API
 type GhlUsersResponseA = { users?: GhlUser[] };
 type GhlUsersResponseB = { data?: { users?: GhlUser[] } };
 
@@ -63,24 +60,17 @@ async function safeJson(res: Response): Promise<unknown> {
 }
 
 async function fetchUsers(locationId: string) {
-  // Must be a LOCATION (sub-account) access token
   const accessToken = await getValidAccessTokenForLocation(locationId);
 
   const url = new URL(`${GHL_BASE}/users/`);
   url.searchParams.set("locationId", locationId);
 
-  const upstream = await fetch(url.toString(), {
+  const upstream = await ghlFetch(url.toString(), {
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: "application/json",
-      Version: API_VERSION,
-    },
-    cache: "no-store",
+    token: accessToken,
   });
 
   const payload = await safeJson(upstream);
-
   if (!upstream.ok) {
     return json(upstream.status, {
       error: "Failed to fetch users from GHL",
@@ -114,16 +104,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  // Support body-based locationId (matches older codepaths)
   let locationId = "";
   try {
-    const body = (await req.json()) as {
-      locationId?: string;
-      location_id?: string;
-    };
+    const body = (await req.json()) as { locationId?: string; location_id?: string };
     locationId = (body.locationId || body.location_id || "").toString().trim();
   } catch {
-    // ignore JSON parse; fall through
+    // ignore parse error
   }
 
   if (!locationId) return json(400, { error: "locationId is required" });

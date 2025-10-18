@@ -1,228 +1,232 @@
 // src/lib/ghlTokens.ts
+// Robust token helper for LeadConnector (GHL) that:
+//  - prefers a valid saved *location* access token
+//  - refreshes when expiring
+//  - on refresh invalid_grant, falls back to agency->location token exchange
+//  - persists updated tokens
+//
+// If your Firestore paths differ, adjust TOKENS_* constants below.
 
-import { db } from "@/lib/firebaseAdmin";
-import { ghlTokenUrl } from "./ghl";
+import { Timestamp } from "firebase-admin/firestore";
+import { db as dbExport } from "@/lib/firebaseAdmin"; // in your repo this is a *function* returning Firestore
 
-/**
- * ===== FIELD MAPPINGS (adjust to your current schema if needed) =====
- * We try these locations, in order, to find the token payload for a location:
- *   A) locations/{locationId} -> oauth.accessToken / oauth.refreshToken / oauth.expiresAt
- *   B) locations/{locationId} -> ghl.accessToken   / ghl.refreshToken   / ghl.expiresAt
- *   C) oauth_tokens/{locationId} -> accessToken / refreshToken / expiresAt
- */
-
-type AnyObj = Record<string, unknown>;
-
-function readAtPath(o: AnyObj | undefined, path: string): unknown {
-  if (!o) return undefined;
-  return path.split(".").reduce<unknown>((acc, k) => {
-    if (acc && typeof acc === "object" && k in (acc as AnyObj)) return (acc as AnyObj)[k];
-    return undefined;
-  }, o);
+// normalize db so it works whether the module exports a function or an instance
+function getDB(): FirebaseFirestore.Firestore {
+  const maybeFn = dbExport as unknown;
+  return (typeof maybeFn === "function" ? (maybeFn as () => FirebaseFirestore.Firestore)() : (maybeFn as FirebaseFirestore.Firestore));
 }
 
-function coerceMs(v: unknown): number | null {
-  if (!v) return null;
-  if (typeof v === "number") return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    if (!Number.isNaN(n) && n > 0) return n;
-    const d = Date.parse(v);
-    if (!Number.isNaN(d)) return d;
-  }
-  return null;
-}
+// ====== CONFIG ======
+const OAUTH_BASE = process.env.GHL_OAUTH_BASE || "https://services.leadconnectorhq.com/oauth";
+const API_VERSION = process.env.GHL_API_VERSION || "2021-07-28";
 
-export type RefreshExchangeResponse = {
+const GHL_CLIENT_ID = process.env.FIREBASE_GHL_CLIENT_ID || process.env.GHL_CLIENT_ID;
+const GHL_CLIENT_SECRET = process.env.FIREBASE_GHL_CLIENT_SECRET || process.env.GHL_CLIENT_SECRET;
+
+// Firestore storage locations (tweak if your repo uses different paths)
+const TOKENS_COLLECTION = "ghlTokens";
+const TOKENS_AGENCY_DOC_ID = "agency";
+const TOKENS_LOCATIONS_COLLECTION = "locations";
+
+type OAuthTokenResponse = {
   access_token: string;
-  scope?: string;          // <-- your existing routes read this
-  token_type?: string;
-  expires_in: number;      // seconds
+  token_type: "Bearer" | string;
+  expires_in: number; // seconds
+  refresh_token?: string;
+  scope?: string;
 };
 
-export type StoredToken = {
-  accessToken: string | null;
-  refreshToken: string | null;
-  expiresAtMs: number | null;
-  _docRefPath: string | null;
-  _writeAccessPath: string | null;
-  _writeExpiresPath: string | null;
+type StoredToken = {
+  accessToken: string;
+  refreshToken?: string | null;
+  // Unix ms timestamp when the access token expires
+  expiresAt: number;
+  // For debug/ops
+  updatedAt?: FirebaseFirestore.Timestamp;
 };
 
-async function readTokenForLocation(locationId: string): Promise<StoredToken> {
-  // A) locations/{id} oauth.*
-  const locRef = db().collection("locations").doc(locationId);
-  const locSnap = await locRef.get();
-  if (locSnap.exists) {
-    const data = (locSnap.data() || {}) as AnyObj;
+// Small clock skew to preempt expiry
+const SKEW_MS = 2 * 60 * 1000; // 2 minutes
 
-    {
-      const access = readAtPath(data, "oauth.accessToken");
-      const refresh = readAtPath(data, "oauth.refreshToken");
-      const expires = readAtPath(data, "oauth.expiresAt");
-      if (typeof access === "string" || typeof refresh === "string") {
-        return {
-          accessToken: (access as string) || null,
-          refreshToken: (refresh as string) || null,
-          expiresAtMs: coerceMs(expires),
-          _docRefPath: locRef.path,
-          _writeAccessPath: "oauth.accessToken",
-          _writeExpiresPath: "oauth.expiresAt",
-        };
-      }
-    }
-
-    // B) locations/{id} ghl.*
-    {
-      const access = readAtPath(data, "ghl.accessToken");
-      const refresh = readAtPath(data, "ghl.refreshToken");
-      const expires = readAtPath(data, "ghl.expiresAt");
-      if (typeof access === "string" || typeof refresh === "string") {
-        return {
-          accessToken: (access as string) || null,
-          refreshToken: (refresh as string) || null,
-          expiresAtMs: coerceMs(expires),
-          _docRefPath: locRef.path,
-          _writeAccessPath: "ghl.accessToken",
-          _writeExpiresPath: "ghl.expiresAt",
-        };
-      }
-    }
-
-    // Top-level fields fallback (locations/{id}.refreshToken, etc.)
-    {
-      const access = typeof data.accessToken === "string" ? data.accessToken : null;
-      const refresh = typeof data.refreshToken === "string" ? data.refreshToken : null;
-      const expires = data.expiresAt;
-      if (access || refresh) {
-        return {
-          accessToken: access,
-          refreshToken: refresh,
-          expiresAtMs: coerceMs(expires),
-          _docRefPath: locRef.path,
-          _writeAccessPath: "accessToken",
-          _writeExpiresPath: "expiresAt",
-        };
-      }
-    }
-  }
-
-  // C) oauth_tokens/{locationId}
-  const tokRef = db().collection("oauth_tokens").doc(locationId);
-  const tokSnap = await tokRef.get();
-  if (tokSnap.exists) {
-    const d = (tokSnap.data() || {}) as AnyObj;
-    const access = d.accessToken as string | undefined;
-    const refresh = d.refreshToken as string | undefined;
-    const expires = d.expiresAt;
-    return {
-      accessToken: access || null,
-      refreshToken: refresh || null,
-      expiresAtMs: coerceMs(expires),
-      _docRefPath: tokRef.path,
-      _writeAccessPath: "accessToken",
-      _writeExpiresPath: "expiresAt",
-    };
-  }
-
-  return {
-    accessToken: null,
-    refreshToken: null,
-    expiresAtMs: null,
-    _docRefPath: null,
-    _writeAccessPath: null,
-    _writeExpiresPath: null,
-  };
+function nowMs() {
+  return Date.now();
 }
 
-async function _doRefresh(
-  refreshToken: string,
-  clientId: string,
-  clientSecret: string
-): Promise<RefreshExchangeResponse> {
-  const form = new URLSearchParams({
+function isFresh(expiresAt: number | undefined | null) {
+  if (!expiresAt) return false;
+  return expiresAt - SKEW_MS > nowMs();
+}
+
+// ===== Firestore helpers (adjust paths if needed) =====
+async function readAgencyToken(): Promise<StoredToken | null> {
+  const snap = await getDB().collection(TOKENS_COLLECTION).doc(TOKENS_AGENCY_DOC_ID).get();
+  if (!snap.exists) return null;
+  const data = snap.data() as StoredToken;
+  return data || null;
+}
+
+async function writeAgencyToken(tok: StoredToken): Promise<void> {
+  await getDB()
+    .collection(TOKENS_COLLECTION)
+    .doc(TOKENS_AGENCY_DOC_ID)
+    .set({ ...tok, updatedAt: Timestamp.now() }, { merge: true });
+}
+
+async function readLocationToken(locationId: string): Promise<StoredToken | null> {
+  const snap = await getDB()
+    .collection(TOKENS_COLLECTION)
+    .doc(TOKENS_AGENCY_DOC_ID)
+    .collection(TOKENS_LOCATIONS_COLLECTION)
+    .doc(locationId)
+    .get();
+  if (!snap.exists) return null;
+  const data = snap.data() as StoredToken;
+  return data || null;
+}
+
+async function writeLocationToken(locationId: string, tok: StoredToken): Promise<void> {
+  await getDB()
+    .collection(TOKENS_COLLECTION)
+    .doc(TOKENS_AGENCY_DOC_ID)
+    .collection(TOKENS_LOCATIONS_COLLECTION)
+    .doc(locationId)
+    .set({ ...tok, updatedAt: Timestamp.now() }, { merge: true });
+}
+
+// ===== OAuth calls =====
+async function doTokenRefresh(refreshToken: string): Promise<OAuthTokenResponse> {
+  if (!GHL_CLIENT_ID || !GHL_CLIENT_SECRET) {
+    throw new Error("Missing GHL client credentials");
+  }
+
+  const body = new URLSearchParams({
     grant_type: "refresh_token",
+    client_id: GHL_CLIENT_ID,
+    client_secret: GHL_CLIENT_SECRET,
     refresh_token: refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret,
   });
 
-  const r = await fetch(ghlTokenUrl(), {
+  const res = await fetch(`${OAUTH_BASE}/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-    body: form,
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+      Version: API_VERSION,
+    },
+    body,
     cache: "no-store",
   });
 
-  const raw = await r.text();
-  if (!r.ok) {
-    throw new Error(`refresh exchange failed: ${r.status} ${raw.slice(0, 400)}`);
+  const payload = await res.json().catch(async () => ({ text: await res.text() }));
+  if (!res.ok) {
+    const message = `refresh exchange failed: ${res.status} ${JSON.stringify(payload)}`;
+    throw new Error(message);
   }
-
-  try {
-    return JSON.parse(raw) as RefreshExchangeResponse;
-  } catch {
-    throw new Error(`refresh exchange bad JSON: ${raw.slice(0, 400)}`);
-  }
+  return payload as OAuthTokenResponse;
 }
 
-/**
- * PUBLIC: Legacy/compat function used across the codebase.
- * Supports BOTH signatures:
- *   1) exchangeRefreshToken(refreshToken, clientId, clientSecret)  // your original
- *   2) exchangeRefreshToken(refreshToken)                          // env-based fallback
- */
-export function exchangeRefreshToken(
-  refreshToken: string,
-  clientId: string,
-  clientSecret: string
-): Promise<RefreshExchangeResponse>;
-export function exchangeRefreshToken(refreshToken: string): Promise<RefreshExchangeResponse>;
-export function exchangeRefreshToken(
-  refreshToken: string,
-  clientId?: string,
-  clientSecret?: string
-): Promise<RefreshExchangeResponse> {
-  const cid = clientId ?? process.env.GHL_CLIENT_ID;
-  const csec = clientSecret ?? process.env.GHL_CLIENT_SECRET;
-  if (!cid || !csec) {
-    throw new Error("GHL_CLIENT_ID / GHL_CLIENT_SECRET are not configured.");
+async function getLocationTokenViaAgency(agencyAccessToken: string, locationId: string): Promise<OAuthTokenResponse> {
+  // LeadConnector "Get Location Access Token from Agency Token"
+  const url = `${OAUTH_BASE}/locationToken?${new URLSearchParams({ locationId }).toString()}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${agencyAccessToken}`,
+      Accept: "application/json",
+      Version: API_VERSION,
+    },
+    cache: "no-store",
+  });
+
+  const payload = await res.json().catch(async () => ({ text: await res.text() }));
+  if (!res.ok) {
+    const message = `agency->location exchange failed: ${res.status} ${JSON.stringify(payload)}`;
+    throw new Error(message);
   }
-  return _doRefresh(refreshToken, cid, csec);
+  return payload as OAuthTokenResponse;
 }
 
-/**
- * PUBLIC: Obtain a valid access token for a given location (auto-refresh + persist).
- * Uses the flexible mapping documented at the top of this file.
- */
+// Optional: refresh agency token if your agency token uses refresh flow.
+// If your project stores a long-lived agency access token, you can no-op here.
+async function getValidAgencyAccessToken(): Promise<string> {
+  const agencyTok = await readAgencyToken();
+  if (!agencyTok) {
+    throw new Error("No stored agency token. Reconnect agency OAuth.");
+  }
+  if (isFresh(agencyTok.expiresAt)) return agencyTok.accessToken;
+
+  if (!agencyTok.refreshToken) {
+    throw new Error("Agency token expired and no refresh_token available. Reconnect agency OAuth.");
+  }
+
+  const refreshed = await doTokenRefresh(agencyTok.refreshToken);
+  const expiresAt = nowMs() + (refreshed.expires_in ?? 0) * 1000;
+  const stored: StoredToken = {
+    accessToken: refreshed.access_token,
+    refreshToken: refreshed.refresh_token ?? agencyTok.refreshToken ?? null,
+    expiresAt,
+  };
+  await writeAgencyToken(stored);
+  return stored.accessToken;
+}
+
+// ===== Public: getValidAccessTokenForLocation =====
 export async function getValidAccessTokenForLocation(locationId: string): Promise<string> {
-  const t = await readTokenForLocation(locationId);
-  const now = Date.now();
-  const skewMs = 60 * 1000; // refresh 1 minute early
-
-  if (t.accessToken && t.expiresAtMs && t.expiresAtMs > now + skewMs) {
-    return t.accessToken;
+  // 1) Use valid saved location access token if still fresh
+  const saved = await readLocationToken(locationId);
+  if (saved && isFresh(saved.expiresAt)) {
+    return saved.accessToken;
   }
 
-  if (!t.refreshToken) {
-    throw new Error("No refresh token available for this location.");
+  // 2) If we have a refresh token for the location, try to refresh
+  if (saved?.refreshToken) {
+    try {
+      const refreshed = await doTokenRefresh(saved.refreshToken);
+      const expiresAt = nowMs() + (refreshed.expires_in ?? 0) * 1000;
+      const stored: StoredToken = {
+        accessToken: refreshed.access_token,
+        refreshToken: refreshed.refresh_token ?? saved.refreshToken ?? null,
+        expiresAt,
+      };
+      await writeLocationToken(locationId, stored);
+      return stored.accessToken;
+    } catch (err) {
+      const msg = (err as Error)?.message || "";
+      // If the refresh token was invalid/revoked, fall through to agency->location exchange
+      if (!/invalid_grant/i.test(msg)) {
+        throw err;
+      }
+      // else continue to step 3
+    }
   }
 
-  const tok = await exchangeRefreshToken(t.refreshToken); // uses env creds if not passed
-  const newExpiresMs = now + tok.expires_in * 1000;
+  // 3) Fallback: agency -> location token exchange (no location refresh token needed)
+  const agencyAccess = await getValidAgencyAccessToken();
+  const exchanged = await getLocationTokenViaAgency(agencyAccess, locationId);
+  const expiresAt = nowMs() + (exchanged.expires_in ?? 0) * 1000;
 
-  // Write back to the same doc/paths we read
-  if (t._docRefPath && t._writeAccessPath && t._writeExpiresPath) {
-    const parts = t._docRefPath.split("/");
-    const collection = parts.slice(0, -1).join("/");
-    const docId = parts.at(-1)!;
+  // Note: /oauth/locationToken typically returns just an access token (may not include refresh).
+  const stored: StoredToken = {
+    accessToken: exchanged.access_token,
+    refreshToken: exchanged.refresh_token ?? null,
+    expiresAt,
+  };
+  await writeLocationToken(locationId, stored);
+  return stored.accessToken;
+}
 
-    const update: Record<string, unknown> = {};
-    update[t._writeAccessPath] = tok.access_token;
-    update[t._writeExpiresPath] = newExpiresMs;
-
-    await db().collection(collection).doc(docId).set(update, { merge: true });
-  }
-
-  return tok.access_token;
+// Convenience: a thin wrapper to call LeadConnector with Version header.
+export async function ghlFetch(input: string | URL, init: RequestInit & { token: string }): Promise<Response> {
+  const { token, headers, ...rest } = init;
+  return fetch(input, {
+    ...rest,
+    headers: {
+      ...(headers || {}),
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      Version: API_VERSION,
+    },
+    cache: "no-store",
+  });
 }
