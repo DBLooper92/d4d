@@ -93,8 +93,28 @@ async function postJson<T>(url: string, json: unknown, headers: Record<string, s
   return (await res.json()) as T;
 }
 
-/** Internal refresh — used by both Company & Location tokens (env client creds) */
-async function refreshAccessToken(refreshToken: string, userType: 'Company' | 'Location') {
+/** Internal refresh — supports BOTH (refreshToken, userType) and (refreshToken, clientId, clientSecret). */
+export async function exchangeRefreshToken(
+  refreshToken: string,
+  a: 'Company' | 'Location' | string,
+  b?: string
+): Promise<OAuthTokenResponse> {
+  // Shape A (legacy callers): (refreshToken, clientId, clientSecret)
+  if (typeof a === 'string' && typeof b === 'string') {
+    const clientId = a;
+    const clientSecret = b;
+    return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      user_type: 'Location',
+      redirect_uri: REDIRECT_URI,
+    });
+  }
+
+  // Shape B: (refreshToken, userType) → use env client credentials
+  const userType = (a as 'Company' | 'Location') ?? 'Location';
   return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
     client_id: CLIENT_ID,
     client_secret: CLIENT_SECRET,
@@ -132,7 +152,7 @@ export async function getValidLocationAccessToken(locationId: string, companyId?
     const nearlyExpired = cached.expiresAt ? cached.expiresAt - 60 <= now : false;
     if (nearlyExpired && cached.refreshToken) {
       try {
-        const refreshed = await refreshAccessToken(cached.refreshToken, 'Location');
+        const refreshed = await exchangeRefreshToken(cached.refreshToken, 'Location');
         const expiresAt = now + (refreshed.expires_in ?? 0);
         await writeStoredToken(locationId, {
           lastLocationTokens: {
@@ -156,7 +176,7 @@ export async function getValidLocationAccessToken(locationId: string, companyId?
   if (stored?.userType === 'Location') {
     const nearlyExpired = stored.expiresAt ? stored.expiresAt - 60 <= now : false;
     if (nearlyExpired && stored.refreshToken) {
-      const refreshed = await refreshAccessToken(stored.refreshToken, 'Location');
+      const refreshed = await exchangeRefreshToken(stored.refreshToken, 'Location');
       const expiresAt = now + (refreshed.expires_in ?? 0);
       await writeStoredToken(locationId, {
         accessToken: refreshed.access_token,
@@ -228,52 +248,8 @@ export async function ghlLocationGetJson<T>(locationId: string, url: string, com
 }
 
 /* -------------------------------------------------------------------------- */
-/* Backward-compat exports (to satisfy existing imports in your codebase)     */
+/* Backward-compat alias (kept for existing imports)                          */
 /* -------------------------------------------------------------------------- */
-
-/** Overloads so existing callers keep working */
-export async function exchangeRefreshToken(
-  refreshToken: string,
-  userType: 'Company' | 'Location'
-): Promise<OAuthTokenResponse>;
-export async function exchangeRefreshToken(
-  refreshToken: string,
-  clientId: string,
-  clientSecret: string
-): Promise<OAuthTokenResponse>;
-export async function exchangeRefreshToken(
-  refreshToken: string,
-  a: 'Company' | 'Location' | string,
-  b?: string
-): Promise<OAuthTokenResponse> {
-  // Shape A: (refreshToken, clientId, clientSecret) — legacy callers
-  if (typeof a === 'string' && typeof b === 'string') {
-    const clientId = a;
-    const clientSecret = b;
-    // Default to Location when legacy callers don't pass userType
-    return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      user_type: 'Location',
-      redirect_uri: REDIRECT_URI,
-    });
-  }
-
-  // Shape B: (refreshToken, userType) — use env client credentials
-  const userType = (a as 'Company' | 'Location') ?? 'Location';
-  return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
-    client_id: CLIENT_ID,
-    client_secret: CLIENT_SECRET,
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    user_type: userType,
-    redirect_uri: REDIRECT_URI,
-  });
-}
-
-/** Legacy alias retained for callers elsewhere */
 export async function getValidAccessTokenForLocation(locationId: string, companyId?: string) {
   return getValidLocationAccessToken(locationId, companyId);
 }
