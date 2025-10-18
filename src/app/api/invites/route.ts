@@ -1,6 +1,7 @@
 // src/app/api/invites/route.ts
 import { NextResponse } from "next/server";
 import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
+import { env } from "@/lib/env";
 
 const GHL_BASE = "https://services.leadconnectorhq.com";
 const API_VERSION = process.env.GHL_API_VERSION || "2021-07-28";
@@ -85,7 +86,11 @@ export async function POST(req: Request) {
 <p>If you weren’t expecting this, you can ignore this email.</p>`).trim();
 
     // Acquire a valid location-scoped access token (auto-refresh & persist)
-    const accessToken = await getValidAccessTokenForLocation(locationId);
+    const { token: accessToken } = await getValidAccessTokenForLocation({
+      locationId,
+      clientId: env.GHL_CLIENT_ID,
+      clientSecret: env.GHL_CLIENT_SECRET,
+    });
 
     // 1) Upsert the contact
     const upsertRes = await fetch(`${GHL_BASE}/contacts/upsert`, {
