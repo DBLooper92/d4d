@@ -1,55 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getValidLocationAccessToken } from "@/lib/ghlTokens";
-import { ghlFetch } from "@/lib/ghlHttp";
-import { env } from "@/lib/env";
+import { getDb } from "@/lib/firebaseAdmin";
 
-type GhlUsersResponse = { users?: unknown[] };
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
-  }
-}
-
-// GET /api/ghl/location-users?location_id=...
+// GET /api/agency/locations?agencyId=...
 export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const agencyId = searchParams.get("agencyId");
+
+  if (!agencyId) {
+    return NextResponse.json({ error: "Missing agencyId" }, { status: 400 });
+  }
+
   try {
-    const { searchParams } = new URL(req.url);
-    const locationId = searchParams.get("location_id");
-    if (!locationId) {
-      return NextResponse.json({ error: "Missing location_id" }, { status: 400 });
-    }
+    const q = await getDb()
+      .collection("locations")
+      .where("agencyId", "==", agencyId)
+      .limit(500)
+      .get();
 
-    // Ensure we have a fresh Location token
-    const { token } = await getValidLocationAccessToken({
-      locationId,
-      clientId: env.GHL_CLIENT_ID,
-      clientSecret: env.GHL_CLIENT_SECRET,
-    });
-
-    // Call Get User by Location with required Version header
-    const data = await ghlFetch<GhlUsersResponse>(`/users/?locationId=${encodeURIComponent(locationId)}`, {
-      method: "GET",
-      token,
-      version: "2021-07-28",
-    });
-
-    return NextResponse.json({ users: data.users ?? [] });
-  } catch (err: unknown) {
-    const message = errorMessage(err);
-    const reconnect = /No valid token/i.test(message);
-    const status = reconnect ? 401 : 500;
-    return NextResponse.json(
-      {
-        error: reconnect
-          ? "No valid token for this location. Reconnect OAuth or reinstall."
-          : "Failed to load users.",
-        detail: message,
-      },
-      { status }
-    );
+    const locations = q.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
+    return NextResponse.json({ locations });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: "Failed to load locations", detail: msg }, { status: 500 });
   }
 }
