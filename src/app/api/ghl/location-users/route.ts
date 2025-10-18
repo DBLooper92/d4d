@@ -1,77 +1,102 @@
 // src/app/api/ghl/location-users/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
-import { ghlFetch } from "@/lib/ghlClient";
+
+const GHL_BASE = "https://services.leadconnectorhq.com";
+const API_VERSION = process.env.GHL_API_VERSION || "2021-07-28";
 
 export const runtime = "nodejs";
+// Ensure this API route is never statically cached or pre-rendered
+export const dynamic = "force-dynamic";
 
-function err(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
+type GhlUser = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+};
+
+type GhlUsersResponseA = { users?: GhlUser[] };
+type GhlUsersResponseB = { data?: { users?: GhlUser[] } };
+
+function isObject(x: unknown): x is Record<string, unknown> {
+  return typeof x === "object" && x !== null;
 }
 
-/**
- * The HighLevel "get users by location" endpoint returns a payload with a top‑level
- * `users` array when the request is scoped to a location access token. In some
- * cases (older versions of the API) the array may be nested under a `data`
- * property. This union reflects both shapes so the response can be safely
- * narrowed when extracting the list of users.
- */
-type GhlUsersResponse =
-  | { users?: Array<{ id: string; name?: string; email?: string; role?: string }> }
-  | { data?: { users?: Array<{ id: string; name?: string; email?: string; role?: string }> } };
-
-export async function GET(req: Request) {
-  try {
-    const u = new URL(req.url);
-    const locationId = u.searchParams.get("location_id") || u.searchParams.get("locationId") || "";
-    if (!locationId) return err(400, "MISSING_LOCATION_ID", "Provide ?location_id");
-
-    let accessToken: string;
-    try {
-      accessToken = await getValidAccessTokenForLocation(locationId);
-    } catch (e) {
-      const msg = (e as Error).message || String(e);
-      return err(401, "TOKEN_UNAVAILABLE", msg);
-    }
-
-    /**
-     * The v2 Users API exposes two ways to list users. The `/users/search` endpoint
-     * requires a `companyId` and is intended for agency‑level tokens. When
-     * operating with a location‑level access token (which is what the app uses),
-     * the recommended endpoint is `GET /users/` which automatically scopes the
-     * results to the active location. See the documentation for "Get User by
-     * Location" in the HighLevel API for details【362954652847587†L5310-L5334】. Using
-     * this endpoint avoids the need to know the parent company ID and aligns
-     * with the OAuth scope `users.readonly`.
-     */
-    // Always pass the locationId as a query parameter.  The official
-    // "Get User by Location" endpoint documentation specifies that a
-    // `locationId` query parameter is required【724459568743161†L0-L18】.  While
-    // recent versions of the API will automatically scope `/users/` when
-    // using a sub‑account token, providing the ID explicitly ensures
-    // compatibility with all documented behaviours.
-    const json = await ghlFetch<GhlUsersResponse>("/users/", {
-      accessToken,
-      query: { locationId },
-    });
-
-    const users =
-      (json as { users?: Array<{ id: string; name?: string; email?: string; role?: string }> }).users ??
-      (json as { data?: { users?: Array<{ id: string; name?: string; email?: string; role?: string }> } }).data?.users ??
-      [];
-
-    return NextResponse.json(
-      { users },
-      {
-        status: 200,
-        headers: {
-          // disable CDN and browser caching; location permissions may change
-          "Cache-Control": "no-store",
-        },
-      },
-    );
-  } catch (e) {
-    const msg = (e as Error).message || String(e);
-    return err(502, "GHL_ERROR", msg);
+function parseUsers(payload: unknown): GhlUser[] {
+  if (!isObject(payload)) return [];
+  // shape A
+  const usersA = (payload as GhlUsersResponseA).users;
+  if (Array.isArray(usersA)) return usersA as GhlUser[];
+  // shape B
+  const data = (payload as GhlUsersResponseB).data;
+  if (isObject(data)) {
+    const usersB = (data as { users?: unknown }).users;
+    if (Array.isArray(usersB)) return usersB as GhlUser[];
   }
+  return [];
+}
+
+function json(status: number, body: unknown) {
+  return NextResponse.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
+async function safeJson(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    return await res.text();
+  }
+}
+
+export async function GET(req: NextRequest) {
+  const url = req.nextUrl;
+  const locationId =
+    url.searchParams.get("location_id")?.trim() ||
+    url.searchParams.get("locationId")?.trim() ||
+    "";
+
+  if (!locationId) {
+    return json(400, { error: "location_id is required" });
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getValidAccessTokenForLocation(locationId);
+  } catch (e) {
+    // Most common cause of 401 in your logs: no valid token for this location
+    return json(401, {
+      error:
+        (e as Error)?.message ??
+        "Unauthorized: could not resolve a valid access token for this location.",
+    });
+  }
+
+  // GHL: Get users for a location
+  const upstream = await fetch(`${GHL_BASE}/locations/${locationId}/users`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+      Version: API_VERSION,
+    },
+    cache: "no-store",
+  });
+
+  const payload = await safeJson(upstream);
+
+  if (!upstream.ok) {
+    // Proxy useful upstream details for debugging, but keep a stable surface
+    return json(502, {
+      error: "Failed to fetch users from GHL",
+      details: payload,
+    });
+  }
+
+  const users = parseUsers(payload);
+
+  return json(200, { users });
 }
