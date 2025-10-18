@@ -1,228 +1,219 @@
 // src/lib/ghlTokens.ts
+import 'server-only';
+import { db } from '@/lib/firebaseAdmin';
+const firestore = db();
 
-import { db } from "@/lib/firebaseAdmin";
-import { ghlTokenUrl } from "./ghl";
+const API_BASE = 'https://services.leadconnectorhq.com';
+const VERSION = '2021-07-28';
 
-/**
- * ===== FIELD MAPPINGS (adjust to your current schema if needed) =====
- * We try these locations, in order, to find the token payload for a location:
- *   A) locations/{locationId} -> oauth.accessToken / oauth.refreshToken / oauth.expiresAt
- *   B) locations/{locationId} -> ghl.accessToken   / ghl.refreshToken   / ghl.expiresAt
- *   C) oauth_tokens/{locationId} -> accessToken / refreshToken / expiresAt
- */
+type StoredToken = {
+  userType: 'Company' | 'Location';
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: number; // unix seconds
+  companyId?: string;
+  lastLocationTokens?: Record<
+    string,
+    {
+      accessToken: string;
+      refreshToken?: string;
+      expiresAt?: number;
+    }
+  >;
+};
 
-type AnyObj = Record<string, unknown>;
-
-function readAtPath(o: AnyObj | undefined, path: string): unknown {
-  if (!o) return undefined;
-  return path.split(".").reduce<unknown>((acc, k) => {
-    if (acc && typeof acc === "object" && k in (acc as AnyObj)) return (acc as AnyObj)[k];
-    return undefined;
-  }, o);
-}
-
-function coerceMs(v: unknown): number | null {
-  if (!v) return null;
-  if (typeof v === "number") return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    if (!Number.isNaN(n) && n > 0) return n;
-    const d = Date.parse(v);
-    if (!Number.isNaN(d)) return d;
-  }
-  return null;
-}
-
-export type RefreshExchangeResponse = {
+type OAuthTokenResponse = {
   access_token: string;
-  scope?: string;          // <-- your existing routes read this
-  token_type?: string;
-  expires_in: number;      // seconds
+  token_type: 'Bearer';
+  expires_in: number;
+  refresh_token?: string;
+  scope?: string;
+  userType?: 'Company' | 'Location';
+  companyId?: string;
+  locationId?: string;
+  userId?: string;
 };
 
-export type StoredToken = {
-  accessToken: string | null;
-  refreshToken: string | null;
-  expiresAtMs: number | null;
-  _docRefPath: string | null;
-  _writeAccessPath: string | null;
-  _writeExpiresPath: string | null;
-};
+const TOKENS_COLL = 'ghlTokens';
 
-async function readTokenForLocation(locationId: string): Promise<StoredToken> {
-  // A) locations/{id} oauth.*
-  const locRef = db().collection("locations").doc(locationId);
-  const locSnap = await locRef.get();
-  if (locSnap.exists) {
-    const data = (locSnap.data() || {}) as AnyObj;
+const epochSec = () => Math.floor(Date.now() / 1000);
 
-    {
-      const access = readAtPath(data, "oauth.accessToken");
-      const refresh = readAtPath(data, "oauth.refreshToken");
-      const expires = readAtPath(data, "oauth.expiresAt");
-      if (typeof access === "string" || typeof refresh === "string") {
-        return {
-          accessToken: (access as string) || null,
-          refreshToken: (refresh as string) || null,
-          expiresAtMs: coerceMs(expires),
-          _docRefPath: locRef.path,
-          _writeAccessPath: "oauth.accessToken",
-          _writeExpiresPath: "oauth.expiresAt",
-        };
-      }
-    }
-
-    // B) locations/{id} ghl.*
-    {
-      const access = readAtPath(data, "ghl.accessToken");
-      const refresh = readAtPath(data, "ghl.refreshToken");
-      const expires = readAtPath(data, "ghl.expiresAt");
-      if (typeof access === "string" || typeof refresh === "string") {
-        return {
-          accessToken: (access as string) || null,
-          refreshToken: (refresh as string) || null,
-          expiresAtMs: coerceMs(expires),
-          _docRefPath: locRef.path,
-          _writeAccessPath: "ghl.accessToken",
-          _writeExpiresPath: "ghl.expiresAt",
-        };
-      }
-    }
-
-    // Top-level fields fallback (locations/{id}.refreshToken, etc.)
-    {
-      const access = typeof data.accessToken === "string" ? data.accessToken : null;
-      const refresh = typeof data.refreshToken === "string" ? data.refreshToken : null;
-      const expires = data.expiresAt;
-      if (access || refresh) {
-        return {
-          accessToken: access,
-          refreshToken: refresh,
-          expiresAtMs: coerceMs(expires),
-          _docRefPath: locRef.path,
-          _writeAccessPath: "accessToken",
-          _writeExpiresPath: "expiresAt",
-        };
-      }
-    }
-  }
-
-  // C) oauth_tokens/{locationId}
-  const tokRef = db().collection("oauth_tokens").doc(locationId);
-  const tokSnap = await tokRef.get();
-  if (tokSnap.exists) {
-    const d = (tokSnap.data() || {}) as AnyObj;
-    const access = d.accessToken as string | undefined;
-    const refresh = d.refreshToken as string | undefined;
-    const expires = d.expiresAt;
-    return {
-      accessToken: access || null,
-      refreshToken: refresh || null,
-      expiresAtMs: coerceMs(expires),
-      _docRefPath: tokRef.path,
-      _writeAccessPath: "accessToken",
-      _writeExpiresPath: "expiresAt",
-    };
-  }
-
-  return {
-    accessToken: null,
-    refreshToken: null,
-    expiresAtMs: null,
-    _docRefPath: null,
-    _writeAccessPath: null,
-    _writeExpiresPath: null,
-  };
+function envRequired(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
 }
 
-async function _doRefresh(
-  refreshToken: string,
-  clientId: string,
-  clientSecret: string
-): Promise<RefreshExchangeResponse> {
-  const form = new URLSearchParams({
-    grant_type: "refresh_token",
+const CLIENT_ID = envRequired('GHL_CLIENT_ID');
+const CLIENT_SECRET = envRequired('GHL_CLIENT_SECRET');
+const REDIRECT_URI = envRequired('GHL_REDIRECT_URI');
+
+function tokenDocRef(locationId: string) {
+  return firestore.collection(TOKENS_COLL).doc(locationId);
+}
+
+async function readStoredToken(locationId: string): Promise<StoredToken | null> {
+  const snap = await tokenDocRef(locationId).get();
+  return snap.exists ? (snap.data() as StoredToken) : null;
+}
+
+async function writeStoredToken(locationId: string, data: Partial<StoredToken>) {
+  await tokenDocRef(locationId).set(data, { merge: true });
+}
+
+async function postForm<T>(url: string, form: Record<string, string>): Promise<T> {
+  const body = new URLSearchParams(form);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`POST ${url} ${res.status}: ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+async function postJson<T>(url: string, json: unknown, headers: Record<string, string>): Promise<T> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...headers,
+    },
+    body: JSON.stringify(json),
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`POST ${url} ${res.status}: ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+async function refreshAccessToken(refreshToken: string, userType: 'Company' | 'Location') {
+  return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    grant_type: 'refresh_token',
     refresh_token: refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret,
+    user_type: userType,
+    redirect_uri: REDIRECT_URI,
   });
+}
 
-  const r = await fetch(ghlTokenUrl(), {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-    body: form,
-    cache: "no-store",
-  });
-
-  const raw = await r.text();
-  if (!r.ok) {
-    throw new Error(`refresh exchange failed: ${r.status} ${raw.slice(0, 400)}`);
-  }
-
-  try {
-    return JSON.parse(raw) as RefreshExchangeResponse;
-  } catch {
-    throw new Error(`refresh exchange bad JSON: ${raw.slice(0, 400)}`);
-  }
+async function getLocationAccessTokenFromAgency(companyId: string, locationId: string, agencyAccessToken: string) {
+  return postJson<OAuthTokenResponse>(
+    `${API_BASE}/oauth/locationToken`,
+    { companyId, locationId },
+    { Authorization: `Bearer ${agencyAccessToken}`, Version: VERSION }
+  );
 }
 
 /**
- * PUBLIC: Legacy/compat function used across the codebase.
- * Supports BOTH signatures:
- *   1) exchangeRefreshToken(refreshToken, clientId, clientSecret)  // your original
- *   2) exchangeRefreshToken(refreshToken)                          // env-based fallback
+ * Returns a valid Location access token for the given location.
  */
-export function exchangeRefreshToken(
-  refreshToken: string,
-  clientId: string,
-  clientSecret: string
-): Promise<RefreshExchangeResponse>;
-export function exchangeRefreshToken(refreshToken: string): Promise<RefreshExchangeResponse>;
-export function exchangeRefreshToken(
-  refreshToken: string,
-  clientId?: string,
-  clientSecret?: string
-): Promise<RefreshExchangeResponse> {
-  const cid = clientId ?? process.env.GHL_CLIENT_ID;
-  const csec = clientSecret ?? process.env.GHL_CLIENT_SECRET;
-  if (!cid || !csec) {
-    throw new Error("GHL_CLIENT_ID / GHL_CLIENT_SECRET are not configured.");
+export async function getValidLocationAccessToken(locationId: string, companyId?: string): Promise<string> {
+  const stored = await readStoredToken(locationId);
+  const now = epochSec();
+
+  // Prefer a cached minted Location token for this location
+  const cached = stored?.lastLocationTokens?.[locationId];
+  if (cached) {
+    const nearlyExpired = cached.expiresAt ? cached.expiresAt - 60 <= now : false;
+    if (nearlyExpired && cached.refreshToken) {
+      try {
+        const refreshed = await refreshAccessToken(cached.refreshToken, 'Location');
+        const expiresAt = now + (refreshed.expires_in ?? 0);
+        await writeStoredToken(locationId, {
+          lastLocationTokens: {
+            ...(stored?.lastLocationTokens ?? {}),
+            [locationId]: {
+              accessToken: refreshed.access_token,
+              refreshToken: refreshed.refresh_token,
+              expiresAt,
+            },
+          },
+        });
+        return refreshed.access_token;
+      } catch {
+        // fall through to mint from agency or use base token
+      }
+    }
+    if (!nearlyExpired) return cached.accessToken;
   }
-  return _doRefresh(refreshToken, cid, csec);
+
+  // If the stored top-level token is a Location token, refresh/use it
+  if (stored?.userType === 'Location') {
+    const nearlyExpired = stored.expiresAt ? stored.expiresAt - 60 <= now : false;
+    if (nearlyExpired && stored.refreshToken) {
+      const refreshed = await refreshAccessToken(stored.refreshToken, 'Location');
+      const expiresAt = now + (refreshed.expires_in ?? 0);
+      await writeStoredToken(locationId, {
+        accessToken: refreshed.access_token,
+        refreshToken: refreshed.refresh_token,
+        expiresAt,
+      });
+      return refreshed.access_token;
+    }
+    if (stored.accessToken && !nearlyExpired) return stored.accessToken;
+  }
+
+  // If we have an Agency token, mint a Location token for this location
+  if (stored?.userType === 'Company' && stored.accessToken) {
+    const compId = stored.companyId ?? companyId;
+    if (!compId) throw new Error('Missing companyId to mint a Location token.');
+    const minted = await getLocationAccessTokenFromAgency(compId, locationId, stored.accessToken);
+    const expiresAt = now + (minted.expires_in ?? 0);
+    await writeStoredToken(locationId, {
+      lastLocationTokens: {
+        ...(stored.lastLocationTokens ?? {}),
+        [locationId]: {
+          accessToken: minted.access_token,
+          refreshToken: minted.refresh_token,
+          expiresAt,
+        },
+      },
+    });
+    return minted.access_token;
+  }
+
+  throw new Error('No valid token for this location. Reconnect OAuth or reinstall.');
+}
+
+export async function saveInitialTokenForLocation(locationId: string, payload: OAuthTokenResponse) {
+  const expiresAt = epochSec() + (payload.expires_in ?? 0);
+  const base: Partial<StoredToken> = {
+    userType: (payload.userType ?? 'Location') as StoredToken['userType'],
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+    expiresAt,
+  };
+  if (payload.companyId) base.companyId = payload.companyId;
+  await writeStoredToken(locationId, base);
 }
 
 /**
- * PUBLIC: Obtain a valid access token for a given location (auto-refresh + persist).
- * Uses the flexible mapping documented at the top of this file.
+ * GET helper that injects Version/Authorization and retries once on 401.
  */
-export async function getValidAccessTokenForLocation(locationId: string): Promise<string> {
-  const t = await readTokenForLocation(locationId);
-  const now = Date.now();
-  const skewMs = 60 * 1000; // refresh 1 minute early
+export async function ghlLocationGetJson<T>(locationId: string, url: string, companyId?: string): Promise<T> {
+  let token = await getValidLocationAccessToken(locationId, companyId);
 
-  if (t.accessToken && t.expiresAtMs && t.expiresAtMs > now + skewMs) {
-    return t.accessToken;
+  const doFetch = async (bearer: string) =>
+    fetch(url, {
+      headers: {
+        Authorization: `Bearer ${bearer}`,
+        Version: VERSION,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    });
+
+  let res = await doFetch(token);
+  if (res.status === 401) {
+    token = await getValidLocationAccessToken(locationId, companyId);
+    res = await doFetch(token);
   }
-
-  if (!t.refreshToken) {
-    throw new Error("No refresh token available for this location.");
-  }
-
-  const tok = await exchangeRefreshToken(t.refreshToken); // uses env creds if not passed
-  const newExpiresMs = now + tok.expires_in * 1000;
-
-  // Write back to the same doc/paths we read
-  if (t._docRefPath && t._writeAccessPath && t._writeExpiresPath) {
-    const parts = t._docRefPath.split("/");
-    const collection = parts.slice(0, -1).join("/");
-    const docId = parts.at(-1)!;
-
-    const update: Record<string, unknown> = {};
-    update[t._writeAccessPath] = tok.access_token;
-    update[t._writeExpiresPath] = newExpiresMs;
-
-    await db().collection(collection).doc(docId).set(update, { merge: true });
-  }
-
-  return tok.access_token;
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
+  return (await res.json()) as T;
 }
