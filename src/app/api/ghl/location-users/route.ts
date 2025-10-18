@@ -1,26 +1,53 @@
+// src/app/api/ghl/location-users/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/firebaseAdmin";
+import { getValidLocationAccessToken } from "@/lib/ghlTokens";
+import { ghlFetch } from "@/lib/ghlHttp";
+import { env } from "@/lib/env";
 
-// GET /api/agency/locations?agencyId=...
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const agencyId = searchParams.get("agencyId");
+type GhlUsersResponse = { users?: unknown[] };
 
-  if (!agencyId) {
-    return NextResponse.json({ error: "Missing agencyId" }, { status: 400 });
-  }
-
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
   try {
-    const q = await getDb()
-      .collection("locations")
-      .where("agencyId", "==", agencyId)
-      .limit(500)
-      .get();
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
 
-    const locations = q.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
-    return NextResponse.json({ locations });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: "Failed to load locations", detail: msg }, { status: 500 });
+// GET /api/ghl/location-users?location_id=...
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const locationId = searchParams.get("location_id");
+    if (!locationId) {
+      return NextResponse.json({ error: "Missing location_id" }, { status: 400 });
+    }
+
+    const { token } = await getValidLocationAccessToken({
+      locationId,
+      clientId: env.GHL_CLIENT_ID,
+      clientSecret: env.GHL_CLIENT_SECRET,
+    });
+
+    const data = await ghlFetch<GhlUsersResponse>(
+      `/users/?locationId=${encodeURIComponent(locationId)}`,
+      { method: "GET", token, version: "2021-07-28" }
+    );
+
+    return NextResponse.json({ users: data.users ?? [] });
+  } catch (err: unknown) {
+    const message = errorMessage(err);
+    const reconnect = /No valid token/i.test(message);
+    const status = reconnect ? 401 : 500;
+    return NextResponse.json(
+      {
+        error: reconnect
+          ? "No valid token for this location. Reconnect OAuth or reinstall."
+          : "Failed to load users.",
+        detail: message,
+      },
+      { status }
+    );
   }
 }

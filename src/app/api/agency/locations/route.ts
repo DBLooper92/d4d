@@ -12,7 +12,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    const q = await db()
+    const q = await db
       .collection("locations")
       .where("agencyId", "==", agencyId)
       .limit(500)
@@ -28,8 +28,12 @@ export async function GET(req: Request) {
       };
     });
 
-    return NextResponse.json({ agencyId, count: items.length, items }, { status: 200, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(
+      { agencyId, count: items.length, items },
+      { status: 200, headers: { "Cache-Control": "no-store" } }
+    );
   } catch (e) {
-    return NextResponse.json({ error: `Query failed: ${(e as Error).message}` }, { status: 500 });
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: `Query failed: ${msg}` }, { status: 500 });
   }
 }
