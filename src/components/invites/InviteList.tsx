@@ -22,11 +22,8 @@ function isObject(x: unknown): x is Record<string, unknown> {
 
 function parseUsers(payload: unknown): GhlUser[] {
   if (!isObject(payload)) return [];
-  // shape A: { users?: GhlUser[] }
   const usersA = (payload as LocationUsersShapeA).users;
   if (Array.isArray(usersA)) return usersA as GhlUser[];
-
-  // shape B: { data?: { users?: GhlUser[] } }
   const data = (payload as LocationUsersShapeB).data;
   if (isObject(data)) {
     const usersB = (data as { users?: unknown }).users;
@@ -73,10 +70,13 @@ export default function InviteList({ locationId }: { locationId: string }) {
       setLoading(true);
       setErr(null);
       try {
-        const r = await fetch(
-          `/api/ghl/location-users?location_id=${encodeURIComponent(locationId)}`,
-          { headers: { "Cache-Control": "no-store" } }
-        );
+        // POST with body (aligns with original backend behavior)
+        const r = await fetch(`/api/ghl/location-users`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ locationId }),
+        });
+
         const text = await r.text();
         let parsed: unknown;
         try {
@@ -134,7 +134,7 @@ export default function InviteList({ locationId }: { locationId: string }) {
         body: JSON.stringify({
           locationId,
           email: u.email,
-          ghlUserId: u.id, // include GHL user id (hidden field for signup)
+          ghlUserId: u.id,
           firstName,
           lastName,
         }),
@@ -146,7 +146,6 @@ export default function InviteList({ locationId }: { locationId: string }) {
         let maybeLink = "";
         try {
           const j = JSON.parse(text) as InviteApiErr;
-          // Prefer returning the link even on error (sandbox)
           if (typeof j?.inviteUrl === "string" && j.inviteUrl) maybeLink = j.inviteUrl;
           const errStr =
             typeof j?.error === "string"
@@ -158,16 +157,12 @@ export default function InviteList({ locationId }: { locationId: string }) {
         } catch {
           msg = text || msg;
         }
-        if (maybeLink) {
-          setLinks((prev) => ({ ...prev, [u.id]: maybeLink }));
-        }
+        if (maybeLink) setLinks((prev) => ({ ...prev, [u.id]: maybeLink }));
         throw new Error(msg);
       }
 
       const j = JSON.parse(text) as InviteApiOk;
-      if (j.inviteUrl) {
-        setLinks((prev) => ({ ...prev, [u.id]: j.inviteUrl! }));
-      }
+      if (j.inviteUrl) setLinks((prev) => ({ ...prev, [u.id]: j.inviteUrl! }));
       setStatus((prev) => ({ ...prev, [u.id]: "sent" }));
     } catch (e) {
       setErrors((prev) => ({
@@ -181,7 +176,6 @@ export default function InviteList({ locationId }: { locationId: string }) {
   async function copyLink(link: string) {
     try {
       await navigator.clipboard.writeText(link);
-      // no-op UI toast framework here; rely on button title change
     } catch {
       // ignore clipboard errors
     }
@@ -204,18 +198,12 @@ export default function InviteList({ locationId }: { locationId: string }) {
           <div key={u.id} className="card flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-medium">
-                  {u.name || u.email || "(unnamed user)"}
-                </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  GHL User ID: {u.id}
-                </div>
+                <div className="font-medium">{u.name || u.email || "(unnamed user)"}</div>
+                <div className="text-xs text-gray-500 mt-1">GHL User ID: {u.id}</div>
                 {u.email ? (
                   <div className="text-xs text-gray-500">{u.email}</div>
                 ) : (
-                  <div className="text-xs text-red-600">
-                    No email on file — cannot invite.
-                  </div>
+                  <div className="text-xs text-red-600">No email on file — cannot invite.</div>
                 )}
                 {errors[u.id] ? (
                   <div className="text-xs text-red-600 mt-1">{errors[u.id]}</div>
@@ -243,7 +231,6 @@ export default function InviteList({ locationId }: { locationId: string }) {
               </div>
             </div>
 
-            {/* Sandbox helper: show the generated invite URL for manual testing */}
             {link ? (
               <div className="rounded-lg border p-2 bg-gray-50 text-xs flex items-center gap-2">
                 <input
@@ -253,12 +240,7 @@ export default function InviteList({ locationId }: { locationId: string }) {
                   onFocus={(e) => e.currentTarget.select()}
                   aria-label="Invite link"
                 />
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => copyLink(link)}
-                  title="Copy link"
-                >
+                <button type="button" className="btn" onClick={() => copyLink(link)} title="Copy link">
                   Copy
                 </button>
               </div>

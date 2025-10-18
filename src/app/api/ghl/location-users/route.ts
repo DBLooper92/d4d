@@ -6,7 +6,6 @@ const GHL_BASE = "https://services.leadconnectorhq.com";
 const API_VERSION = process.env.GHL_API_VERSION || "2021-07-28";
 
 export const runtime = "nodejs";
-// Ensure this API route is never statically cached or pre-rendered
 export const dynamic = "force-dynamic";
 
 type GhlUser = {
@@ -19,29 +18,26 @@ type GhlUser = {
 type GhlUsersResponseA = { users?: GhlUser[] };
 type GhlUsersResponseB = { data?: { users?: GhlUser[] } };
 
+function json(status: number, body: unknown) {
+  return NextResponse.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
 function isObject(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
 }
 
 function parseUsers(payload: unknown): GhlUser[] {
   if (!isObject(payload)) return [];
-  // shape A
-  const usersA = (payload as GhlUsersResponseA).users;
-  if (Array.isArray(usersA)) return usersA as GhlUser[];
-  // shape B
+  const a = (payload as GhlUsersResponseA).users;
+  if (Array.isArray(a)) return a;
   const data = (payload as GhlUsersResponseB).data;
-  if (isObject(data)) {
-    const usersB = (data as { users?: unknown }).users;
-    if (Array.isArray(usersB)) return usersB as GhlUser[];
+  if (isObject(data) && Array.isArray((data as { users?: unknown }).users)) {
+    return (data as { users: GhlUser[] }).users;
   }
   return [];
-}
-
-function json(status: number, body: unknown) {
-  return NextResponse.json(body, {
-    status,
-    headers: { "Cache-Control": "no-store" },
-  });
 }
 
 async function safeJson(res: Response): Promise<unknown> {
@@ -52,30 +48,9 @@ async function safeJson(res: Response): Promise<unknown> {
   }
 }
 
-export async function GET(req: NextRequest) {
-  const url = req.nextUrl;
-  const locationId =
-    url.searchParams.get("location_id")?.trim() ||
-    url.searchParams.get("locationId")?.trim() ||
-    "";
+async function fetchUsers(locationId: string) {
+  const accessToken = await getValidAccessTokenForLocation(locationId);
 
-  if (!locationId) {
-    return json(400, { error: "location_id is required" });
-  }
-
-  let accessToken: string;
-  try {
-    accessToken = await getValidAccessTokenForLocation(locationId);
-  } catch (e) {
-    // Most common cause of 401 in your logs: no valid token for this location
-    return json(401, {
-      error:
-        (e as Error)?.message ??
-        "Unauthorized: could not resolve a valid access token for this location.",
-    });
-  }
-
-  // GHL: Get users for a location
   const upstream = await fetch(`${GHL_BASE}/locations/${locationId}/users`, {
     method: "GET",
     headers: {
@@ -87,9 +62,7 @@ export async function GET(req: NextRequest) {
   });
 
   const payload = await safeJson(upstream);
-
   if (!upstream.ok) {
-    // Proxy useful upstream details for debugging, but keep a stable surface
     return json(502, {
       error: "Failed to fetch users from GHL",
       details: payload,
@@ -97,6 +70,52 @@ export async function GET(req: NextRequest) {
   }
 
   const users = parseUsers(payload);
-
   return json(200, { users });
+}
+
+export async function GET(req: NextRequest) {
+  const url = req.nextUrl;
+  const locationId =
+    url.searchParams.get("location_id")?.trim() ||
+    url.searchParams.get("locationId")?.trim() ||
+    "";
+
+  if (!locationId) return json(400, { error: "location_id is required" });
+
+  try {
+    return await fetchUsers(locationId);
+  } catch (e) {
+    return json(401, {
+      error:
+        (e as Error)?.message ??
+        "Unauthorized: could not resolve a valid access token for this location.",
+    });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  // Support body-based locationId (matches many existing codepaths)
+  let locationId = "";
+  try {
+    const body = (await req.json()) as {
+      locationId?: string;
+      location_id?: string;
+    };
+    locationId =
+      (body.locationId || body.location_id || "").toString().trim();
+  } catch {
+    // ignore JSON parse; fall through to error check below
+  }
+
+  if (!locationId) return json(400, { error: "locationId is required" });
+
+  try {
+    return await fetchUsers(locationId);
+  } catch (e) {
+    return json(401, {
+      error:
+        (e as Error)?.message ??
+        "Unauthorized: could not resolve a valid access token for this location.",
+    });
+  }
 }
