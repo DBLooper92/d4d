@@ -1,6 +1,7 @@
 // src/lib/ghlTokens.ts
 import 'server-only';
 import { db } from '@/lib/firebaseAdmin';
+
 const firestore = db();
 
 const API_BASE = 'https://services.leadconnectorhq.com';
@@ -49,7 +50,7 @@ const CLIENT_SECRET = envRequired('GHL_CLIENT_SECRET');
 const REDIRECT_URI = envRequired('GHL_REDIRECT_URI');
 
 function tokenDocRef(locationId: string) {
-  // IMPORTANT: use the Firestore instance, not the db() function itself
+  // Use the Firestore instance, not the db() function itself
   return firestore.collection(TOKENS_COLL).doc(locationId);
 }
 
@@ -92,7 +93,7 @@ async function postJson<T>(url: string, json: unknown, headers: Record<string, s
   return (await res.json()) as T;
 }
 
-/** Internal refresh — used by both Company & Location tokens */
+/** Internal refresh — used by both Company & Location tokens (env client creds) */
 async function refreshAccessToken(refreshToken: string, userType: 'Company' | 'Location') {
   return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
     client_id: CLIENT_ID,
@@ -105,7 +106,11 @@ async function refreshAccessToken(refreshToken: string, userType: 'Company' | 'L
 }
 
 /** Mint a Location token from an Agency token */
-async function getLocationAccessTokenFromAgency(companyId: string, locationId: string, agencyAccessToken: string) {
+async function getLocationAccessTokenFromAgency(
+  companyId: string,
+  locationId: string,
+  agencyAccessToken: string
+) {
   return postJson<OAuthTokenResponse>(
     `${API_BASE}/oauth/locationToken`,
     { companyId, locationId },
@@ -226,12 +231,49 @@ export async function ghlLocationGetJson<T>(locationId: string, url: string, com
 /* Backward-compat exports (to satisfy existing imports in your codebase)     */
 /* -------------------------------------------------------------------------- */
 
-/** Legacy name used elsewhere: wraps refreshAccessToken */
-export async function exchangeRefreshToken(refreshToken: string, userType: 'Company' | 'Location') {
-  return refreshAccessToken(refreshToken, userType);
+/** Overloads so existing callers keep working */
+export async function exchangeRefreshToken(
+  refreshToken: string,
+  userType: 'Company' | 'Location'
+): Promise<OAuthTokenResponse>;
+export async function exchangeRefreshToken(
+  refreshToken: string,
+  clientId: string,
+  clientSecret: string
+): Promise<OAuthTokenResponse>;
+export async function exchangeRefreshToken(
+  refreshToken: string,
+  a: 'Company' | 'Location' | string,
+  b?: string
+): Promise<OAuthTokenResponse> {
+  // Shape A: (refreshToken, clientId, clientSecret) — legacy callers
+  if (typeof a === 'string' && typeof b === 'string') {
+    const clientId = a;
+    const clientSecret = b;
+    // Default to Location when legacy callers don't pass userType
+    return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      user_type: 'Location',
+      redirect_uri: REDIRECT_URI,
+    });
+  }
+
+  // Shape B: (refreshToken, userType) — use env client credentials
+  const userType = (a as 'Company' | 'Location') ?? 'Location';
+  return postForm<OAuthTokenResponse>(`${API_BASE}/oauth/token`, {
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    user_type: userType,
+    redirect_uri: REDIRECT_URI,
+  });
 }
 
-/** Legacy name used elsewhere: alias to getValidLocationAccessToken */
+/** Legacy alias retained for callers elsewhere */
 export async function getValidAccessTokenForLocation(locationId: string, companyId?: string) {
   return getValidLocationAccessToken(locationId, companyId);
 }
