@@ -1,6 +1,7 @@
-// src/app/api/ghl/location-users/route.ts
+// File: src/app/api/ghl/location-users/route.ts
 import { NextResponse } from "next/server";
-import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
+import { db } from "@/lib/firebaseAdmin";
+import { exchangeRefreshToken } from "@/lib/ghlTokens";
 import { ghlFetch } from "@/lib/ghlClient";
 
 export const runtime = "nodejs";
@@ -10,7 +11,7 @@ function err(status: number, code: string, message: string) {
 }
 
 /**
- * The HighLevel "get users by location" endpoint returns a payload with a top‑level
+ * The HighLevel "get users by location" endpoint returns a payload with a top-level
  * `users` array when the request is scoped to a location access token. In some
  * cases (older versions of the API) the array may be nested under a `data`
  * property. This union reflects both shapes so the response can be safely
@@ -23,35 +24,29 @@ type GhlUsersResponse =
 export async function GET(req: Request) {
   try {
     const u = new URL(req.url);
-    const locationId = u.searchParams.get("location_id") || u.searchParams.get("locationId") || "";
+    const locationId =
+      u.searchParams.get("location_id") ||
+      u.searchParams.get("locationId") ||
+      "";
+
     if (!locationId) return err(400, "MISSING_LOCATION_ID", "Provide ?location_id");
 
-    let accessToken: string;
-    try {
-      accessToken = await getValidAccessTokenForLocation(locationId);
-    } catch (e) {
-      const msg = (e as Error).message || String(e);
-      return err(401, "TOKEN_UNAVAILABLE", msg);
-    }
+    // 1) Load the location's refresh token directly from Firestore
+    const locSnap = await db().collection("locations").doc(locationId).get();
+    if (!locSnap.exists) return err(404, "UNKNOWN_LOCATION", "Location not found");
+    const refreshToken = String((locSnap.data() || {}).refreshToken || "");
+    if (!refreshToken) return err(409, "NO_REFRESH_TOKEN", "Location not installed / no refreshToken");
 
-    /**
-     * The v2 Users API exposes two ways to list users. The `/users/search` endpoint
-     * requires a `companyId` and is intended for agency‑level tokens. When
-     * operating with a location‑level access token (which is what the app uses),
-     * the recommended endpoint is `GET /users/` which automatically scopes the
-     * results to the active location. See the documentation for "Get User by
-     * Location" in the HighLevel API for details【362954652847587†L5310-L5334】. Using
-     * this endpoint avoids the need to know the parent company ID and aligns
-     * with the OAuth scope `users.readonly`.
-     */
-    // Always pass the locationId as a query parameter.  The official
-    // "Get User by Location" endpoint documentation specifies that a
-    // `locationId` query parameter is required【724459568743161†L0-L18】.  While
-    // recent versions of the API will automatically scope `/users/` when
-    // using a sub‑account token, providing the ID explicitly ensures
-    // compatibility with all documented behaviours.
+    // 2) ALWAYS exchange the refresh token for a fresh short-lived access token
+    //    (do not reuse or persist any prior access token)
+    const tok = await exchangeRefreshToken(refreshToken);
+    const accessToken = tok.access_token;
+    if (!accessToken) return err(502, "TOKEN_EXCHANGE_FAILED", "Failed to mint access token");
+
+    // 3) Call Users API (scoped by location) using the fresh access token
     const json = await ghlFetch<GhlUsersResponse>("/users/", {
       accessToken,
+      // Passing locationId explicitly is the safest cross-version behavior
       query: { locationId },
     });
 
