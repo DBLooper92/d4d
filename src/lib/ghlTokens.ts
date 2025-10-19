@@ -1,8 +1,7 @@
 // src/lib/ghlTokens.ts
 //
 // Centralized helpers for LeadConnector token storage & refresh.
-// Now persists rotated refresh tokens returned by the OAuth refresh flow
-// and provides `getFreshAccessTokenForLocation(...)` for "always-refresh" use-cases.
+// Persists rotated refresh tokens and exposes helpers to get access tokens.
 
 import { db } from "@/lib/firebaseAdmin";
 import { ghlTokenUrl } from "./ghl";
@@ -29,9 +28,14 @@ function coerceMs(v: unknown): number | null {
   return null;
 }
 
+// Helper: narrow unknown to string|null without letting TS “leak” unknown
+function asStringOrNull(v: unknown): string | null {
+  return typeof v === "string" ? v : null;
+}
+
 export type RefreshExchangeResponse = {
   access_token: string;
-  refresh_token?: string; // LeadConnector may rotate this; persist if present
+  refresh_token?: string;
   scope?: string;
   token_type?: string;
   expires_in: number; // seconds
@@ -48,7 +52,7 @@ export type StoredToken = {
 };
 
 async function readTokenForLocation(locationId: string): Promise<StoredToken> {
-  // A) locations/{id} oauth.*
+  // A/B/C: locations/{id}
   const locRef = db().collection("locations").doc(locationId);
   const locSnap = await locRef.get();
   if (locSnap.exists) {
@@ -59,10 +63,9 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
       const accessU = readAtPath(data, "oauth.accessToken");
       const refreshU = readAtPath(data, "oauth.refreshToken");
       const expiresU = readAtPath(data, "oauth.expiresAt");
-
-      if (typeof accessU === "string" || typeof refreshU === "string") {
-        const accessStr: string | null = typeof accessU === "string" ? accessU : null;
-        const refreshStr: string | null = typeof refreshU === "string" ? refreshU : null;
+      const accessStr: string | null = asStringOrNull(accessU);
+      const refreshStr: string | null = asStringOrNull(refreshU);
+      if (accessStr !== null || refreshStr !== null) {
         const result: StoredToken = {
           accessToken: accessStr,
           refreshToken: refreshStr,
@@ -81,10 +84,9 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
       const accessU = readAtPath(data, "ghl.accessToken");
       const refreshU = readAtPath(data, "ghl.refreshToken");
       const expiresU = readAtPath(data, "ghl.expiresAt");
-
-      if (typeof accessU === "string" || typeof refreshU === "string") {
-        const accessStr: string | null = typeof accessU === "string" ? accessU : null;
-        const refreshStr: string | null = typeof refreshU === "string" ? refreshU : null;
+      const accessStr: string | null = asStringOrNull(accessU);
+      const refreshStr: string | null = asStringOrNull(refreshU);
+      if (accessStr !== null || refreshStr !== null) {
         const result: StoredToken = {
           accessToken: accessStr,
           refreshToken: refreshStr,
@@ -98,16 +100,14 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
       }
     }
 
-    // C) Top-level fallback (locations/{id}.accessToken/refreshToken/expiresAt)
+    // C) locations/{id}.accessToken / refreshToken / expiresAt
     {
       const accessTop = (data as AnyObj).accessToken;
       const refreshTop = (data as AnyObj).refreshToken;
       const expiresTop = (data as AnyObj).expiresAt;
-
-      const accessStr: string | null = typeof accessTop === "string" ? accessTop : null;
-      const refreshStr: string | null = typeof refreshTop === "string" ? refreshTop : null;
-
-      if (accessStr || refreshStr) {
+      const accessStr: string | null = asStringOrNull(accessTop);
+      const refreshStr: string | null = asStringOrNull(refreshTop);
+      if (accessStr !== null || refreshStr !== null) {
         const result: StoredToken = {
           accessToken: accessStr,
           refreshToken: refreshStr,
@@ -129,18 +129,12 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
     const tokSnap = await tokRef.get();
     if (tokSnap.exists) {
       const d = (tokSnap.data() || {}) as TokDoc;
-
-      const accessU = d.accessToken;
-      const refreshU = d.refreshToken;
-      const expiresU = d.expiresAt;
-
-      const accessStr: string | null = typeof accessU === "string" ? accessU : null;
-      const refreshStr: string | null = typeof refreshU === "string" ? refreshU : null;
-
+      const accessStr: string | null = asStringOrNull(d.accessToken);
+      const refreshStr: string | null = asStringOrNull(d.refreshToken);
       const result: StoredToken = {
         accessToken: accessStr,
         refreshToken: refreshStr,
-        expiresAtMs: coerceMs(expiresU),
+        expiresAtMs: coerceMs(d.expiresAt),
         _docRefPath: tokRef.path,
         _writeAccessPath: "accessToken",
         _writeRefreshPath: "refreshToken",
@@ -150,6 +144,7 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
     }
   }
 
+  // None found
   const empty: StoredToken = {
     accessToken: null,
     refreshToken: null,
@@ -194,10 +189,8 @@ async function _doRefresh(
 }
 
 /**
- * PUBLIC: Legacy/compat function.
- * Two signatures:
- *   1) exchangeRefreshToken(refreshToken, clientId, clientSecret)
- *   2) exchangeRefreshToken(refreshToken)  // env fallback
+ * exchangeRefreshToken(refreshToken, clientId, clientSecret)
+ * exchangeRefreshToken(refreshToken)  // uses env vars
  */
 export function exchangeRefreshToken(
   refreshToken: string,
@@ -212,45 +205,35 @@ export function exchangeRefreshToken(
 ): Promise<RefreshExchangeResponse> {
   const cid = clientId ?? process.env.GHL_CLIENT_ID;
   const csec = clientSecret ?? process.env.GHL_CLIENT_SECRET;
-  if (!cid || !csec) {
-    throw new Error("GHL_CLIENT_ID / GHL_CLIENT_SECRET are not configured.");
-  }
+  if (!cid || !csec) throw new Error("GHL_CLIENT_ID / GHL_CLIENT_SECRET are not configured.");
   return _doRefresh(refreshToken, cid, csec);
 }
 
 /**
- * Obtain a valid access token for a location (refresh just-in-time).
- * If the refresh response contains a rotated refresh_token, persist it.
+ * Get a valid access token (refreshing if needed). Persists rotated refresh tokens.
  */
 export async function getValidAccessTokenForLocation(locationId: string): Promise<string> {
   const t = await readTokenForLocation(locationId);
   const now = Date.now();
-  const skewMs = 60 * 1000; // refresh 1 minute early
+  const skewMs = 60 * 1000;
 
-  if (t.accessToken && t.expiresAtMs && t.expiresAtMs > now + skewMs) {
-    return t.accessToken;
-  }
-
-  if (!t.refreshToken) {
-    throw new Error("No refresh token available for this location.");
-  }
+  if (t.accessToken && t.expiresAtMs && t.expiresAtMs > now + skewMs) return t.accessToken;
+  if (!t.refreshToken) throw new Error("No refresh token available for this location.");
 
   const tok = await exchangeRefreshToken(t.refreshToken);
   const newExpiresMs = now + tok.expires_in * 1000;
 
-  // Persist tokens (access + optional rotated refresh)
   if (t._docRefPath && t._writeAccessPath && t._writeExpiresPath) {
     const parts = t._docRefPath.split("/");
     const collection = parts.slice(0, -1).join("/");
     const docId = parts.at(-1)!;
 
     const update: Record<string, unknown> = {};
-    update[t._writeAccessPath] = tok.access_token;
-    update[t._writeExpiresPath] = newExpiresMs;
+    update[t._writeAccessPath] = tok.access_token as string;
+    update[t._writeExpiresPath] = newExpiresMs as number;
     if (tok.refresh_token && t._writeRefreshPath) {
-      update[t._writeRefreshPath] = tok.refresh_token;
+      update[t._writeRefreshPath] = tok.refresh_token as string;
     }
-
     await db().collection(collection).doc(docId).set(update, { merge: true });
   }
 
@@ -258,15 +241,11 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
 }
 
 /**
- * ALWAYS refresh (ignore any cached access token). Useful for sensitive endpoints
- * where we want to guarantee a fresh access token each time we’re hit.
- * Also persists a rotated refresh_token if the provider returns one.
+ * Always refresh (ignore any cached access token). Persists rotated refresh tokens.
  */
 export async function getFreshAccessTokenForLocation(locationId: string): Promise<string> {
   const t = await readTokenForLocation(locationId);
-  if (!t.refreshToken) {
-    throw new Error("No refresh token available for this location.");
-  }
+  if (!t.refreshToken) throw new Error("No refresh token available for this location.");
 
   const tok = await exchangeRefreshToken(t.refreshToken);
   const newExpiresMs = Date.now() + tok.expires_in * 1000;
@@ -277,12 +256,11 @@ export async function getFreshAccessTokenForLocation(locationId: string): Promis
     const docId = parts.at(-1)!;
 
     const update: Record<string, unknown> = {};
-    update[t._writeAccessPath] = tok.access_token;
-    update[t._writeExpiresPath] = newExpiresMs;
+    update[t._writeAccessPath] = tok.access_token as string;
+    update[t._writeExpiresPath] = newExpiresMs as number;
     if (tok.refresh_token && t._writeRefreshPath) {
-      update[t._writeRefreshPath] = tok.refresh_token; // persist rotated refresh token
+      update[t._writeRefreshPath] = tok.refresh_token as string;
     }
-
     await db().collection(collection).doc(docId).set(update, { merge: true });
   }
 
