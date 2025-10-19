@@ -1,6 +1,7 @@
-// src/app/api/ghl/location-users/route.ts
+// File: src/app/api/ghl/location-users/route.ts
 import { NextResponse } from "next/server";
-import { getFreshAccessTokenForLocation } from "@/lib/ghlTokens";
+import { db } from "@/lib/firebaseAdmin";
+import { exchangeRefreshToken } from "@/lib/ghlTokens";
 import { ghlFetch } from "@/lib/ghlClient";
 
 export const runtime = "nodejs";
@@ -23,21 +24,29 @@ type GhlUsersResponse =
 export async function GET(req: Request) {
   try {
     const u = new URL(req.url);
-    const locationId = u.searchParams.get("location_id") || u.searchParams.get("locationId") || "";
+    const locationId =
+      u.searchParams.get("location_id") ||
+      u.searchParams.get("locationId") ||
+      "";
+
     if (!locationId) return err(400, "MISSING_LOCATION_ID", "Provide ?location_id");
 
-    let accessToken: string;
-    try {
-      // Always exchange the refresh token and persist any rotated refresh token.
-      accessToken = await getFreshAccessTokenForLocation(locationId);
-    } catch (e) {
-      const msg = (e as Error).message || String(e);
-      return err(401, "TOKEN_UNAVAILABLE", msg);
-    }
+    // 1) Load the location's refresh token directly from Firestore
+    const locSnap = await db().collection("locations").doc(locationId).get();
+    if (!locSnap.exists) return err(404, "UNKNOWN_LOCATION", "Location not found");
+    const refreshToken = String((locSnap.data() || {}).refreshToken || "");
+    if (!refreshToken) return err(409, "NO_REFRESH_TOKEN", "Location not installed / no refreshToken");
 
-    // Explicitly pass locationId for maximum compatibility with documented behavior.
+    // 2) ALWAYS exchange the refresh token for a fresh short-lived access token
+    //    (do not reuse or persist any prior access token)
+    const tok = await exchangeRefreshToken(refreshToken);
+    const accessToken = tok.access_token;
+    if (!accessToken) return err(502, "TOKEN_EXCHANGE_FAILED", "Failed to mint access token");
+
+    // 3) Call Users API (scoped by location) using the fresh access token
     const json = await ghlFetch<GhlUsersResponse>("/users/", {
       accessToken,
+      // Passing locationId explicitly is the safest cross-version behavior
       query: { locationId },
     });
 
@@ -51,6 +60,7 @@ export async function GET(req: Request) {
       {
         status: 200,
         headers: {
+          // disable CDN and browser caching; location permissions may change
           "Cache-Control": "no-store",
         },
       },
