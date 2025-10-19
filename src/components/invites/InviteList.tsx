@@ -18,6 +18,52 @@ export default function InviteList({ locationId }: { locationId: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [items, setItems] = useState<GhlUser[]>([]);
 
+  // Track invite status and generated join URLs per user. When a user is
+  // invited successfully, we store the joinUrl so it can be displayed and
+  // avoid multiple invite attempts.
+  const [inviteStatus, setInviteStatus] = useState<Record<string, { loading: boolean; joinUrl?: string; error?: string }>>({});
+
+  /**
+   * Handle inviting a driver. Posts to our API to upsert the contact, tag it and
+   * send an email. On success the API returns a joinUrl which we store. Errors
+   * are captured in the status so the UI can inform the user.
+   */
+  async function inviteUser(u: GhlUser) {
+    const userId = u.id;
+    if (!userId) return;
+    setInviteStatus((prev) => ({ ...prev, [userId]: { loading: true } }));
+    try {
+      const body = {
+        locationId,
+        userId: u.id,
+        userEmail: u.email ?? "",
+        userName: u.name ?? null,
+      };
+      const r = await fetch("/api/invite-driver", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await r.text();
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = null;
+      }
+      if (!r.ok || (parsed && typeof parsed === "object" && parsed.error)) {
+        const msg = (parsed && typeof parsed === "object" && parsed.error) || `HTTP_${r.status}`;
+        setInviteStatus((prev) => ({ ...prev, [userId]: { loading: false, error: String(msg) } }));
+        return;
+      }
+      const joinUrl = parsed?.joinUrl ?? null;
+      setInviteStatus((prev) => ({ ...prev, [userId]: { loading: false, joinUrl: joinUrl || undefined } }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setInviteStatus((prev) => ({ ...prev, [userId]: { loading: false, error: msg } }));
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -94,9 +140,33 @@ export default function InviteList({ locationId }: { locationId: string }) {
             <div className="font-medium">{u.name || u.email || "(unnamed user)"}</div>
             <div className="text-xs text-gray-500 mt-1">GHL User ID: {u.id}</div>
             {u.email ? <div className="text-xs text-gray-500">{u.email}</div> : null}
+            {inviteStatus[u.id]?.joinUrl ? (
+              <div className="mt-2">
+                <div className="text-xs text-green-700 mb-1">Invite sent! Copy the join link:</div>
+                <input
+                  type="text"
+                  className="input input-bordered w-full text-xs"
+                  readOnly
+                  value={inviteStatus[u.id]?.joinUrl || ""}
+                  onFocus={(ev) => ev.currentTarget.select()}
+                />
+              </div>
+            ) : null}
+            {inviteStatus[u.id]?.error ? (
+              <div className="mt-2 text-xs text-red-600">{inviteStatus[u.id]?.error}</div>
+            ) : null}
           </div>
-          <button className="btn primary" type="button" onClick={() => {/* no-op for now */}}>
-            Invite
+          <button
+            className="btn primary"
+            type="button"
+            disabled={inviteStatus[u.id]?.loading}
+            onClick={() => inviteUser(u)}
+          >
+            {inviteStatus[u.id]?.loading
+              ? "Inviting..."
+              : inviteStatus[u.id]?.joinUrl
+                ? "Invited"
+                : "Invite"}
           </button>
         </div>
       ))}
