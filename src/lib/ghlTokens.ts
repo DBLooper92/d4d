@@ -1,15 +1,11 @@
 // src/lib/ghlTokens.ts
+//
+// Centralized helpers for LeadConnector token storage & refresh.
+// Now persists rotated refresh tokens returned by the OAuth refresh flow
+// and provides `getFreshAccessTokenForLocation(...)` for "always-refresh" use-cases.
 
 import { db } from "@/lib/firebaseAdmin";
 import { ghlTokenUrl } from "./ghl";
-
-/**
- * ===== FIELD MAPPINGS (adjust to your current schema if needed) =====
- * We try these locations, in order, to find the token payload for a location:
- *   A) locations/{locationId} -> oauth.accessToken / oauth.refreshToken / oauth.expiresAt
- *   B) locations/{locationId} -> ghl.accessToken   / ghl.refreshToken   / ghl.expiresAt
- *   C) oauth_tokens/{locationId} -> accessToken / refreshToken / expiresAt
- */
 
 type AnyObj = Record<string, unknown>;
 
@@ -35,9 +31,10 @@ function coerceMs(v: unknown): number | null {
 
 export type RefreshExchangeResponse = {
   access_token: string;
-  scope?: string;          // <-- your existing routes read this
+  refresh_token?: string; // LeadConnector may rotate this; persist if present
+  scope?: string;
   token_type?: string;
-  expires_in: number;      // seconds
+  expires_in: number; // seconds
 };
 
 export type StoredToken = {
@@ -46,6 +43,7 @@ export type StoredToken = {
   expiresAtMs: number | null;
   _docRefPath: string | null;
   _writeAccessPath: string | null;
+  _writeRefreshPath: string | null;
   _writeExpiresPath: string | null;
 };
 
@@ -56,83 +54,112 @@ async function readTokenForLocation(locationId: string): Promise<StoredToken> {
   if (locSnap.exists) {
     const data = (locSnap.data() || {}) as AnyObj;
 
+    // A) locations/{id}.oauth.*
     {
-      const access = readAtPath(data, "oauth.accessToken");
-      const refresh = readAtPath(data, "oauth.refreshToken");
-      const expires = readAtPath(data, "oauth.expiresAt");
-      if (typeof access === "string" || typeof refresh === "string") {
-        return {
-          accessToken: (access as string) || null,
-          refreshToken: (refresh as string) || null,
-          expiresAtMs: coerceMs(expires),
+      const accessU = readAtPath(data, "oauth.accessToken");
+      const refreshU = readAtPath(data, "oauth.refreshToken");
+      const expiresU = readAtPath(data, "oauth.expiresAt");
+
+      if (typeof accessU === "string" || typeof refreshU === "string") {
+        const accessStr: string | null = typeof accessU === "string" ? accessU : null;
+        const refreshStr: string | null = typeof refreshU === "string" ? refreshU : null;
+        const result: StoredToken = {
+          accessToken: accessStr,
+          refreshToken: refreshStr,
+          expiresAtMs: coerceMs(expiresU),
           _docRefPath: locRef.path,
           _writeAccessPath: "oauth.accessToken",
+          _writeRefreshPath: "oauth.refreshToken",
           _writeExpiresPath: "oauth.expiresAt",
         };
+        return result;
       }
     }
 
-    // B) locations/{id} ghl.*
+    // B) locations/{id}.ghl.*
     {
-      const access = readAtPath(data, "ghl.accessToken");
-      const refresh = readAtPath(data, "ghl.refreshToken");
-      const expires = readAtPath(data, "ghl.expiresAt");
-      if (typeof access === "string" || typeof refresh === "string") {
-        return {
-          accessToken: (access as string) || null,
-          refreshToken: (refresh as string) || null,
-          expiresAtMs: coerceMs(expires),
+      const accessU = readAtPath(data, "ghl.accessToken");
+      const refreshU = readAtPath(data, "ghl.refreshToken");
+      const expiresU = readAtPath(data, "ghl.expiresAt");
+
+      if (typeof accessU === "string" || typeof refreshU === "string") {
+        const accessStr: string | null = typeof accessU === "string" ? accessU : null;
+        const refreshStr: string | null = typeof refreshU === "string" ? refreshU : null;
+        const result: StoredToken = {
+          accessToken: accessStr,
+          refreshToken: refreshStr,
+          expiresAtMs: coerceMs(expiresU),
           _docRefPath: locRef.path,
           _writeAccessPath: "ghl.accessToken",
+          _writeRefreshPath: "ghl.refreshToken",
           _writeExpiresPath: "ghl.expiresAt",
         };
+        return result;
       }
     }
 
-    // Top-level fields fallback (locations/{id}.refreshToken, etc.)
+    // C) Top-level fallback (locations/{id}.accessToken/refreshToken/expiresAt)
     {
-      const access = typeof data.accessToken === "string" ? data.accessToken : null;
-      const refresh = typeof data.refreshToken === "string" ? data.refreshToken : null;
-      const expires = data.expiresAt;
-      if (access || refresh) {
-        return {
-          accessToken: access,
-          refreshToken: refresh,
-          expiresAtMs: coerceMs(expires),
+      const accessTop = (data as AnyObj).accessToken;
+      const refreshTop = (data as AnyObj).refreshToken;
+      const expiresTop = (data as AnyObj).expiresAt;
+
+      const accessStr: string | null = typeof accessTop === "string" ? accessTop : null;
+      const refreshStr: string | null = typeof refreshTop === "string" ? refreshTop : null;
+
+      if (accessStr || refreshStr) {
+        const result: StoredToken = {
+          accessToken: accessStr,
+          refreshToken: refreshStr,
+          expiresAtMs: coerceMs(expiresTop),
           _docRefPath: locRef.path,
           _writeAccessPath: "accessToken",
+          _writeRefreshPath: "refreshToken",
           _writeExpiresPath: "expiresAt",
         };
+        return result;
       }
     }
   }
 
-  // C) oauth_tokens/{locationId}
-  const tokRef = db().collection("oauth_tokens").doc(locationId);
-  const tokSnap = await tokRef.get();
-  if (tokSnap.exists) {
-    const d = (tokSnap.data() || {}) as AnyObj;
-    const access = d.accessToken as string | undefined;
-    const refresh = d.refreshToken as string | undefined;
-    const expires = d.expiresAt;
-    return {
-      accessToken: access || null,
-      refreshToken: refresh || null,
-      expiresAtMs: coerceMs(expires),
-      _docRefPath: tokRef.path,
-      _writeAccessPath: "accessToken",
-      _writeExpiresPath: "expiresAt",
-    };
+  // D) oauth_tokens/{locationId}
+  {
+    type TokDoc = { accessToken?: unknown; refreshToken?: unknown; expiresAt?: unknown };
+    const tokRef = db().collection("oauth_tokens").doc(locationId);
+    const tokSnap = await tokRef.get();
+    if (tokSnap.exists) {
+      const d = (tokSnap.data() || {}) as TokDoc;
+
+      const accessU = d.accessToken;
+      const refreshU = d.refreshToken;
+      const expiresU = d.expiresAt;
+
+      const accessStr: string | null = typeof accessU === "string" ? accessU : null;
+      const refreshStr: string | null = typeof refreshU === "string" ? refreshU : null;
+
+      const result: StoredToken = {
+        accessToken: accessStr,
+        refreshToken: refreshStr,
+        expiresAtMs: coerceMs(expiresU),
+        _docRefPath: tokRef.path,
+        _writeAccessPath: "accessToken",
+        _writeRefreshPath: "refreshToken",
+        _writeExpiresPath: "expiresAt",
+      };
+      return result;
+    }
   }
 
-  return {
+  const empty: StoredToken = {
     accessToken: null,
     refreshToken: null,
     expiresAtMs: null,
     _docRefPath: null,
     _writeAccessPath: null,
+    _writeRefreshPath: null,
     _writeExpiresPath: null,
   };
+  return empty;
 }
 
 async function _doRefresh(
@@ -167,10 +194,10 @@ async function _doRefresh(
 }
 
 /**
- * PUBLIC: Legacy/compat function used across the codebase.
- * Supports BOTH signatures:
- *   1) exchangeRefreshToken(refreshToken, clientId, clientSecret)  // your original
- *   2) exchangeRefreshToken(refreshToken)                          // env-based fallback
+ * PUBLIC: Legacy/compat function.
+ * Two signatures:
+ *   1) exchangeRefreshToken(refreshToken, clientId, clientSecret)
+ *   2) exchangeRefreshToken(refreshToken)  // env fallback
  */
 export function exchangeRefreshToken(
   refreshToken: string,
@@ -192,8 +219,8 @@ export function exchangeRefreshToken(
 }
 
 /**
- * PUBLIC: Obtain a valid access token for a given location (auto-refresh + persist).
- * Uses the flexible mapping documented at the top of this file.
+ * Obtain a valid access token for a location (refresh just-in-time).
+ * If the refresh response contains a rotated refresh_token, persist it.
  */
 export async function getValidAccessTokenForLocation(locationId: string): Promise<string> {
   const t = await readTokenForLocation(locationId);
@@ -208,10 +235,10 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
     throw new Error("No refresh token available for this location.");
   }
 
-  const tok = await exchangeRefreshToken(t.refreshToken); // uses env creds if not passed
+  const tok = await exchangeRefreshToken(t.refreshToken);
   const newExpiresMs = now + tok.expires_in * 1000;
 
-  // Write back to the same doc/paths we read
+  // Persist tokens (access + optional rotated refresh)
   if (t._docRefPath && t._writeAccessPath && t._writeExpiresPath) {
     const parts = t._docRefPath.split("/");
     const collection = parts.slice(0, -1).join("/");
@@ -220,6 +247,41 @@ export async function getValidAccessTokenForLocation(locationId: string): Promis
     const update: Record<string, unknown> = {};
     update[t._writeAccessPath] = tok.access_token;
     update[t._writeExpiresPath] = newExpiresMs;
+    if (tok.refresh_token && t._writeRefreshPath) {
+      update[t._writeRefreshPath] = tok.refresh_token;
+    }
+
+    await db().collection(collection).doc(docId).set(update, { merge: true });
+  }
+
+  return tok.access_token;
+}
+
+/**
+ * ALWAYS refresh (ignore any cached access token). Useful for sensitive endpoints
+ * where we want to guarantee a fresh access token each time we’re hit.
+ * Also persists a rotated refresh_token if the provider returns one.
+ */
+export async function getFreshAccessTokenForLocation(locationId: string): Promise<string> {
+  const t = await readTokenForLocation(locationId);
+  if (!t.refreshToken) {
+    throw new Error("No refresh token available for this location.");
+  }
+
+  const tok = await exchangeRefreshToken(t.refreshToken);
+  const newExpiresMs = Date.now() + tok.expires_in * 1000;
+
+  if (t._docRefPath && t._writeAccessPath && t._writeExpiresPath) {
+    const parts = t._docRefPath.split("/");
+    const collection = parts.slice(0, -1).join("/");
+    const docId = parts.at(-1)!;
+
+    const update: Record<string, unknown> = {};
+    update[t._writeAccessPath] = tok.access_token;
+    update[t._writeExpiresPath] = newExpiresMs;
+    if (tok.refresh_token && t._writeRefreshPath) {
+      update[t._writeRefreshPath] = tok.refresh_token; // persist rotated refresh token
+    }
 
     await db().collection(collection).doc(docId).set(update, { merge: true });
   }

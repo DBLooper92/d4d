@@ -1,23 +1,35 @@
-// File: src/lib/agencyTokens.ts
-// Utility to obtain an Agency-scoped ACCESS TOKEN, trying multiple sources.
-// 1) agencies/{agencyId}.refreshToken
-// 2) Any locations where agencyId == X (scan in pages) and use the first working refreshToken
+// src/lib/agencyTokens.ts
+// Obtain an Agency-scoped ACCESS TOKEN, trying multiple sources.
+// Persists rotated refresh tokens when present.
 
 import { db } from "@/lib/firebaseAdmin";
 import { exchangeRefreshToken } from "@/lib/ghlTokens";
+
+type Source =
+  | { kind: "agency"; path: string }
+  | { kind: "location"; path: string };
 
 export async function getAgencyAccessToken(agencyId: string): Promise<string | null> {
   if (!agencyId || !agencyId.trim()) return null;
 
   // Try agency doc refresh token first
-  const agSnap = await db().collection("agencies").doc(agencyId).get();
+  const agRef = db().collection("agencies").doc(agencyId);
+  const agSnap = await agRef.get();
   const ag = agSnap.exists ? (agSnap.data() || {}) : {};
   const rtRaw = (ag as Record<string, unknown>).refreshToken;
   const agencyRefresh = typeof rtRaw === "string" ? rtRaw.trim() : "";
 
-  const tryExchange = async (rt: string) => {
+  const tryExchange = async (rt: string, source: Source) => {
     try {
       const tok = await exchangeRefreshToken(rt);
+      // Persist rotated refresh_token if returned
+      if (tok.refresh_token) {
+        if (source.kind === "agency") {
+          await agRef.set({ refreshToken: tok.refresh_token }, { merge: true });
+        } else {
+          await db().doc(source.path).set({ refreshToken: tok.refresh_token }, { merge: true });
+        }
+      }
       return tok.access_token || null;
     } catch {
       return null;
@@ -25,7 +37,7 @@ export async function getAgencyAccessToken(agencyId: string): Promise<string | n
   };
 
   if (agencyRefresh) {
-    const acc = await tryExchange(agencyRefresh);
+    const acc = await tryExchange(agencyRefresh, { kind: "agency", path: agRef.path });
     if (acc) return acc;
   }
 
@@ -45,7 +57,7 @@ export async function getAgencyAccessToken(agencyId: string): Promise<string | n
       const rt = typeof rtVal === "string" ? rtVal.trim() : "";
       if (!rt) continue;
 
-      const acc = await tryExchange(rt);
+      const acc = await tryExchange(rt, { kind: "location", path: d.ref.path });
       if (acc) return acc;
     }
 
