@@ -18,6 +18,59 @@ export default function InviteList({ locationId }: { locationId: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [items, setItems] = useState<GhlUser[]>([]);
 
+  // Track the state of invitations keyed by GHL user ID.  Each entry
+  // indicates whether an invite is pending, completed or failed and stores the
+  // generated join URL when available.
+  const [inviteState, setInviteState] = useState<Record<string, { status: string; joinUrl?: string; error?: string }>>({});
+
+  /**
+   * Send an invite to a particular user.  This calls our API route which
+   * upserts the contact, tags it, sends the email and returns a join URL.
+   */
+  async function sendInvite(u: GhlUser) {
+    const userId = u.id;
+    if (!userId) return;
+    setInviteState((prev) => ({ ...prev, [userId]: { status: "loading" } }));
+    try {
+      const res = await fetch("/api/invite-driver", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locationId,
+          email: u.email ?? "",
+          name: u.name ?? null,
+          ghlUserId: userId,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || `Invite failed (${res.status})`);
+      }
+      const data = (await res.json()) as { joinUrl?: string; contactId?: string };
+      const joinUrl = data.joinUrl || "";
+      // Store the join URL and mark success.  Also copy the link to the
+      // clipboard when available to simplify testing; ignore errors if the
+      // clipboard API is unavailable (e.g. in some browsers).
+      setInviteState((prev) => ({
+        ...prev,
+        [userId]: { status: "success", joinUrl },
+      }));
+      if (joinUrl) {
+        try {
+          await navigator.clipboard.writeText(joinUrl);
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setInviteState((prev) => ({
+        ...prev,
+        [userId]: { status: "error", error: msg },
+      }));
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -95,9 +148,55 @@ export default function InviteList({ locationId }: { locationId: string }) {
             <div className="text-xs text-gray-500 mt-1">GHL User ID: {u.id}</div>
             {u.email ? <div className="text-xs text-gray-500">{u.email}</div> : null}
           </div>
-          <button className="btn primary" type="button" onClick={() => {/* no-op for now */}}>
-            Invite
-          </button>
+          <div className="text-right">
+            {(() => {
+              const state = inviteState[u.id || ""];
+              if (!state) {
+                return (
+                  <button
+                    className="btn primary"
+                    type="button"
+                    onClick={() => sendInvite(u)}
+                  >
+                    Invite
+                  </button>
+                );
+              }
+              if (state.status === "loading") {
+                return (
+                  <button className="btn primary" type="button" disabled>
+                    Sending...
+                  </button>
+                );
+              }
+              if (state.status === "success") {
+                return (
+                  <div className="text-xs">
+                    <div className="text-green-700 font-medium">Invite sent</div>
+                    {state.joinUrl ? (
+                      <div className="mt-1 break-all">
+                        <span className="font-medium">Link:</span>{" "}
+                        <a
+                          href={state.joinUrl}
+                          className="text-blue-700 underline"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {state.joinUrl}
+                        </a>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              }
+              // error state
+              return (
+                <div className="text-xs text-red-600">
+                  Error: {state.error}
+                </div>
+              );
+            })()}
+          </div>
         </div>
       ))}
     </div>
