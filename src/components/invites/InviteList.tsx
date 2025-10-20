@@ -1,7 +1,7 @@
 // src/components/invites/InviteList.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type GhlUser = {
   id: string;
@@ -10,239 +10,203 @@ type GhlUser = {
   role?: string | null;
 };
 
-type LocationUsersResponse =
-  | { users?: GhlUser[] }
-  | { data?: { users?: GhlUser[] } }
-  | { error?: { message?: string } };
+type LocationUsersShapeA = { users?: GhlUser[] };
+type LocationUsersShapeB = { data?: { users?: GhlUser[] } };
+type LocationUsersResponse = LocationUsersShapeA | LocationUsersShapeB;
 
-type InviteDriverRequest = {
-  locationId: string;
-  userId: string;
-  userEmail: string;
-  userName?: string | null;
-};
+type InviteState = "idle" | "sending" | "sent" | "error";
 
-type InviteDriverResponse =
-  | { ok: true; joinUrl: string }
-  | { ok?: false; error: string }
-  | { error: string };
-
-type InviteState = {
-  loading: boolean;
-  error?: string;
-  joinUrl?: string;
-};
-
-type InviteListProps = {
-  /** Optional locationId from the page. If absent, this component will read it from the URL. */
-  locationId?: string;
-};
-
-function pickLikelyLocationIdFromUrl(url: URL): string {
-  const fromQS =
-    url.searchParams.get("location_id") ||
-    url.searchParams.get("locationId") ||
-    "";
-  if (fromQS && fromQS.trim()) return fromQS.trim();
-
-  const hash = url.hash || "";
-  if (hash) {
-    try {
-      const h = hash.startsWith("#") ? hash.slice(1) : hash;
-      const asParams = new URLSearchParams(h);
-      const fromHash =
-        asParams.get("location_id") || asParams.get("locationId") || "";
-      if (fromHash && fromHash.trim()) return fromHash.trim();
-    } catch {
-      /* ignore */
-    }
-  }
-  return "";
+function isObject(x: unknown): x is Record<string, unknown> {
+  return typeof x === "object" && x !== null;
 }
 
-export default function InviteList({ locationId: locationIdProp }: InviteListProps) {
-  const [loading, setLoading] = useState<boolean>(true);
+function parseUsers(payload: unknown): GhlUser[] {
+  if (!isObject(payload)) return [];
+  // shape A: { users?: GhlUser[] }
+  const usersA = (payload as LocationUsersShapeA).users;
+  if (Array.isArray(usersA)) return usersA as GhlUser[];
+
+  // shape B: { data?: { users?: GhlUser[] } }
+  const data = (payload as LocationUsersShapeB).data;
+  if (isObject(data)) {
+    const usersB = (data as { users?: unknown }).users;
+    if (Array.isArray(usersB)) return usersB as GhlUser[];
+  }
+
+  return [];
+}
+
+export default function InviteList({ locationId }: { locationId: string }) {
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [items, setItems] = useState<GhlUser[]>([]);
-  const [inviteStatus, setInviteStatus] = useState<Record<string, InviteState>>(
-    {},
-  );
+  const [status, setStatus] = useState<Record<string, InviteState>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const locationId = useMemo(() => {
-    if (locationIdProp) return locationIdProp;
-    if (typeof window === "undefined") return "";
-    return pickLikelyLocationIdFromUrl(new URL(window.location.href));
-  }, [locationIdProp]);
+  const users = useMemo<GhlUser[]>(() => {
+    const list = Array.isArray(items) ? items : [];
+    return list
+      .filter(Boolean)
+      .sort((a, b) => {
+        const ax = (a.name || a.email || "").toLowerCase();
+        const bx = (b.name || b.email || "").toLowerCase();
+        return ax.localeCompare(bx);
+      });
+  }, [items]);
 
   useEffect(() => {
     let cancelled = false;
-
-    async function load() {
+    (async () => {
       setLoading(true);
       setErr(null);
       try {
-        const qs = new URLSearchParams();
-        if (locationId) qs.set("location_id", locationId);
-
-        const r = await fetch(`/api/ghl/location-users?${qs.toString()}`, {
-          method: "GET",
-          headers: { "Cache-Control": "no-store" },
-        });
-
-        const data = (await r.json()) as LocationUsersResponse;
+        const r = await fetch(
+          `/api/ghl/location-users?location_id=${encodeURIComponent(locationId)}`,
+          { headers: { "Cache-Control": "no-store" } }
+        );
+        const text = await r.text();
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text) as LocationUsersResponse;
+        } catch {
+          throw new Error(text);
+        }
 
         if (!r.ok) {
-          throw new Error(`Failed to load users (HTTP_${r.status})`);
-        }
-        if ("error" in data && data.error?.message) {
-          throw new Error(data.error.message);
-        }
-
-        // Normalize list safely for TS
-        let list: GhlUser[] = [];
-        if ("users" in data && Array.isArray(data.users)) {
-          list = data.users;
-        } else if ("data" in data && data.data?.users && Array.isArray(data.data.users)) {
-          list = data.data.users;
+          const message =
+            (isObject(parsed) && typeof (parsed as Record<string, unknown>).error === "string"
+              ? ((parsed as Record<string, string>).error as string)
+              : "Failed to load users");
+          throw new Error(message);
         }
 
-        if (!cancelled) setItems(list ?? []);
-      } catch (e: unknown) {
-        const msg =
-          e instanceof Error && e.message
-            ? e.message
-            : "Failed to load users.";
-        if (!cancelled) setErr(msg);
+        const usersArr = parseUsers(parsed);
+        if (!cancelled) setItems(usersArr);
+      } catch (e) {
+        if (!cancelled) setErr((e as Error).message || String(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }
-
-    void load();
+    })();
     return () => {
       cancelled = true;
     };
   }, [locationId]);
 
   async function handleInvite(u: GhlUser) {
-    if (!u?.id) return;
+    if (!u.email) {
+      setErrors((prev) => ({ ...prev, [u.id]: "User has no email on file." }));
+      setStatus((prev) => ({ ...prev, [u.id]: "error" }));
+      return;
+    }
+    setErrors((prev) => ({ ...prev, [u.id]: "" }));
+    setStatus((prev) => ({ ...prev, [u.id]: "sending" }));
 
-    setInviteStatus((prev) => ({
-      ...prev,
-      [u.id]: { loading: true, error: undefined, joinUrl: undefined },
-    }));
+    // Split "name" into first/last best-effort
+    let firstName: string | undefined;
+    let lastName: string | undefined;
+    if (u.name) {
+      const parts = u.name.split(" ").filter(Boolean);
+      if (parts.length === 1) firstName = parts[0]!;
+      if (parts.length >= 2) {
+        firstName = parts[0]!;
+        lastName = parts.slice(1).join(" ");
+      }
+    }
 
     try {
-      const payload: InviteDriverRequest = {
-        locationId,
-        userId: u.id,
-        userEmail: (u.email ?? "").trim(),
-        userName: u.name ?? null,
-      };
-
-      const resp = await fetch("/api/invite-driver", {
+      const res = await fetch("/api/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          locationId,
+          email: u.email,
+          firstName,
+          lastName,
+        }),
       });
-      const data = (await resp.json()) as InviteDriverResponse;
 
-      if (!resp.ok || "error" in data) {
-        const msg =
-          ("error" in data && data.error) ||
-          `Invite failed (HTTP_${resp.status})`;
+      const text = await res.text();
+      if (!res.ok) {
+        let msg = "Failed to send invite";
+        try {
+          const j = JSON.parse(text) as { error?: unknown; step?: string };
+          const errStr =
+            typeof j?.error === "string"
+              ? j.error
+              : isObject(j?.error)
+              ? JSON.stringify(j.error)
+              : String(j?.error ?? "");
+          msg = errStr || msg;
+          if (j?.step) msg = `${j.step}: ${msg}`;
+        } catch {
+          msg = text || msg;
+        }
         throw new Error(msg);
       }
 
-      setInviteStatus((prev) => ({
+      setStatus((prev) => ({ ...prev, [u.id]: "sent" }));
+    } catch (e) {
+      setErrors((prev) => ({
         ...prev,
-        [u.id]: { loading: false, joinUrl: data.joinUrl },
+        [u.id]: (e as Error).message || String(e),
       }));
-    } catch (e: unknown) {
-      const msg =
-        e instanceof Error && e.message ? e.message : "Failed to send invite.";
-      setInviteStatus((prev) => ({
-        ...prev,
-        [u.id]: { loading: false, error: msg },
-      }));
+      setStatus((prev) => ({ ...prev, [u.id]: "error" }));
     }
   }
 
-  if (loading) {
-    return (
-      <div className="p-4">
-        <div className="text-sm text-gray-600">Loading users…</div>
-      </div>
-    );
-  }
-
-  if (err) {
-    return (
-      <div className="p-4">
-        <div className="text-sm text-red-600">Error: {err}</div>
-      </div>
-    );
-  }
-
-  if (!items.length) {
-    return (
-      <div className="p-4">
-        <div className="text-sm text-gray-600">No users found for this location.</div>
-      </div>
-    );
-  }
-
   return (
-    <div className="p-4 grid gap-3">
-      {items.map((u) => {
-        const s = inviteStatus[u.id] || { loading: false };
-        const disabled = s.loading || !u.email;
+    <div className="space-y-3">
+      {loading ? <div className="card">Loading users…</div> : null}
+      {err ? <div className="card text-red-600">Error: {err}</div> : null}
+      {!loading && !err && users.length === 0 ? (
+        <div className="card">No users found for this location.</div>
+      ) : null}
+
+      {users.map((u) => {
+        const st = status[u.id] || "idle";
+        const disabled = st === "sending" || !u.email;
 
         return (
-          <div key={u.id} className="card p-4 flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="font-medium truncate">
-                {u.name || "(no name)"}{" "}
-                <span className="text-xs text-gray-500">#{u.id}</span>
+          <div key={u.id} className="card flex items-center justify-between">
+            <div>
+              <div className="font-medium">
+                {u.name || u.email || "(unnamed user)"}
               </div>
-              <div className="text-sm text-gray-600 truncate">
-                {u.email || "no-email@unknown"}
+              <div className="text-xs text-gray-500 mt-1">
+                GHL User ID: {u.id}
               </div>
-              {u.role ? (
-                <div className="text-xs text-gray-500 mt-0.5">
-                  Role: {u.role}
+              {u.email ? (
+                <div className="text-xs text-gray-500">{u.email}</div>
+              ) : (
+                <div className="text-xs text-red-600">
+                  No email on file — cannot invite.
                 </div>
-              ) : null}
-              {s.error ? (
-                <div className="text-xs text-red-600 mt-2">
-                  Invite failed: {s.error}
-                </div>
-              ) : null}
-              {s.joinUrl ? (
-                <div className="mt-2">
-                  <div className="text-xs text-gray-700">
-                    Join URL (copy to test):
-                  </div>
-                  <input
-                    className="input input-bordered w-full mt-1"
-                    value={s.joinUrl}
-                    readOnly
-                    onFocus={(ev: React.FocusEvent<HTMLInputElement>) =>
-                      ev.currentTarget.select()
-                    }
-                  />
-                </div>
+              )}
+              {errors[u.id] ? (
+                <div className="text-xs text-red-600 mt-1">{errors[u.id]}</div>
               ) : null}
             </div>
 
-            <button
-              className="btn primary shrink-0"
-              disabled={disabled}
-              onClick={() => void handleInvite(u)}
-              title={u.email ? "Send invite" : "No email available"}
-            >
-              {s.loading ? "Inviting…" : "Invite"}
-            </button>
+            <div className="flex items-center gap-2">
+              {st === "sent" ? (
+                <span className="text-green-700 text-sm">Sent</span>
+              ) : st === "sending" ? (
+                <span className="text-sm">Sending…</span>
+              ) : st === "error" ? (
+                <span className="text-red-700 text-sm">Failed</span>
+              ) : null}
+
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => handleInvite(u)}
+                disabled={disabled}
+                title={!u.email ? "User has no email" : undefined}
+              >
+                {st === "sending" ? "Sending…" : "Invite"}
+              </button>
+            </div>
           </div>
         );
       })}
