@@ -1,29 +1,23 @@
 // src/app/invite/join/page.tsx
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { getFirebaseAuth } from "@/lib/firebaseClient";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 
+// This page depends on query params; ensure it's not statically prerendered
+export const dynamic = "force-dynamic";
+
 /**
- * Invitation join page.
- *
- * When a driver receives an invitation they are directed to this page via a
- * special URL containing their email, the sub-account location ID and the
- * inviter's GHL user ID.  The form allows the driver to set their name and
- * password; the email is fixed and displayed read-only.  Upon submission a
- * Firebase auth account is created and the `/api/auth/complete-signup` endpoint
- * is invoked to persist the user into the application's database.  If
- * everything succeeds the user is redirected to the dashboard for their
- * location.
+ * Inner client component that reads search params.
+ * Wrapped by a Suspense boundary in the default export.
  */
-export default function InviteJoinPage() {
+function InviteJoinInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Extract query parameters.  Support multiple aliases to accommodate
-  // variations in case and naming.  Default to empty strings when absent.
+  // Extract query parameters
   const email = searchParams.get("email")?.toString() || "";
   const locationId =
     searchParams.get("location_id")?.toString() ||
@@ -44,6 +38,7 @@ export default function InviteJoinPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
     if (!firstName.trim() || !lastName.trim()) {
       setError("Please enter your first and last name.");
       return;
@@ -60,22 +55,25 @@ export default function InviteJoinPage() {
       setError("Invalid invitation link. Missing required details.");
       return;
     }
+
     setLoading(true);
     try {
       const auth = getFirebaseAuth();
-      // Create a new Firebase auth account for this email/password
+
+      // Create account
       const cred = await createUserWithEmailAndPassword(auth, email, password);
-      // Update the display name to reflect the driver's real name
+
+      // Best-effort profile update
       try {
         await updateProfile(cred.user, {
           displayName: `${firstName.trim()} ${lastName.trim()}`.trim(),
         });
       } catch {
-        /* ignore profile update errors */
+        /* ignore */
       }
-      // Obtain an ID token for secure backend calls
+
+      // Persist to backend
       const idToken = await cred.user.getIdToken();
-      // Persist the user to Firestore via the existing API
       const resp = await fetch("/api/auth/complete-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -88,12 +86,14 @@ export default function InviteJoinPage() {
           ghlUserId: ghlUserId || null,
         }),
       });
+
       if (!resp.ok) {
         const data = (await resp.json().catch(() => null)) as { error?: string } | null;
         const msg = data?.error || `Signup failed (${resp.status})`;
         throw new Error(msg);
       }
-      // Redirect to the dashboard with the location preselected
+
+      // Route to dashboard with location preselected
       const qs = new URLSearchParams();
       qs.set("location_id", locationId);
       router.push(`/app?${qs.toString()}`);
@@ -111,16 +111,17 @@ export default function InviteJoinPage() {
       <p className="text-gray-600 mt-1">
         Complete the form below to finish setting up your account.
       </p>
+
       <form className="mt-4 grid gap-3" onSubmit={handleSubmit}>
-        {/* Hidden fields ensure the location and GHL user context is preserved
-            throughout the form lifecycle.  These values are not editable but are
-            present in the DOM for clarity and potential future use. */}
+        {/* Hidden fields to preserve context */}
         <input type="hidden" name="locationId" value={locationId} readOnly />
         <input type="hidden" name="ghlUserId" value={ghlUserId} readOnly />
+
         <div>
           <label className="block text-sm font-medium">Email</label>
           <input type="email" value={email} readOnly className="input w-full bg-gray-100" />
         </div>
+
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-sm font-medium">First Name</label>
@@ -143,6 +144,7 @@ export default function InviteJoinPage() {
             />
           </div>
         </div>
+
         <div>
           <label className="block text-sm font-medium">Password</label>
           <input
@@ -153,6 +155,7 @@ export default function InviteJoinPage() {
             required
           />
         </div>
+
         <div>
           <label className="block text-sm font-medium">Confirm Password</label>
           <input
@@ -163,11 +166,25 @@ export default function InviteJoinPage() {
             required
           />
         </div>
+
         {error ? <div className="text-sm text-red-600">{error}</div> : null}
+
         <button type="submit" className="btn primary" disabled={loading}>
           {loading ? "Creating Account..." : "Join"}
         </button>
       </form>
     </main>
+  );
+}
+
+/**
+ * Page component: wraps inner client logic in Suspense so useSearchParams()
+ * is compliant with Next 15 CSR bailout rules.
+ */
+export default function InviteJoinPage() {
+  return (
+    <Suspense fallback={<main className="p-6 max-w-lg mx-auto">Loading…</main>}>
+      <InviteJoinInner />
+    </Suspense>
   );
 }
