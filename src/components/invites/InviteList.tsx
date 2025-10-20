@@ -54,7 +54,7 @@ function pickLikelyLocationIdFromUrl(url: URL): string {
         asParams.get("location_id") || asParams.get("locationId") || "";
       if (fromHash && fromHash.trim()) return fromHash.trim();
     } catch {
-      // ignore
+      /* ignore */
     }
   }
   return "";
@@ -88,6 +88,7 @@ export default function InviteList({ locationId: locationIdProp }: InviteListPro
           method: "GET",
           headers: { "Cache-Control": "no-store" },
         });
+
         const data = (await r.json()) as LocationUsersResponse;
 
         if (!r.ok) {
@@ -97,7 +98,7 @@ export default function InviteList({ locationId: locationIdProp }: InviteListPro
           throw new Error(data.error.message);
         }
 
-        // Safely normalize the list for TS
+        // Normalize list safely for TS
         let list: GhlUser[] = [];
         if ("users" in data && Array.isArray(data.users)) {
           list = data.users;
