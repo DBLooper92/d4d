@@ -1,55 +1,22 @@
 ﻿// src/app/(d4d)/app/invites/page.tsx
-import RequireLocationAuth from "@/components/auth/RequireLocationAuth";
 import InviteList from "@/components/invites/InviteList";
 
-type PageParamRecord = Record<string, string | string[] | undefined>;
-type SearchParamRecord = Record<string, string | string[] | undefined>;
-
-export const dynamic = "auto";
-
-type Props = {
-  params?: Promise<PageParamRecord>;
-  searchParams?: Promise<SearchParamRecord>;
+// App Router page can receive searchParams
+type PageProps = {
+  searchParams: Record<string, string | string[] | undefined>;
 };
 
-function pick(sp: SearchParamRecord, k: string) {
-  const v = sp?.[k];
-  return Array.isArray(v) ? (v[0] || "").trim() : (v || "").trim();
-}
-
-export default async function InviteDriversPage({ searchParams }: Props) {
-  const sp = ((await searchParams) ?? {}) as SearchParamRecord;
+export default function InvitesPage({ searchParams }: PageProps) {
   const locationId =
-    pick(sp, "location_id") || pick(sp, "locationId") || pick(sp, "location");
-  const qs = locationId ? `?location_id=${encodeURIComponent(locationId)}` : "";
+    (typeof searchParams.location_id === "string" && searchParams.location_id) ||
+    (typeof searchParams.locationId === "string" && searchParams.locationId) ||
+    "";
 
   return (
-    <RequireLocationAuth>
-      <main className="p-6 max-w-3xl mx-auto">
-        <header className="hero card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <h1 className="text-2xl font-semibold">Invite Drivers</h1>
-            {locationId ? (
-              <p className="text-gray-600 mt-1">
-                Location: <span className="badge">{locationId}</span>
-              </p>
-            ) : (
-              <p className="text-red-600 mt-1">
-                No <code>location_id</code> in URL — open from a sub-account sidebar.
-              </p>
-            )}
-          </div>
-          <a className="btn" href={`/app${qs}`}>Dashboard</a>
-        </header>
-
-        <section className="mt-4">
-          {locationId ? (
-            <InviteList locationId={locationId} />
-          ) : (
-            <div className="card">Add <code>?location_id=...</code> to the URL and refresh.</div>
-          )}
-        </section>
-      </main>
-    </RequireLocationAuth>
+    <main className="p-6">
+      <h1 className="text-2xl font-semibold mb-4">Invite Drivers</h1>
+      {/* Pass as prop (InviteList declares this now) */}
+      <InviteList locationId={locationId} />
+    </main>
   );
 }

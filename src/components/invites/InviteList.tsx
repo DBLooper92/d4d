@@ -1,7 +1,7 @@
 // src/components/invites/InviteList.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 type GhlUser = {
   id: string;
@@ -10,166 +10,241 @@ type GhlUser = {
   role?: string | null;
 };
 
-type ApiOk = { users?: GhlUser[] } | { data?: { users?: GhlUser[] } };
-type ApiErr = { error?: { code?: string; message?: string } };
+type LocationUsersResponse =
+  | { users?: GhlUser[] }
+  | { data?: { users?: GhlUser[] } }
+  | { error?: { message?: string } };
 
-export default function InviteList({ locationId }: { locationId: string }) {
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [items, setItems] = useState<GhlUser[]>([]);
+type InviteDriverRequest = {
+  locationId: string;
+  userId: string;
+  userEmail: string;
+  userName?: string | null;
+};
 
-  // Track invite status and generated join URLs per user. When a user is
-  // invited successfully, we store the joinUrl so it can be displayed and
-  // avoid multiple invite attempts.
-  const [inviteStatus, setInviteStatus] = useState<Record<string, { loading: boolean; joinUrl?: string; error?: string }>>({});
+type InviteDriverResponse =
+  | { ok: true; joinUrl: string }
+  | { ok?: false; error: string }
+  | { error: string };
 
-  /**
-   * Handle inviting a driver. Posts to our API to upsert the contact, tag it and
-   * send an email. On success the API returns a joinUrl which we store. Errors
-   * are captured in the status so the UI can inform the user.
-   */
-  async function inviteUser(u: GhlUser) {
-    const userId = u.id;
-    if (!userId) return;
-    setInviteStatus((prev) => ({ ...prev, [userId]: { loading: true } }));
+type InviteState = {
+  loading: boolean;
+  error?: string;
+  joinUrl?: string;
+};
+
+type InviteListProps = {
+  /** Optional locationId from the page. If absent, this component will read it from the URL. */
+  locationId?: string;
+};
+
+function pickLikelyLocationIdFromUrl(url: URL): string {
+  const fromQS =
+    url.searchParams.get("location_id") ||
+    url.searchParams.get("locationId") ||
+    "";
+  if (fromQS && fromQS.trim()) return fromQS.trim();
+
+  const hash = url.hash || "";
+  if (hash) {
     try {
-      const body = {
-        locationId,
-        userId: u.id,
-        userEmail: u.email ?? "",
-        userName: u.name ?? null,
-      };
-      const r = await fetch("/api/invite-driver", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const text = await r.text();
-      let parsed: any = null;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        parsed = null;
-      }
-      if (!r.ok || (parsed && typeof parsed === "object" && parsed.error)) {
-        const msg = (parsed && typeof parsed === "object" && parsed.error) || `HTTP_${r.status}`;
-        setInviteStatus((prev) => ({ ...prev, [userId]: { loading: false, error: String(msg) } }));
-        return;
-      }
-      const joinUrl = parsed?.joinUrl ?? null;
-      setInviteStatus((prev) => ({ ...prev, [userId]: { loading: false, joinUrl: joinUrl || undefined } }));
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setInviteStatus((prev) => ({ ...prev, [userId]: { loading: false, error: msg } }));
+      const h = hash.startsWith("#") ? hash.slice(1) : hash;
+      const asParams = new URLSearchParams(h);
+      const fromHash =
+        asParams.get("location_id") || asParams.get("locationId") || "";
+      if (fromHash && fromHash.trim()) return fromHash.trim();
+    } catch {
+      // ignore
     }
   }
+  return "";
+}
+
+export default function InviteList({ locationId: locationIdProp }: InviteListProps) {
+  const [loading, setLoading] = useState<boolean>(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [items, setItems] = useState<GhlUser[]>([]);
+  const [inviteStatus, setInviteStatus] = useState<Record<string, InviteState>>(
+    {},
+  );
+
+  const locationId = useMemo(() => {
+    if (locationIdProp) return locationIdProp;
+    if (typeof window === "undefined") return "";
+    return pickLikelyLocationIdFromUrl(new URL(window.location.href));
+  }, [locationIdProp]);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+
+    async function load() {
       setLoading(true);
       setErr(null);
       try {
-        const r = await fetch(`/api/ghl/location-users?location_id=${encodeURIComponent(locationId)}`, {
+        const qs = new URLSearchParams();
+        if (locationId) qs.set("location_id", locationId);
+
+        const r = await fetch(`/api/ghl/location-users?${qs.toString()}`, {
+          method: "GET",
           headers: { "Cache-Control": "no-store" },
         });
-        const text = await r.text();
-        let parsed: ApiOk & ApiErr;
-        try {
-          parsed = JSON.parse(text) as ApiOk & ApiErr;
-        } catch {
-          throw new Error(`Non-JSON from API (${r.status})`);
+        const data = (await r.json()) as LocationUsersResponse;
+
+        if (!r.ok) {
+          throw new Error(`Failed to load users (HTTP_${r.status})`);
+        }
+        if ("error" in data && data.error?.message) {
+          throw new Error(data.error.message);
         }
 
-        if (!r.ok || parsed.error) {
-          const code = parsed.error?.code || `HTTP_${r.status}`;
-          const msg = parsed.error?.message || "Failed to load users.";
-          throw new Error(`${code}: ${msg}`);
+        // Safely normalize the list for TS
+        let list: GhlUser[] = [];
+        if ("users" in data && Array.isArray(data.users)) {
+          list = data.users;
+        } else if ("data" in data && data.data?.users && Array.isArray(data.data.users)) {
+          list = data.data.users;
         }
 
-        const list =
-          (("users" in parsed && parsed.users) ||
-            ("data" in parsed && parsed.data?.users) ||
-            []) as unknown;
-
-        if (!cancelled) setItems(Array.isArray(list) ? list : []);
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setItems(list ?? []);
+      } catch (e: unknown) {
+        const msg =
+          e instanceof Error && e.message
+            ? e.message
+            : "Failed to load users.";
+        if (!cancelled) setErr(msg);
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    }
+
+    void load();
     return () => {
       cancelled = true;
     };
   }, [locationId]);
 
+  async function handleInvite(u: GhlUser) {
+    if (!u?.id) return;
+
+    setInviteStatus((prev) => ({
+      ...prev,
+      [u.id]: { loading: true, error: undefined, joinUrl: undefined },
+    }));
+
+    try {
+      const payload: InviteDriverRequest = {
+        locationId,
+        userId: u.id,
+        userEmail: (u.email ?? "").trim(),
+        userName: u.name ?? null,
+      };
+
+      const resp = await fetch("/api/invite-driver", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = (await resp.json()) as InviteDriverResponse;
+
+      if (!resp.ok || "error" in data) {
+        const msg =
+          ("error" in data && data.error) ||
+          `Invite failed (HTTP_${resp.status})`;
+        throw new Error(msg);
+      }
+
+      setInviteStatus((prev) => ({
+        ...prev,
+        [u.id]: { loading: false, joinUrl: data.joinUrl },
+      }));
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error && e.message ? e.message : "Failed to send invite.";
+      setInviteStatus((prev) => ({
+        ...prev,
+        [u.id]: { loading: false, error: msg },
+      }));
+    }
+  }
+
   if (loading) {
     return (
-      <div className="grid gap-2">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="card">
-            <div className="skel" style={{ height: 20, width: "50%" }} />
-          </div>
-        ))}
+      <div className="p-4">
+        <div className="text-sm text-gray-600">Loading users…</div>
       </div>
     );
   }
 
   if (err) {
     return (
-      <div className="card" style={{ borderColor: "#fecaca" }}>
-        <div className="text-red-700 font-medium">Couldn&apos;t load sub-account users</div>
-        <div className="text-sm text-red-600 mt-1">{err}</div>
-        <div className="text-xs text-gray-500 mt-2">
-          Tip: ensure the location has a valid refresh token in Firestore and that the marketplace app has <code>users.readonly</code>.
-        </div>
+      <div className="p-4">
+        <div className="text-sm text-red-600">Error: {err}</div>
       </div>
     );
   }
 
   if (!items.length) {
-    return <div className="card">No users returned for this location.</div>;
+    return (
+      <div className="p-4">
+        <div className="text-sm text-gray-600">No users found for this location.</div>
+      </div>
+    );
   }
 
   return (
-    <div className="grid gap-2">
-      {items.map((u) => (
-        <div key={u.id} className="card flex items-center justify-between">
-          <div>
-            <div className="font-medium">{u.name || u.email || "(unnamed user)"}</div>
-            <div className="text-xs text-gray-500 mt-1">GHL User ID: {u.id}</div>
-            {u.email ? <div className="text-xs text-gray-500">{u.email}</div> : null}
-            {inviteStatus[u.id]?.joinUrl ? (
-              <div className="mt-2">
-                <div className="text-xs text-green-700 mb-1">Invite sent! Copy the join link:</div>
-                <input
-                  type="text"
-                  className="input input-bordered w-full text-xs"
-                  readOnly
-                  value={inviteStatus[u.id]?.joinUrl || ""}
-                  onFocus={(ev) => ev.currentTarget.select()}
-                />
+    <div className="p-4 grid gap-3">
+      {items.map((u) => {
+        const s = inviteStatus[u.id] || { loading: false };
+        const disabled = s.loading || !u.email;
+
+        return (
+          <div key={u.id} className="card p-4 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-medium truncate">
+                {u.name || "(no name)"}{" "}
+                <span className="text-xs text-gray-500">#{u.id}</span>
               </div>
-            ) : null}
-            {inviteStatus[u.id]?.error ? (
-              <div className="mt-2 text-xs text-red-600">{inviteStatus[u.id]?.error}</div>
-            ) : null}
+              <div className="text-sm text-gray-600 truncate">
+                {u.email || "no-email@unknown"}
+              </div>
+              {u.role ? (
+                <div className="text-xs text-gray-500 mt-0.5">
+                  Role: {u.role}
+                </div>
+              ) : null}
+              {s.error ? (
+                <div className="text-xs text-red-600 mt-2">
+                  Invite failed: {s.error}
+                </div>
+              ) : null}
+              {s.joinUrl ? (
+                <div className="mt-2">
+                  <div className="text-xs text-gray-700">
+                    Join URL (copy to test):
+                  </div>
+                  <input
+                    className="input input-bordered w-full mt-1"
+                    value={s.joinUrl}
+                    readOnly
+                    onFocus={(ev: React.FocusEvent<HTMLInputElement>) =>
+                      ev.currentTarget.select()
+                    }
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            <button
+              className="btn primary shrink-0"
+              disabled={disabled}
+              onClick={() => void handleInvite(u)}
+              title={u.email ? "Send invite" : "No email available"}
+            >
+              {s.loading ? "Inviting…" : "Invite"}
+            </button>
           </div>
-          <button
-            className="btn primary"
-            type="button"
-            disabled={inviteStatus[u.id]?.loading}
-            onClick={() => inviteUser(u)}
-          >
-            {inviteStatus[u.id]?.loading
-              ? "Inviting..."
-              : inviteStatus[u.id]?.joinUrl
-                ? "Invited"
-                : "Invite"}
-          </button>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
