@@ -2,20 +2,19 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { getFirebaseAuth } from "@/lib/firebaseClient";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 
-// This page depends on query params; ensure it's not statically prerendered
 export const dynamic = "force-dynamic";
 
 /**
- * Inner client component that reads search params.
- * Wrapped by a Suspense boundary in the default export.
+ * Inner client component that reads search params and handles registration.
+ * Wrapped by a Suspense boundary in the default export to satisfy
+ * useSearchParams() CSR bailout requirements.
  */
 function InviteJoinInner() {
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   // Extract query parameters
   const email = searchParams.get("email")?.toString() || "";
@@ -93,10 +92,8 @@ function InviteJoinInner() {
         throw new Error(msg);
       }
 
-      // Route to dashboard with location preselected
-      const qs = new URLSearchParams();
-      qs.set("location_id", locationId);
-      router.push(`/app?${qs.toString()}`);
+      // Hard redirect to external dashboard domain after successful registration
+      window.location.assign("https://app.driving4dollars.co/dashboard");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg || "Failed to create account. Please try again.");
@@ -177,10 +174,6 @@ function InviteJoinInner() {
   );
 }
 
-/**
- * Page component: wraps inner client logic in Suspense so useSearchParams()
- * is compliant with Next 15 CSR bailout rules.
- */
 export default function InviteJoinPage() {
   return (
     <Suspense fallback={<main className="p-6 max-w-lg mx-auto">Loading…</main>}>

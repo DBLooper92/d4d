@@ -1,24 +1,12 @@
 // src/app/api/invite-driver/route.ts
 /*
- * API route to invite a driver to Driving for Dollars.
+ * Invite a driver:
+ *  - Upsert contact (adds "d4d invite pending" tag).
+ *  - Generate the /invite/join link.
+ *  - Send an Email via Conversations API (requires contactId + status).
+ *  - Return { joinUrl, contactId } even if email send fails.
  *
- * This endpoint performs the following steps:
- *   1. Validates the payload contains a locationId, email and GHL user ID.
- *   2. Obtains a valid HighLevel access token for the given location using
- *      existing token logic (getValidAccessTokenForLocation).
- *   3. Upserts a contact in HighLevel via the `POST /contacts/upsert` endpoint.
- *      The request includes the locationId, email, derived first/last names
- *      (when available) and a "d4d invite pending" tag.  Upserting ensures
- *      that if a contact already exists it is updated rather than duplicated.
- *   4. Constructs a join URL that includes the invitee's email, the location
- *      and the GHL user ID.  This link points at the public join page
- *      (/invite/join) where the driver can complete registration.
- *   5. Attempts to send an email to the contact using the default email
- *      configured on the location.  The email body contains the join link.
- *      Failure to send an email does not abort the invite; the join link is
- *      still returned so the inviter can copy/paste it in testing environments.
- *
- * The response contains the generated joinUrl and contactId (if available).
+ * Uses your existing token logic; no changes there.
  */
 
 import { NextResponse } from "next/server";
@@ -26,7 +14,9 @@ import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
 
 export const runtime = "nodejs";
 
-const API_VERSION = process.env.GHL_API_VERSION || "2021-07-28";
+// API versions per GHL docs
+const CONTACTS_API_VERSION = process.env.GHL_API_VERSION || "2021-07-28";
+const CONVERSATIONS_API_VERSION = "2021-04-15";
 
 type InvitePayload = {
   locationId: string;
@@ -34,6 +24,18 @@ type InvitePayload = {
   name?: string | null;
   ghlUserId: string;
 };
+
+async function fetchJson<T = unknown>(url: string, init: RequestInit): Promise<{ ok: boolean; status: number; data: T | null; text: string }> {
+  const r = await fetch(url, init);
+  const text = await r.text().catch(() => "");
+  let data: T | null = null;
+  try {
+    data = text ? (JSON.parse(text) as T) : null;
+  } catch {
+    data = null;
+  }
+  return { ok: r.ok, status: r.status, data, text };
+}
 
 export async function POST(req: Request) {
   try {
@@ -43,144 +45,114 @@ export async function POST(req: Request) {
     const ghlUserId = (body.ghlUserId || "").trim();
     const name = typeof body.name === "string" ? body.name.trim() : "";
 
-    if (!locationId)
-      return NextResponse.json(
-        { error: "Missing locationId" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
-      );
-    if (!email)
-      return NextResponse.json(
-        { error: "Missing email" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
-      );
-    if (!ghlUserId)
-      return NextResponse.json(
-        { error: "Missing ghlUserId" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
-      );
+    if (!locationId) return NextResponse.json({ error: "Missing locationId" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+    if (!email) return NextResponse.json({ error: "Missing email" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+    if (!ghlUserId) return NextResponse.json({ error: "Missing ghlUserId" }, { status: 400, headers: { "Cache-Control": "no-store" } });
 
-    // Obtain a valid HighLevel access token for the location.  This call
-    // internally handles refreshing tokens and persists the new access token
-    // back to Firestore.  If the token cannot be obtained an exception is
-    // thrown which will be caught below.
     const accessToken = await getValidAccessTokenForLocation(locationId);
 
-    // Derive first and last names from the full name when available.  If the
-    // name is undefined or blank the fields remain undefined.  Passing
-    // undefined in the upsert payload omits the field entirely.
+    // Derive first/last from name (optional)
     let firstName: string | undefined;
     let lastName: string | undefined;
     if (name) {
       const parts = name.split(/\s+/).filter(Boolean);
-      if (parts.length === 1) {
+      if (parts.length === 1) firstName = parts[0];
+      if (parts.length > 1) {
         firstName = parts[0];
-      } else if (parts.length > 1) {
-        firstName = parts.shift();
-        lastName = parts.join(" ");
+        lastName = parts.slice(1).join(" ");
       }
     }
 
-    // Upsert the contact.  Tags are additive so that the invitation can be
-    // tracked separately from other tags on the contact.
-    const upsertUrl = "https://services.leadconnectorhq.com/contacts/upsert";
+    // 1) Upsert contact with tag
     const upsertPayload: Record<string, unknown> = {
       locationId,
       email,
       tags: ["d4d invite pending"],
+      ...(firstName ? { firstName } : {}),
+      ...(lastName ? { lastName } : {}),
     };
-    if (firstName) upsertPayload.firstName = firstName;
-    if (lastName) upsertPayload.lastName = lastName;
-
-    let contactId: string | null = null;
-    try {
-      const upsertRes = await fetch(upsertUrl, {
+    const upsert = await fetchJson<{ id?: string; contactId?: string }>(
+      "https://services.leadconnectorhq.com/contacts/upsert",
+      {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          Version: API_VERSION,
+          Version: CONTACTS_API_VERSION,
           "Content-Type": "application/json",
           Accept: "application/json",
         },
         body: JSON.stringify(upsertPayload),
+      },
+    );
+
+    let contactId: string | null =
+      (upsert.data?.id as string | undefined) ||
+      (upsert.data?.contactId as string | undefined) ||
+      null;
+
+    // If upsert did not return an id, try a lightweight search by email
+    if (!contactId) {
+      const searchUrl = `https://services.leadconnectorhq.com/contacts/?locationId=${encodeURIComponent(
+        locationId,
+      )}&query=${encodeURIComponent(email)}&limit=1`;
+      const search = await fetchJson<{ contacts?: Array<{ id: string }> }>(searchUrl, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Version: CONTACTS_API_VERSION,
+          Accept: "application/json",
+        },
       });
-      if (upsertRes.ok) {
-        const data = (await upsertRes.json().catch(() => null)) as
-          | { id?: string; contactId?: string }
-          | null;
-        // The contact ID may be returned in `id` or `contactId` depending on
-        // the API version.  Normalise it if present.
-        if (data) {
-          contactId = (data.id as string) || (data.contactId as string) || null;
-        }
+      if (search.ok && Array.isArray(search.data?.contacts) && search.data!.contacts.length > 0) {
+        contactId = search.data!.contacts[0].id;
       } else {
-        // Capture the error text for logging but do not fail the invite flow.
-        const txt = await upsertRes.text().catch(() => "");
-        console.error(`Invite contact upsert failed ${upsertRes.status}: ${txt}`);
+        console.error("Could not obtain contactId after upsert; email send will be skipped.", search.status, search.text);
       }
-    } catch (err) {
-      console.error("Error calling upsert contact", err);
     }
 
-    // Compose the join URL.  Use the externally configurable base URL when
-    // available so that the link points at the correct domain.  This URL
-    // includes the email, location and GHL user ID as query parameters so
-    // the registration page can prefill and persist the context.
-    const baseApp =
-      process.env.NEXT_PUBLIC_APP_BASE_URL?.replace(/\/$/, "") ||
-      "https://admin.driving4dollars.co";
+    // 2) Build the join URL
+    const baseApp = process.env.NEXT_PUBLIC_APP_BASE_URL?.replace(/\/$/, "") || "https://admin.driving4dollars.co";
     const url = new URL(`${baseApp}/invite/join`);
     url.searchParams.set("email", email);
     url.searchParams.set("location_id", locationId);
     url.searchParams.set("user_id", ghlUserId);
     const joinUrl = url.toString();
 
-    // Prepare the outbound email body.  A simple HTML message instructs the
-    // invitee to click the join link.  Use a clickable anchor rather than
-    // relying on plain text URLs.
-    const emailBody =
-      `<p>You've been invited to join your team's Driving for Dollars.</p>` +
-      `<p><a href="${joinUrl}" target="_blank">Join</a></p>`;
+    // 3) Attempt email send (requires contactId + required fields)
+    if (contactId) {
+      const subject = "You've been invited to Driving for Dollars";
+      const html =
+        `<p>You've been invited to join your team's Driving for Dollars.</p>` +
+        `<p><a href="${joinUrl}" target="_blank" rel="noopener noreferrer">Join</a></p>`;
 
-    // Attempt to send an email using the Conversations API.  The exact
-    // parameters required by HighLevel vary by channel type; here we
-    // deliberately include both the contactId (when available) and the
-    // destination email.  If this call fails the invite will still be
-    // considered successful.  Errors are logged for debugging in test
-    // environments but not surfaced to the client.
-    try {
-      const sendUrl = "https://services.leadconnectorhq.com/conversations/messages";
       const messagePayload: Record<string, unknown> = {
-        locationId,
-        ...(contactId ? { contactId } : {}),
-        toEmail: email,
         type: "Email",
-        channel: "Email",
-        subject: "You've been invited to Driving for Dollars",
-        body: emailBody,
+        status: "delivered", // required by Conversations API
+        contactId,
+        subject,
+        html,
+        emailTo: email, // destination; omit emailFrom to use location default
       };
-      await fetch(sendUrl, {
+
+      const send = await fetchJson("https://services.leadconnectorhq.com/conversations/messages", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          Version: API_VERSION,
+          Version: CONVERSATIONS_API_VERSION,
           "Content-Type": "application/json",
           Accept: "application/json",
         },
         body: JSON.stringify(messagePayload),
-      }).catch(() => {});
-    } catch (err) {
-      console.error("Invite email send failed", err);
+      });
+
+      if (!send.ok) {
+        console.error("Invite email send failed", send.status, send.text);
+      }
     }
 
-    return NextResponse.json(
-      { joinUrl, contactId },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ joinUrl, contactId }, { status: 200, headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json(
-      { error: msg },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ error: msg }, { status: 500, headers: { "Cache-Control": "no-store" } });
   }
 }
