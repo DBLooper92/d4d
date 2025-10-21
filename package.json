@@ -28,7 +28,7 @@
     "typescript": "^5"
   },
   "overrides": {
-    "@firebase/util": "1.13.1"
+    "@firebase/util": "1.12.1"
   },
   "packageManager": "npm@10.9.0"
 }
