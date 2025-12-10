@@ -127,6 +127,24 @@ export async function POST(req: Request) {
       /* ignore */
     }
 
+    if (ghlUserId) {
+      try {
+        const inviteKey = `invites.${ghlUserId}`;
+        await db().collection("locations").doc(normalizedLocationId).set(
+          {
+            [inviteKey]: {
+              status: "accepted",
+              firebaseUid: uid,
+              acceptedAt: FieldValue.serverTimestamp(),
+            },
+          },
+          { merge: true },
+        );
+      } catch {
+        /* best-effort */
+      }
+    }
+
     return NextResponse.json({ ok: true, uid }, { status: 200, headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     const msg = (e as Error).message || String(e);

@@ -12,7 +12,15 @@ type GhlUser = {
   role?: string | null;
 };
 
-type ManagedUser = GhlUser & { active: boolean; isAdmin: boolean };
+type ManagedUser = GhlUser & {
+  active: boolean;
+  isAdmin: boolean;
+  invited: boolean;
+  inviteStatus?: string;
+  invitedAt?: string | null;
+  firebaseUid?: string | null;
+  accepted: boolean;
+};
 
 type ManageResp = {
   users: ManagedUser[];
@@ -71,6 +79,9 @@ export default function InviteList({ locationId }: { locationId: string }) {
         ...prev,
         [userId]: { status: "success", joinUrl },
       }));
+      setItems((prev) =>
+        prev.map((m) => (m.id === userId ? { ...m, invited: true, inviteStatus: "invited" } : m)),
+      );
       if (joinUrl) {
         try {
           await navigator.clipboard.writeText(joinUrl);
@@ -134,6 +145,10 @@ export default function InviteList({ locationId }: { locationId: string }) {
 
   async function toggleActive(user: ManagedUser) {
     if (user.isAdmin) return; // admin always active
+    if (!user.accepted) {
+      setBanner("User must accept the invite before activation.");
+      return;
+    }
     const userId = user.id;
     const next = !user.active;
     setSavingId(userId);
@@ -213,34 +228,34 @@ export default function InviteList({ locationId }: { locationId: string }) {
         const inviting = state?.status === "loading";
         const inviteSent = state?.status === "success";
         const inviteError = state?.status === "error" ? state.error : null;
-        const toggleDisabled = savingId === u.id || u.isAdmin;
+        const toggleDisabled = savingId === u.id || u.isAdmin || !u.accepted;
         const isActive = u.isAdmin ? true : u.active;
+        const showInviteButton = !u.firebaseUid;
+        const inviteLabel = u.invited ? "Resend Invite" : "Send Invite";
         return (
           <div key={u.id} className="card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
             <div style={{ display: "grid", gap: "0.15rem" }}>
               <div className="font-medium flex items-center gap-2">
                 <span>{u.name || u.email || "(unnamed user)"}</span>
                 {u.isAdmin ? <span className="badge badge-muted">Admin</span> : null}
+                {u.accepted && !u.isAdmin ? <span className="badge badge-muted">Joined</span> : null}
               </div>
               <div className="text-xs text-gray-500">GHL User ID: {u.id}</div>
               {u.email ? <div className="text-xs text-gray-500">{u.email}</div> : null}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
               <div style={{ textAlign: "right" }}>
-                {inviteSent ? (
+                {showInviteButton ? (
+                  inviteError ? (
+                    <div className="text-xs text-red-600">Error: {inviteError}</div>
+                  ) : (
+                    <button className="btn" type="button" onClick={() => sendInvite(u)} disabled={inviting}>
+                      {inviting ? "Sending..." : inviteLabel}
+                    </button>
+                  )
+                ) : inviteSent ? (
                   <div className="text-xs text-green-700 font-medium">Invite sent</div>
-                ) : inviteError ? (
-                  <div className="text-xs text-red-600">Error: {inviteError}</div>
-                ) : (
-                  <button
-                    className="btn"
-                    type="button"
-                    onClick={() => sendInvite(u)}
-                    disabled={inviting}
-                  >
-                    {inviting ? "Sending..." : "Invite"}
-                  </button>
-                )}
+                ) : null}
               </div>
               <button
                 type="button"
@@ -287,8 +302,14 @@ export default function InviteList({ locationId }: { locationId: string }) {
                   />
                 </span>
               </button>
-              <div className="text-xs text-gray-600" style={{ minWidth: "70px", textAlign: "right" }}>
-                {u.isAdmin ? "Active (admin)" : isActive ? "Active" : "Inactive"}
+              <div className="text-xs text-gray-600" style={{ minWidth: "110px", textAlign: "right" }}>
+                {u.isAdmin
+                  ? "Active (admin)"
+                  : !u.accepted
+                    ? "Pending acceptance"
+                    : isActive
+                      ? "Active"
+                      : "Inactive"}
               </div>
             </div>
           </div>

@@ -1,6 +1,6 @@
 // src/app/api/location-users/manage/route.ts
 import { NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { db, getAdminApp } from "@/lib/firebaseAdmin";
 import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
 import { ghlFetch } from "@/lib/ghlClient";
@@ -17,7 +17,17 @@ type ManageUser = {
 };
 
 type ManageResponse = {
-  users: Array<ManageUser & { active: boolean; isAdmin: boolean }>;
+  users: Array<
+    ManageUser & {
+      active: boolean;
+      isAdmin: boolean;
+      invited: boolean;
+      inviteStatus?: string;
+      invitedAt?: string | null;
+      firebaseUid?: string | null;
+      accepted: boolean;
+    }
+  >;
   activeLimit: number;
   activeCount: number; // excludes admin
   adminGhlUserId: string | null;
@@ -27,6 +37,15 @@ type ToggleBody = {
   locationId?: string;
   ghlUserId?: string;
   active?: boolean;
+};
+
+type InviteMeta = {
+  status?: string | null;
+  invitedAt?: number | null;
+  lastSentAt?: number | null;
+  invitedBy?: string | null;
+  firebaseUid?: string | null;
+  acceptedAt?: number | null;
 };
 
 function cacheHeaders() {
@@ -126,6 +145,28 @@ async function fetchGhlUsers(locationId: string): Promise<ManageUser[]> {
   return Array.isArray(users) ? users : [];
 }
 
+type LocUserRecord = { uid: string; isAdmin: boolean; ghlUserId: string | null };
+
+async function loadLocationUsers(locationId: string): Promise<Record<string, LocUserRecord>> {
+  const snap = await db().collection("locations").doc(locationId).collection("users").limit(500).get();
+  const map: Record<string, LocUserRecord> = {};
+  snap.forEach((doc) => {
+    const data = (doc.data() || {}) as Record<string, unknown>;
+    const ghlUserId =
+      (typeof data.ghlUserId === "string" && data.ghlUserId.trim()) ||
+      (data.ghl && typeof (data.ghl as { userId?: string }).userId === "string" && (data.ghl as { userId?: string }).userId) ||
+      null;
+    if (ghlUserId) {
+      map[ghlUserId] = {
+        uid: doc.id,
+        isAdmin: Boolean((data as { isAdmin?: boolean; role?: string }).isAdmin) || (data as { role?: string }).role === "admin",
+        ghlUserId,
+      };
+    }
+  });
+  return map;
+}
+
 async function syncActiveToUserDocs(locationId: string, targetGhlUserId: string, active: boolean) {
   // Best-effort: align active flag on any known user docs under this location (and root users)
   const locUsersCol = db().collection("locations").doc(locationId).collection("users");
@@ -170,8 +211,10 @@ export async function GET(req: Request) {
   const adminGhlUserId = adminCheck.adminGhlUserId;
 
   const locSnap = await db().collection("locations").doc(locationId).get();
-  const locData = (locSnap.data() || {}) as { activeUsers?: Record<string, boolean> };
+  const locData = (locSnap.data() || {}) as { activeUsers?: Record<string, boolean>; invites?: Record<string, InviteMeta> };
   const activeUsers = { ...(locData.activeUsers || {}) };
+  const invites = { ...(locData.invites || {}) } as Record<string, InviteMeta>;
+  const locUsers = await loadLocationUsers(locationId);
 
   // Enforce admin always active if we can identify them
   if (adminGhlUserId && activeUsers[adminGhlUserId] !== true) {
@@ -206,13 +249,63 @@ export async function GET(req: Request) {
     const msg = (e as Error).message || "Failed to load users";
     return NextResponse.json({ error: msg }, { status: 502, headers: cacheHeaders() });
   }
+
+  let changed = false;
   const mapped: ManageResponse["users"] = users.map((u) => {
     const isAdmin = !!adminGhlUserId && u.id === adminGhlUserId;
-    const active = isAdmin ? true : Boolean(activeUsers[u.id]);
-    return { ...u, active, isAdmin };
+    const locUser = locUsers[u.id];
+    const firebaseUid = locUser?.uid ?? null;
+    const accepted = Boolean(firebaseUid);
+    const invitedMeta = invites[u.id] || null;
+    const activeBefore = isAdmin ? true : Boolean(activeUsers[u.id]);
+
+    // If not accepted, force inactive
+    if (!accepted && activeBefore) {
+      activeUsers[u.id] = false;
+      changed = true;
+    }
+
+    let active = isAdmin ? true : Boolean(activeUsers[u.id]);
+
+    // Auto-activate accepted users if slots available
+    if (accepted && !isAdmin && !active) {
+      const currentCount = computeActiveCount(activeUsers, adminGhlUserId);
+      if (currentCount < ACTIVE_LIMIT) {
+        activeUsers[u.id] = true;
+        active = true;
+        changed = true;
+      }
+    }
+
+    const invited = Boolean(invitedMeta);
+    const inviteStatus =
+      invitedMeta?.status ||
+      (invited ? (invitedMeta?.firebaseUid ? "accepted" : "invited") : undefined);
+    let invitedAt: string | null = null;
+    const invitedVal = invitedMeta?.invitedAt;
+    if (typeof invitedVal === "number") invitedAt = new Date(invitedVal).toISOString();
+    else if (invitedVal instanceof Timestamp) invitedAt = new Date(invitedVal.toMillis()).toISOString();
+
+    // If we have acceptance but no invite meta, mark it
+    if (accepted && invitedMeta && !invitedMeta.firebaseUid) {
+      invites[u.id] = { ...invitedMeta, firebaseUid, acceptedAt: Date.now(), status: "accepted" };
+      changed = true;
+    }
+
+    return { ...u, active, isAdmin, invited, inviteStatus, invitedAt, firebaseUid, accepted };
   });
 
   const activeCount = computeActiveCount(activeUsers, adminGhlUserId);
+
+  if (changed) {
+    const updates: Record<string, unknown> = {
+      activeUsers,
+      invites,
+      activeUpdatedAt: FieldValue.serverTimestamp(),
+      activeUpdatedBy: uid,
+    };
+    await db().collection("locations").doc(locationId).set(updates, { merge: true });
+  }
 
   return NextResponse.json(
     {
@@ -245,6 +338,7 @@ export async function POST(req: Request) {
   const adminCheck = await requireLocationAdmin(uid, locationId);
   if ("error" in adminCheck) return adminCheck.error;
   const adminGhlUserId = adminCheck.adminGhlUserId;
+  const locUsers = await loadLocationUsers(locationId);
 
   const targetGhlUserId = typeof body.ghlUserId === "string" ? body.ghlUserId.trim() : "";
   const nextActive = body.active === true;
@@ -253,6 +347,14 @@ export async function POST(req: Request) {
   }
   if (adminGhlUserId && targetGhlUserId === adminGhlUserId && !nextActive) {
     return NextResponse.json({ error: "Admin must remain active" }, { status: 400, headers: cacheHeaders() });
+  }
+  const locUser = locUsers[targetGhlUserId];
+  const accepted = Boolean(locUser?.uid);
+  if (!accepted && !adminGhlUserId) {
+    return NextResponse.json({ error: "INVITE_PENDING" }, { status: 409, headers: cacheHeaders() });
+  }
+  if (!accepted && targetGhlUserId !== adminGhlUserId) {
+    return NextResponse.json({ error: "INVITE_PENDING" }, { status: 409, headers: cacheHeaders() });
   }
 
   const locRef = db().collection("locations").doc(locationId);

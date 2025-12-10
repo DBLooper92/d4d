@@ -10,6 +10,8 @@
  */
 
 import { NextResponse } from "next/server";
+import { FieldValue } from "firebase-admin/firestore";
+import { db } from "@/lib/firebaseAdmin";
 import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
 
 export const runtime = "nodejs";
@@ -148,6 +150,26 @@ export async function POST(req: Request) {
       if (!send.ok) {
         console.error("Invite email send failed", send.status, send.text);
       }
+    }
+
+    try {
+      const inviteKey = `invites.${ghlUserId}`;
+      await db()
+        .collection("locations")
+        .doc(locationId)
+        .set(
+          {
+            [inviteKey]: {
+              status: "invited",
+              invitedAt: FieldValue.serverTimestamp(),
+              lastSentAt: FieldValue.serverTimestamp(),
+              invitedBy: null,
+            },
+          },
+          { merge: true },
+        );
+    } catch {
+      /* best-effort invite record */
     }
 
     return NextResponse.json({ joinUrl, contactId }, { status: 200, headers: { "Cache-Control": "no-store" } });
