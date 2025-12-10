@@ -1,5 +1,6 @@
 // src/app/(d4d)/app/page.tsx
 import RequireLocationAuth from "@/components/auth/RequireLocationAuth";
+import SkiptraceToggle from "@/components/dashboard/SkiptraceToggle";
 
 type PageParamRecord = Record<string, string | string[] | undefined>;
 type SearchParamRecord = Record<string, string | string[] | undefined>;
@@ -53,12 +54,15 @@ return (
   <RequireLocationAuth>
     <main className="p-6 max-w-4xl mx-auto">
 
-        <header className="hero card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <h1 className="text-2xl font-semibold">Dashboard</h1>
-            <p className="text-gray-600 mt-1">
-              Location: <span className="badge">{locationId}</span>
-            </p>
+        <header className="hero card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1.25rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+            <SkiptraceToggle locationId={locationId} />
+            <div>
+              <h1 className="text-2xl font-semibold">Dashboard</h1>
+              <p className="text-gray-600 mt-1">
+                Location: <span className="badge">{locationId}</span>
+              </p>
+            </div>
           </div>
           <a className="btn primary" href={`/app/invites${qs}`}>Invite Drivers</a>
         </header>
