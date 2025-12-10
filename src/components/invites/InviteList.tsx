@@ -108,7 +108,7 @@ export default function InviteList({ locationId }: { locationId: string }) {
       setErr(null);
       try {
         const idToken = await authUser.getIdToken(true);
-        const r = await fetch(`/api/location-users/manage?location_id=${encodeURIComponent(locationId)}`, {
+        const r = await fetch(`/api/location-users/manage?location_id=${encodeURIComponent(locationId)}&idToken=${encodeURIComponent(idToken)}`, {
           headers: { Authorization: `Bearer ${idToken}`, "Cache-Control": "no-store" },
         });
         const parsed = (await r.json().catch(() => ({}))) as ManageResp;
@@ -149,7 +149,7 @@ export default function InviteList({ locationId }: { locationId: string }) {
           Authorization: `Bearer ${idToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ locationId, ghlUserId: userId, active: next }),
+        body: JSON.stringify({ locationId, ghlUserId: userId, active: next, idToken }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; activeCount?: number; activeLimit?: number };
       if (!res.ok || data.error) {

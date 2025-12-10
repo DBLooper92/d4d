@@ -33,12 +33,26 @@ function cacheHeaders() {
   return { "Cache-Control": "no-store" };
 }
 
-function extractIdToken(req: Request): string | null {
+function extractIdToken(req: Request, body?: ToggleBody): string | null {
   const authz = req.headers.get("authorization") || "";
   const bearer = authz.match(/Bearer\\s+(.+)/i);
   if (bearer?.[1]) return bearer[1].trim();
   const headerToken = req.headers.get("x-id-token");
   if (headerToken && headerToken.trim()) return headerToken.trim();
+
+  try {
+    const url = new URL(req.url);
+    const qp = url.searchParams.get("idToken") || url.searchParams.get("id_token");
+    if (qp && qp.trim()) return qp.trim();
+  } catch {
+    /* ignore */
+  }
+
+  if (body && typeof (body as Record<string, unknown>).idToken === "string") {
+    const bodyToken = (body as Record<string, unknown>).idToken as string;
+    if (bodyToken.trim()) return bodyToken.trim();
+  }
+
   return null;
 }
 
@@ -61,7 +75,14 @@ function extractLocationId(req: Request, body?: ToggleBody): string {
 }
 
 async function requireAuth(req: Request) {
-  const token = extractIdToken(req);
+  let body: ToggleBody | undefined;
+  try {
+    body = (await req.clone().json()) as ToggleBody;
+  } catch {
+    /* ignore */
+  }
+
+  const token = extractIdToken(req, body);
   if (!token) {
     return { error: NextResponse.json({ error: "Missing auth token" }, { status: 401, headers: cacheHeaders() }) };
   }

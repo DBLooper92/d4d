@@ -42,3 +42,4 @@ next-env.d.ts
 
 # local examples / not for deploy
 example_files/
+docs/
