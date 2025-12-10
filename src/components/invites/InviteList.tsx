@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { onAuthStateChanged, type User } from "firebase/auth";
 import { getFirebaseAuth } from "@/lib/firebaseClient";
 
 type GhlUser = {
@@ -23,6 +24,8 @@ type ManageResp = {
 
 export default function InviteList({ locationId }: { locationId: string }) {
   const auth = useMemo(() => getFirebaseAuth(), []);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [items, setItems] = useState<ManagedUser[]>([]);
@@ -85,14 +88,26 @@ export default function InviteList({ locationId }: { locationId: string }) {
   }
 
   useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setAuthUser(u);
+      setAuthReady(true);
+    });
+    return () => unsub();
+  }, [auth]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (!authReady) return;
+      if (!authUser) {
+        setErr("Not signed in.");
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setErr(null);
       try {
-        const user = auth.currentUser;
-        if (!user) throw new Error("Not signed in.");
-        const idToken = await user.getIdToken();
+        const idToken = await authUser.getIdToken(true);
         const r = await fetch(`/api/location-users/manage?location_id=${encodeURIComponent(locationId)}`, {
           headers: { Authorization: `Bearer ${idToken}`, "Cache-Control": "no-store" },
         });
@@ -115,7 +130,7 @@ export default function InviteList({ locationId }: { locationId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [auth, locationId]);
+  }, [authReady, authUser, locationId]);
 
   async function toggleActive(user: ManagedUser) {
     if (user.isAdmin) return; // admin always active
@@ -126,9 +141,8 @@ export default function InviteList({ locationId }: { locationId: string }) {
     const prev = items;
     setItems((list) => list.map((u) => (u.id === userId ? { ...u, active: next } : u)));
     try {
-      const currentUser = auth.currentUser;
-      if (!currentUser) throw new Error("Not signed in.");
-      const idToken = await currentUser.getIdToken();
+      if (!authUser) throw new Error("Not signed in.");
+      const idToken = await authUser.getIdToken(true);
       const res = await fetch("/api/location-users/manage", {
         method: "POST",
         headers: {
