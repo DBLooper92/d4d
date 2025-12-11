@@ -5,6 +5,8 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   collection,
+  doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -36,6 +38,33 @@ type Props = {
 
 type GhlUser = { id: string; name?: string | null; email?: string | null; role?: string | null };
 type ManageUser = GhlUser & { firebaseUid?: string | null };
+
+function extractDisplayName(data: Record<string, unknown>): string | null {
+  const first = typeof data.firstName === "string" ? data.firstName.trim() : "";
+  const last = typeof data.lastName === "string" ? data.lastName.trim() : "";
+  const composed = [first, last].filter(Boolean).join(" ").trim();
+  if (composed) return composed;
+
+  const nameFields: Array<keyof typeof data> = ["name", "displayName", "fullName"];
+  for (const key of nameFields) {
+    const raw = data[key];
+    if (typeof raw === "string" && raw.trim()) return raw.trim();
+  }
+
+  const email = typeof data.email === "string" ? data.email.trim() : "";
+  return email || null;
+}
+
+function extractGhlUserId(data: Record<string, unknown>): string {
+  if (typeof (data as { ghlUserId?: unknown }).ghlUserId === "string") {
+    return ((data as { ghlUserId?: string }).ghlUserId as string).trim();
+  }
+  const nested = (data as { ghl?: { userId?: unknown } }).ghl;
+  if (nested && typeof nested.userId === "string") {
+    return nested.userId.trim();
+  }
+  return "";
+}
 
 function toMillis(value: unknown): number | null {
   if (!value) return null;
@@ -459,21 +488,10 @@ export default function DashboardInsights({ locationId }: Props) {
           snap.forEach((docSnap) => {
             const data = (docSnap.data() || {}) as Record<string, unknown>;
             const uid = docSnap.id;
-            const first = typeof data.firstName === "string" ? data.firstName.trim() : "";
-            const last = typeof data.lastName === "string" ? data.lastName.trim() : "";
-            const name = [first, last].filter(Boolean).join(" ").trim();
-            const email =
-              typeof data.email === "string" && data.email.trim() ? data.email.trim() : null;
-            const display = name || email || null;
+            const display = extractDisplayName(data);
             if (display) {
               if (!map[uid]) map[uid] = display;
-              const ghlId =
-                typeof (data as { ghlUserId?: unknown }).ghlUserId === "string"
-                  ? ((data as { ghlUserId?: string }).ghlUserId as string)
-                  : (data as { ghl?: { userId?: unknown } }).ghl &&
-                      typeof (data as { ghl?: { userId?: unknown } }).ghl?.userId === "string"
-                    ? (((data as { ghl?: { userId?: string } }).ghl?.userId as string) ?? "")
-                    : "";
+              const ghlId = extractGhlUserId(data);
               if (ghlId && !map[ghlId]) map[ghlId] = display;
             }
           });
@@ -491,6 +509,66 @@ export default function DashboardInsights({ locationId }: Props) {
       cancelled = true;
     };
   }, [locationId]);
+
+  useEffect(() => {
+    if (!locationId) return;
+
+    const uniqueIds = Array.from(
+      new Set(
+        submissions
+          .map((s) => (s.createdByUserId || "").trim())
+          .filter((id): id is string => Boolean(id)),
+      )
+    );
+    const missing = uniqueIds.filter((id) => !userNames[id]);
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    async function hydrateMissingUsers() {
+      const db = getFirebaseFirestore();
+      const updates: Record<string, string> = {};
+
+      await Promise.all(
+        missing.map(async (id) => {
+          try {
+            const locSnap = await getDoc(doc(db, "locations", locationId, "users", id));
+            let source = locSnap.exists()
+              ? ((locSnap.data() || {}) as Record<string, unknown>)
+              : null;
+            let display = source ? extractDisplayName(source) : null;
+            let ghlId = source ? extractGhlUserId(source) : "";
+
+            if (!display) {
+              const rootSnap = await getDoc(doc(db, "users", id));
+              if (rootSnap.exists()) {
+                source = (rootSnap.data() || {}) as Record<string, unknown>;
+                display = extractDisplayName(source);
+                if (!ghlId) ghlId = extractGhlUserId(source);
+              }
+            }
+
+            if (display) {
+              updates[id] = display;
+              if (ghlId && !updates[ghlId] && !userNames[ghlId]) {
+                updates[ghlId] = display;
+              }
+            }
+          } catch {
+            /* ignore missing users */
+          }
+        }),
+      );
+
+      if (!cancelled && Object.keys(updates).length) {
+        setUserNames((prev) => ({ ...prev, ...updates }));
+      }
+    }
+
+    void hydrateMissingUsers();
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId, submissions, userNames]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { submitted: 0, pending: 0, failed: 0 };
