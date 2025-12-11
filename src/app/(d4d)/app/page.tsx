@@ -55,17 +55,25 @@ return (
   <RequireLocationAuth>
     <main className="p-6 max-w-4xl mx-auto">
 
-        <header className="hero card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1.25rem" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+        <header className="hero card" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1.5rem", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: "0.35rem" }}>
+            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Toggle Skiptrace</div>
             <SkiptraceToggle locationId={locationId} />
-            <div>
-              <h1 className="text-2xl font-semibold">Dashboard</h1>
-              <p className="text-gray-600 mt-1">
-                Location: <span className="badge">{locationId}</span>
-              </p>
-            </div>
+            <p style={{ margin: 0, color: "#475569", fontSize: "0.95rem", maxWidth: "34ch" }}>
+              Turn this on to auto skiptrace new properties. A $0.15 charge applies to each property processed while enabled.
+            </p>
           </div>
-          <a className="btn primary" href={`/app/invites${qs}`}>Invite Drivers</a>
+          <div style={{ display: "grid", gap: "0.65rem", justifyItems: "end", textAlign: "right" }}>
+            <div style={{ fontSize: "0.95rem", color: "#475569" }}>Location</div>
+            <div className="badge" style={{ fontWeight: 700, fontSize: "1rem" }}>{locationId}</div>
+            <a
+              className="btn primary"
+              href={`/app/invites${qs}`}
+              style={{ padding: "0.65rem 1.1rem", fontWeight: 600, minWidth: "140px", textAlign: "center", boxShadow: "0 8px 16px rgba(37,99,235,0.18)" }}
+            >
+              Invite Drivers
+            </a>
+          </div>
         </header>
 
         <section className="mt-4 card">
