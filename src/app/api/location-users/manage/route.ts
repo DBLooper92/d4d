@@ -152,10 +152,13 @@ async function loadLocationUsers(locationId: string): Promise<Record<string, Loc
   const map: Record<string, LocUserRecord> = {};
   snap.forEach((doc) => {
     const data = (doc.data() || {}) as Record<string, unknown>;
-    const ghlUserId =
-      (typeof data.ghlUserId === "string" && data.ghlUserId.trim()) ||
-      (data.ghl && typeof (data.ghl as { userId?: string }).userId === "string" && (data.ghl as { userId?: string }).userId) ||
-      null;
+    let ghlUserId: string | null = null;
+    if (typeof data.ghlUserId === "string" && data.ghlUserId.trim()) {
+      ghlUserId = data.ghlUserId.trim();
+    } else if (data.ghl && typeof (data.ghl as { userId?: string }).userId === "string") {
+      const val = (data.ghl as { userId?: string }).userId;
+      if (val && val.trim()) ghlUserId = val.trim();
+    }
     if (ghlUserId) {
       map[ghlUserId] = {
         uid: doc.id,
