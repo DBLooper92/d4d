@@ -1,6 +1,7 @@
 // src/app/(d4d)/app/page.tsx
 import RequireLocationAuth from "@/components/auth/RequireLocationAuth";
 import SkiptraceToggle from "@/components/dashboard/SkiptraceToggle";
+import DashboardInsights from "@/components/dashboard/DashboardInsights";
 
 type PageParamRecord = Record<string, string | string[] | undefined>;
 type SearchParamRecord = Record<string, string | string[] | undefined>;
@@ -68,8 +69,12 @@ return (
         </header>
 
         <section className="mt-4 card">
-          <p className="text-gray-700">Welcome! Your minimal location dashboard is ready.</p>
+          <p className="text-gray-700">
+            Live view of submissions, markers, and driver output for this location.
+          </p>
         </section>
+
+        <DashboardInsights locationId={locationId} />
       </main>
     </RequireLocationAuth>
   );

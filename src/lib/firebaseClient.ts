@@ -1,8 +1,10 @@
 // src/lib/firebaseClient.ts
 import { getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
 
 let app: FirebaseApp | undefined;
+let firestore: Firestore | undefined;
 
 function getClientConfig() {
   // IMPORTANT: reference envs statically so Next can inline them at build time
@@ -38,4 +40,11 @@ export function getFirebaseApp(): FirebaseApp {
 
 export function getFirebaseAuth(): Auth {
   return getAuth(getFirebaseApp());
+}
+
+export function getFirebaseFirestore(): Firestore {
+  if (!firestore) {
+    firestore = getFirestore(getFirebaseApp());
+  }
+  return firestore;
 }
