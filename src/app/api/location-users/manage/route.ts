@@ -152,20 +152,19 @@ async function loadLocationUsers(locationId: string): Promise<Record<string, Loc
   const map: Record<string, LocUserRecord> = {};
   snap.forEach((doc) => {
     const data = (doc.data() || {}) as Record<string, unknown>;
-    let ghlUserId: string | null = null;
-    if (typeof data.ghlUserId === "string" && data.ghlUserId.trim()) {
-      ghlUserId = data.ghlUserId.trim();
-    } else if (data.ghl && typeof (data.ghl as { userId?: string }).userId === "string") {
-      const val = (data.ghl as { userId?: string }).userId;
-      if (val && val.trim()) ghlUserId = val.trim();
-    }
-    if (ghlUserId) {
-      map[ghlUserId] = {
-        uid: doc.id,
-        isAdmin: Boolean((data as { isAdmin?: boolean; role?: string }).isAdmin) || (data as { role?: string }).role === "admin",
-        ghlUserId,
-      };
-    }
+    const rawGhlUserId =
+      typeof data.ghlUserId === "string"
+        ? data.ghlUserId
+        : data.ghl && typeof (data.ghl as { userId?: unknown }).userId === "string"
+          ? ((data.ghl as { userId?: string }).userId as string)
+          : "";
+    const ghlUserId = rawGhlUserId.trim();
+    if (!ghlUserId) return;
+    map[ghlUserId] = {
+      uid: doc.id,
+      isAdmin: Boolean((data as { isAdmin?: boolean; role?: string }).isAdmin) || (data as { role?: string }).role === "admin",
+      ghlUserId,
+    };
   });
   return map;
 }
