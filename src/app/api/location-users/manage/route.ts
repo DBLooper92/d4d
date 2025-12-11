@@ -41,11 +41,11 @@ type ToggleBody = {
 
 type InviteMeta = {
   status?: string | null;
-  invitedAt?: number | null;
-  lastSentAt?: number | null;
+  invitedAt?: number | Timestamp | null;
+  lastSentAt?: number | Timestamp | null;
   invitedBy?: string | null;
   firebaseUid?: string | null;
-  acceptedAt?: number | null;
+  acceptedAt?: number | Timestamp | null;
 };
 
 function cacheHeaders() {
