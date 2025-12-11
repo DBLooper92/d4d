@@ -13,6 +13,7 @@ import {
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { getFirebaseFirestore, getFirebaseAuth } from "@/lib/firebaseClient";
+import { getDocs } from "firebase/firestore";
 
 type SubmissionDoc = {
   id: string;
@@ -446,6 +447,35 @@ export default function DashboardInsights({ locationId }: Props) {
             const display = (u.name && u.name.trim()) || (u.email && u.email.trim());
             if (!display || !u.id) return;
             if (!map[u.id]) map[u.id] = display;
+          });
+        } catch {
+          /* ignore */
+        }
+
+        // 3) Firestore location users (captures accepted drivers with names)
+        try {
+          const db = getFirebaseFirestore();
+          const snap = await getDocs(collection(db, "locations", locationId, "users"));
+          snap.forEach((docSnap) => {
+            const data = (docSnap.data() || {}) as Record<string, unknown>;
+            const uid = docSnap.id;
+            const first = typeof data.firstName === "string" ? data.firstName.trim() : "";
+            const last = typeof data.lastName === "string" ? data.lastName.trim() : "";
+            const name = [first, last].filter(Boolean).join(" ").trim();
+            const email =
+              typeof data.email === "string" && data.email.trim() ? data.email.trim() : null;
+            const display = name || email || null;
+            if (display) {
+              if (!map[uid]) map[uid] = display;
+              const ghlId =
+                typeof (data as { ghlUserId?: unknown }).ghlUserId === "string"
+                  ? ((data as { ghlUserId?: string }).ghlUserId as string)
+                  : (data as { ghl?: { userId?: unknown } }).ghl &&
+                      typeof (data as { ghl?: { userId?: unknown } }).ghl?.userId === "string"
+                    ? (((data as { ghl?: { userId?: string } }).ghl?.userId as string) ?? "")
+                    : "";
+              if (ghlId && !map[ghlId]) map[ghlId] = display;
+            }
           });
         } catch {
           /* ignore */
