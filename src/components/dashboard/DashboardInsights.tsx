@@ -444,7 +444,14 @@ export default function DashboardInsights({ locationId }: Props) {
         const trimmed = id.trim();
         if (!trimmed) return "Unassigned";
         const short = trimmed.length > 6 ? trimmed.slice(0, 6) : trimmed;
-        return userNames[trimmed] ?? userNames[short] ?? `${fallbackPrefix} ${short}`;
+        if (userNames[trimmed]) return userNames[trimmed];
+        if (userNames[short]) return userNames[short];
+
+        // As a last resort, try to match by prefix against any stored ids (helps if we only stored full IDs)
+        const prefixHit = Object.entries(userNames).find(([key]) => key.startsWith(short));
+        if (prefixHit) return prefixHit[1];
+
+        return `${fallbackPrefix} ${short}`;
       },
     [userNames],
   );
