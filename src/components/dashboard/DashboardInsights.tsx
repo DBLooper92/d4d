@@ -71,6 +71,15 @@ function cleanFirebaseUid(data: Record<string, unknown>): string {
   return typeof uid === "string" ? uid.trim() : "";
 }
 
+function storeDisplay(target: Record<string, string>, id: string | null | undefined, display: string | null | undefined) {
+  const key = (id || "").trim();
+  const value = (display || "").trim();
+  if (!key || !value) return;
+  if (!target[key]) target[key] = value;
+  const short = key.length > 6 ? key.slice(0, 6) : "";
+  if (short && !target[short]) target[short] = value;
+}
+
 function toMillis(value: unknown): number | null {
   if (!value) return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -458,8 +467,8 @@ export default function DashboardInsights({ locationId }: Props) {
           users.forEach((u) => {
             const display = (u.name && u.name.trim()) || (u.email && u.email.trim());
             if (!display) return;
-            if (u.firebaseUid) map[u.firebaseUid] = display;
-            if (u.id) map[u.id] = display;
+            storeDisplay(map, u.firebaseUid, display);
+            storeDisplay(map, u.id, display);
           });
         } catch {
           /* non-fatal */
@@ -480,7 +489,7 @@ export default function DashboardInsights({ locationId }: Props) {
           users.forEach((u) => {
             const display = (u.name && u.name.trim()) || (u.email && u.email.trim());
             if (!display || !u.id) return;
-            if (!map[u.id]) map[u.id] = display;
+            storeDisplay(map, u.id, display);
           });
         } catch {
           /* ignore */
@@ -498,9 +507,9 @@ export default function DashboardInsights({ locationId }: Props) {
                 if (!raw || typeof raw !== "object") return;
                 const entry = raw as Record<string, unknown>;
                 const display = extractDisplayName(entry);
-                if (display && !map[ghlUserId]) map[ghlUserId] = display;
+                storeDisplay(map, ghlUserId, display || null);
                 const firebaseUid = cleanFirebaseUid(entry);
-                if (display && firebaseUid && !map[firebaseUid]) map[firebaseUid] = display;
+                storeDisplay(map, firebaseUid, display || null);
               });
             }
           }
@@ -517,9 +526,9 @@ export default function DashboardInsights({ locationId }: Props) {
             const uid = docSnap.id;
             const display = extractDisplayName(data);
             if (display) {
-              if (!map[uid]) map[uid] = display;
+              storeDisplay(map, uid, display);
               const ghlId = extractGhlUserId(data);
-              if (ghlId && !map[ghlId]) map[ghlId] = display;
+              storeDisplay(map, ghlId, display);
             }
           });
         } catch {
@@ -575,10 +584,8 @@ export default function DashboardInsights({ locationId }: Props) {
             }
 
             if (display) {
-              updates[id] = display;
-              if (ghlId && !updates[ghlId] && !userNames[ghlId]) {
-                updates[ghlId] = display;
-              }
+              storeDisplay(updates, id, display);
+              storeDisplay(updates, ghlId, display);
             }
           } catch {
             /* ignore missing users */
