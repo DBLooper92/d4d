@@ -66,6 +66,11 @@ function extractGhlUserId(data: Record<string, unknown>): string {
   return "";
 }
 
+function cleanFirebaseUid(data: Record<string, unknown>): string {
+  const uid = (data as { firebaseUid?: unknown }).firebaseUid;
+  return typeof uid === "string" ? uid.trim() : "";
+}
+
 function toMillis(value: unknown): number | null {
   if (!value) return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -481,7 +486,29 @@ export default function DashboardInsights({ locationId }: Props) {
           /* ignore */
         }
 
-        // 3) Firestore location users (captures accepted drivers with names)
+        // 3) Location user directory map (populated by manage endpoint)
+        try {
+          const db = getFirebaseFirestore();
+          const locSnap = await getDoc(doc(db, "locations", locationId));
+          if (locSnap.exists()) {
+            const data = (locSnap.data() || {}) as Record<string, unknown>;
+            const dir = (data as { userDirectory?: Record<string, unknown> }).userDirectory;
+            if (dir && typeof dir === "object") {
+              Object.entries(dir).forEach(([ghlUserId, raw]) => {
+                if (!raw || typeof raw !== "object") return;
+                const entry = raw as Record<string, unknown>;
+                const display = extractDisplayName(entry);
+                if (display && !map[ghlUserId]) map[ghlUserId] = display;
+                const firebaseUid = cleanFirebaseUid(entry);
+                if (display && firebaseUid && !map[firebaseUid]) map[firebaseUid] = display;
+              });
+            }
+          }
+        } catch {
+          /* non-fatal */
+        }
+
+        // 4) Firestore location users (captures accepted drivers with names)
         try {
           const db = getFirebaseFirestore();
           const snap = await getDocs(collection(db, "locations", locationId, "users"));

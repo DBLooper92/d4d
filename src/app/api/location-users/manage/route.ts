@@ -52,6 +52,24 @@ function cacheHeaders() {
   return { "Cache-Control": "no-store" };
 }
 
+function cleanString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function pickDisplayName(data: { name?: unknown; fullName?: unknown; displayName?: unknown; email?: unknown }): string | null {
+  const candidates: Array<string | null> = [
+    cleanString(data.name),
+    cleanString(data.fullName),
+    cleanString(data.displayName),
+  ];
+  for (const c of candidates) {
+    if (c) return c;
+  }
+  return cleanString(data.email);
+}
+
 function extractIdToken(req: Request, body?: ToggleBody): string | null {
   const authz = req.headers.get("authorization") || "";
   const bearer = authz.match(/Bearer\\s+(.+)/i);
@@ -213,7 +231,11 @@ export async function GET(req: Request) {
   const adminGhlUserId = adminCheck.adminGhlUserId;
 
   const locSnap = await db().collection("locations").doc(locationId).get();
-  const locData = (locSnap.data() || {}) as { activeUsers?: Record<string, boolean>; invites?: Record<string, InviteMeta> };
+  const locData = (locSnap.data() || {}) as {
+    activeUsers?: Record<string, boolean>;
+    invites?: Record<string, InviteMeta>;
+    userDirectory?: Record<string, { name?: string; email?: string; role?: string; firebaseUid?: string | null }>;
+  };
   const activeUsers = { ...(locData.activeUsers || {}) };
   const invites = { ...(locData.invites || {}) } as Record<string, InviteMeta>;
   const locUsers = await loadLocationUsers(locationId);
@@ -296,6 +318,59 @@ export async function GET(req: Request) {
 
     return { ...u, active, isAdmin, invited, inviteStatus, invitedAt, firebaseUid, accepted };
   });
+
+  // Persist a directory of GHL users with display metadata for dashboard lookups.
+  try {
+    const existingDirectory = (locData.userDirectory || {}) as Record<
+      string,
+      { name?: string; email?: string; role?: string; firebaseUid?: string | null }
+    >;
+    const patch: Record<string, { name?: string; email?: string; role?: string; firebaseUid?: string | null }> = {};
+
+    mapped.forEach((u) => {
+      const userId = cleanString(u.id);
+      if (!userId) return;
+      const nextName = pickDisplayName(u);
+      const nextEmail = cleanString(u.email);
+      const nextRole = cleanString(u.role);
+      const nextFirebaseUid = cleanString(u.firebaseUid);
+      const current = existingDirectory[userId] || {};
+      const updated: { name?: string; email?: string; role?: string; firebaseUid?: string | null } = { ...current };
+      let dirty = false;
+
+      if (nextName && nextName !== current.name) {
+        updated.name = nextName;
+        dirty = true;
+      }
+      if (nextEmail && nextEmail !== current.email) {
+        updated.email = nextEmail;
+        dirty = true;
+      }
+      if (nextRole && nextRole !== current.role) {
+        updated.role = nextRole;
+        dirty = true;
+      }
+      if (nextFirebaseUid && nextFirebaseUid !== current.firebaseUid) {
+        updated.firebaseUid = nextFirebaseUid;
+        dirty = true;
+      }
+
+      if (dirty) {
+        patch[userId] = updated;
+      }
+    });
+
+    if (Object.keys(patch).length) {
+      const docRef = db().collection("locations").doc(locationId);
+      const data: Record<string, unknown> = {};
+      Object.entries(patch).forEach(([userId, entry]) => {
+        data[`userDirectory.${userId}`] = entry;
+      });
+      await docRef.set(data, { merge: true });
+    }
+  } catch {
+    /* non-fatal directory persistence */
+  }
 
   const activeCount = computeActiveCount(activeUsers, adminGhlUserId);
 
