@@ -437,6 +437,18 @@ export default function DashboardInsights({ locationId }: Props) {
   const { submissions, markers, loading } = useLocationStreams(locationId);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
 
+  const resolveUserName = useMemo(
+    () =>
+      (id: string | null | undefined, fallbackPrefix = "User") => {
+        if (!id) return "Unassigned";
+        const trimmed = id.trim();
+        if (!trimmed) return "Unassigned";
+        const short = trimmed.length > 6 ? trimmed.slice(0, 6) : trimmed;
+        return userNames[trimmed] ?? userNames[short] ?? `${fallbackPrefix} ${short}`;
+      },
+    [userNames],
+  );
+
   useEffect(() => {
     let cancelled = false;
     async function loadUsers() {
@@ -632,14 +644,11 @@ export default function DashboardInsights({ locationId }: Props) {
     });
     const entries = Array.from(grouped.entries()).sort((a, b) => b[1] - a[1]);
     return entries.map(([label, value], idx) => ({
-      label:
-        label === "Unassigned"
-          ? "Unassigned"
-          : userNames[label] ?? `User ${label.slice(0, 6)}`,
+      label: resolveUserName(label),
       value,
       color: palette[idx % palette.length],
     }));
-  }, [submissions, userNames]);
+  }, [submissions, resolveUserName]);
 
   const last7Days = useMemo(() => {
     const today = new Date();
@@ -776,7 +785,7 @@ export default function DashboardInsights({ locationId }: Props) {
                   <div style={{ marginTop: "6px", display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
                     <span className="badge-muted badge">
                       {s.createdByUserId
-                        ? `Owner: ${userNames[s.createdByUserId] ?? s.createdByUserId}`
+                        ? `Owner: ${resolveUserName(s.createdByUserId, "User")}`
                         : "Unassigned"}
                     </span>
                     <span className="badge-muted badge">
