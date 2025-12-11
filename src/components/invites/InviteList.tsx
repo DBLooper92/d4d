@@ -230,7 +230,7 @@ export default function InviteList({ locationId }: { locationId: string }) {
         const inviteError = state?.status === "error" ? state.error : null;
         const toggleDisabled = savingId === u.id || u.isAdmin || !u.accepted;
         const isActive = u.isAdmin ? true : u.active;
-        const showInviteButton = !u.firebaseUid;
+        const showInviteButton = !u.firebaseUid && !u.isAdmin;
         const inviteLabel = u.invited ? "Resend Invite" : "Send Invite";
         return (
           <div key={u.id} className="card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
