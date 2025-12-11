@@ -401,27 +401,56 @@ export default function DashboardInsights({ locationId }: Props) {
         return;
       }
       try {
-        const auth = getFirebaseAuth();
-        const token = await auth.currentUser?.getIdToken();
-        const res = await fetch(
-          `/api/location-users/manage?locationId=${encodeURIComponent(locationId)}`,
-          {
-            cache: "no-store",
-            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-          }
-        );
-        const json = (await res.json().catch(() => ({}))) as
-          | { users?: ManageUser[] }
-          | { data?: { users?: ManageUser[] } };
-        const users = (json as { users?: ManageUser[] }).users ??
-          (json as { data?: { users?: ManageUser[] } }).data?.users ??
-          [];
         const map: Record<string, string> = {};
-        users.forEach((u) => {
-          const display = (u.name && u.name.trim()) || (u.email && u.email.trim());
-          if (u.firebaseUid && display) map[u.firebaseUid] = display;
-          if (u.id && display) map[u.id] = display;
-        });
+
+        // 1) Authenticated manage endpoint (includes firebaseUid)
+        try {
+          const auth = getFirebaseAuth();
+          const token = await auth.currentUser?.getIdToken();
+          const res = await fetch(
+            `/api/location-users/manage?locationId=${encodeURIComponent(locationId)}`,
+            {
+              cache: "no-store",
+              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            }
+          );
+          const json = (await res.json().catch(() => ({}))) as
+            | { users?: ManageUser[] }
+            | { data?: { users?: ManageUser[] } };
+          const users = (json as { users?: ManageUser[] }).users ??
+            (json as { data?: { users?: ManageUser[] } }).data?.users ??
+            [];
+          users.forEach((u) => {
+            const display = (u.name && u.name.trim()) || (u.email && u.email.trim());
+            if (!display) return;
+            if (u.firebaseUid) map[u.firebaseUid] = display;
+            if (u.id) map[u.id] = display;
+          });
+        } catch {
+          /* non-fatal */
+        }
+
+        // 2) Public location-users endpoint as fallback (id/name/email)
+        try {
+          const res = await fetch(
+            `/api/ghl/location-users?location_id=${encodeURIComponent(locationId)}`,
+            { cache: "no-store" }
+          );
+          const json = (await res.json().catch(() => ({}))) as
+            | { users?: GhlUser[] }
+            | { data?: { users?: GhlUser[] } };
+          const users = (json as { users?: GhlUser[] }).users ??
+            (json as { data?: { users?: GhlUser[] } }).data?.users ??
+            [];
+          users.forEach((u) => {
+            const display = (u.name && u.name.trim()) || (u.email && u.email.trim());
+            if (!display || !u.id) return;
+            if (!map[u.id]) map[u.id] = display;
+          });
+        } catch {
+          /* ignore */
+        }
+
         if (!cancelled) setUserNames(map);
       } catch {
         if (!cancelled) setUserNames({});
