@@ -33,6 +33,8 @@ type Props = {
   locationId: string;
 };
 
+type GhlUser = { id: string; name?: string | null; email?: string | null };
+
 function toMillis(value: unknown): number | null {
   if (!value) return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -388,6 +390,41 @@ function DashboardMap({ markers }: { markers: MarkerDoc[] }) {
 
 export default function DashboardInsights({ locationId }: Props) {
   const { submissions, markers, loading } = useLocationStreams(locationId);
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadUsers() {
+      if (!locationId) {
+        setUserNames({});
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/ghl/location-users?location_id=${encodeURIComponent(locationId)}`,
+          { cache: "no-store" }
+        );
+        const json = (await res.json().catch(() => ({}))) as
+          | { users?: GhlUser[] }
+          | { data?: { users?: GhlUser[] } };
+        const users = (json as { users?: GhlUser[] }).users ??
+          (json as { data?: { users?: GhlUser[] } }).data?.users ??
+          [];
+        const map: Record<string, string> = {};
+        users.forEach((u) => {
+          if (!u?.id) return;
+          map[u.id] = (u.name && u.name.trim()) || (u.email && u.email.trim()) || u.id;
+        });
+        if (!cancelled) setUserNames(map);
+      } catch {
+        if (!cancelled) setUserNames({});
+      }
+    }
+    void loadUsers();
+    return () => {
+      cancelled = true;
+    };
+  }, [locationId]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { submitted: 0, pending: 0, failed: 0 };
@@ -417,11 +454,14 @@ export default function DashboardInsights({ locationId }: Props) {
     });
     const entries = Array.from(grouped.entries()).sort((a, b) => b[1] - a[1]);
     return entries.map(([label, value], idx) => ({
-      label,
+      label:
+        label === "Unassigned"
+          ? "Unassigned"
+          : userNames[label] ?? `User ${label.slice(0, 6)}`,
       value,
       color: palette[idx % palette.length],
     }));
-  }, [submissions]);
+  }, [submissions, userNames]);
 
   const last7Days = useMemo(() => {
     const today = new Date();
@@ -492,7 +532,6 @@ export default function DashboardInsights({ locationId }: Props) {
             <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
               Submissions by person
             </h3>
-            <span className="badge-muted badge">donut</span>
           </div>
           <DonutChart data={donutData} />
         </div>
@@ -502,7 +541,6 @@ export default function DashboardInsights({ locationId }: Props) {
             <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
               Last 7 days
             </h3>
-            <span className="badge-muted badge">trend</span>
           </div>
           <MiniBars data={last7Days} />
         </div>
@@ -521,7 +559,6 @@ export default function DashboardInsights({ locationId }: Props) {
             <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
               Map coverage
             </h3>
-            <span className="badge-muted badge">live markers</span>
           </div>
           <DashboardMap markers={markers} />
         </div>
@@ -531,7 +568,6 @@ export default function DashboardInsights({ locationId }: Props) {
             <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
               Recent submissions
             </h3>
-            <span className="badge-muted badge">latest</span>
           </div>
           <div style={{ display: "grid", gap: "10px" }}>
             {recent.length === 0 ? (
@@ -561,7 +597,9 @@ export default function DashboardInsights({ locationId }: Props) {
                   </div>
                   <div style={{ marginTop: "6px", display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
                     <span className="badge-muted badge">
-                      {s.createdByUserId ? `Owner: ${s.createdByUserId}` : "Unassigned"}
+                      {s.createdByUserId
+                        ? `Owner: ${userNames[s.createdByUserId] ?? s.createdByUserId}`
+                        : "Unassigned"}
                     </span>
                     <span className="badge-muted badge">
                       Status: {(s.status || "pending").toLowerCase()}
