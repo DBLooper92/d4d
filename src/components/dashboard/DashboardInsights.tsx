@@ -477,13 +477,12 @@ export default function DashboardInsights({ locationId }: Props) {
         try {
           const auth = getFirebaseAuth();
           const token = await auth.currentUser?.getIdToken();
-          const res = await fetch(
-            `/api/location-users/manage?locationId=${encodeURIComponent(locationId)}`,
-            {
-              cache: "no-store",
-              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-            }
-          );
+          const qs = new URLSearchParams({ location_id: locationId });
+          if (token) qs.set("idToken", token);
+          const res = await fetch(`/api/location-users/manage?${qs.toString()}`, {
+            cache: "no-store",
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          });
           const json = (await res.json().catch(() => ({}))) as
             | { users?: ManageUser[] }
             | { data?: { users?: ManageUser[] } };
