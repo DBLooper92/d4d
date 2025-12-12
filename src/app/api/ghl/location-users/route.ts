@@ -17,8 +17,8 @@ function err(status: number, code: string, message: string) {
  * narrowed when extracting the list of users.
  */
 type GhlUsersResponse =
-  | { users?: Array<{ id: string; name?: string; email?: string; role?: string }> }
-  | { data?: { users?: Array<{ id: string; name?: string; email?: string; role?: string }> } };
+  | { users?: Array<{ id: string; name?: string; email?: string; role?: string; firstName?: string; lastName?: string }> }
+  | { data?: { users?: Array<{ id: string; name?: string; email?: string; role?: string; firstName?: string; lastName?: string }> } };
 
 export async function GET(req: Request) {
   try {

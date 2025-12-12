@@ -36,7 +36,14 @@ type Props = {
   locationId: string;
 };
 
-type GhlUser = { id: string; name?: string | null; email?: string | null; role?: string | null };
+type GhlUser = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+};
 type ManageUser = GhlUser & { firebaseUid?: string | null };
 
 function extractDisplayName(data: Record<string, unknown>): string | null {
@@ -484,7 +491,7 @@ export default function DashboardInsights({ locationId }: Props) {
             (json as { data?: { users?: ManageUser[] } }).data?.users ??
             [];
           users.forEach((u) => {
-            const display = (u.name && u.name.trim()) || (u.email && u.email.trim());
+            const display = extractDisplayName(u as Record<string, unknown>);
             if (!display) return;
             storeDisplay(map, u.firebaseUid, display);
             storeDisplay(map, u.id, display);
@@ -506,7 +513,7 @@ export default function DashboardInsights({ locationId }: Props) {
             (json as { data?: { users?: GhlUser[] } }).data?.users ??
             [];
           users.forEach((u) => {
-            const display = (u.name && u.name.trim()) || (u.email && u.email.trim());
+            const display = extractDisplayName(u as Record<string, unknown>);
             if (!display || !u.id) return;
             storeDisplay(map, u.id, display);
           });

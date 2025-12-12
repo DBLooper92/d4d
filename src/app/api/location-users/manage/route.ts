@@ -14,6 +14,8 @@ type ManageUser = {
   name?: string | null;
   email?: string | null;
   role?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
 };
 
 type ManageResponse = {
@@ -58,7 +60,19 @@ function cleanString(value: unknown): string | null {
   return trimmed.length ? trimmed : null;
 }
 
-function pickDisplayName(data: { name?: unknown; fullName?: unknown; displayName?: unknown; email?: unknown }): string | null {
+function pickDisplayName(data: {
+  name?: unknown;
+  fullName?: unknown;
+  displayName?: unknown;
+  email?: unknown;
+  firstName?: unknown;
+  lastName?: unknown;
+}): string | null {
+  const first = cleanString(data.firstName);
+  const last = cleanString(data.lastName);
+  const composed = [first, last].filter(Boolean).join(" ").trim();
+  if (composed) return composed;
+
   const candidates: Array<string | null> = [
     cleanString(data.name),
     cleanString(data.fullName),
@@ -149,9 +163,9 @@ async function requireLocationAdmin(uid: string, locationId: string) {
 
 async function fetchGhlUsers(locationId: string): Promise<ManageUser[]> {
   const accessToken = await getValidAccessTokenForLocation(locationId);
-  type GhlUsersResponse =
-    | { users?: Array<{ id: string; name?: string; email?: string; role?: string }> }
-    | { data?: { users?: Array<{ id: string; name?: string; email?: string; role?: string }> } };
+type GhlUsersResponse =
+  | { users?: Array<{ id: string; name?: string; email?: string; role?: string; firstName?: string; lastName?: string }> }
+  | { data?: { users?: Array<{ id: string; name?: string; email?: string; role?: string; firstName?: string; lastName?: string }> } };
   const json = await ghlFetch<GhlUsersResponse>("/users/", {
     accessToken,
     query: { locationId },
@@ -276,6 +290,7 @@ export async function GET(req: Request) {
 
   let changed = false;
   const mapped: ManageResponse["users"] = users.map((u) => {
+    const displayName = pickDisplayName({ ...u });
     const isAdmin = !!adminGhlUserId && u.id === adminGhlUserId;
     const locUser = locUsers[u.id];
     const firebaseUid = locUser?.uid ?? null;
@@ -316,7 +331,17 @@ export async function GET(req: Request) {
       changed = true;
     }
 
-    return { ...u, active, isAdmin, invited, inviteStatus, invitedAt, firebaseUid, accepted };
+    return {
+      ...u,
+      name: u.name ?? displayName ?? null,
+      active,
+      isAdmin,
+      invited,
+      inviteStatus,
+      invitedAt,
+      firebaseUid,
+      accepted,
+    };
   });
 
   // Persist a directory of GHL users with display metadata for dashboard lookups.
