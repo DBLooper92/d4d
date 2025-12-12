@@ -36,6 +36,27 @@ type Props = {
   locationId: string;
 };
 
+const palette = [
+  "#2563eb",
+  "#10b981",
+  "#f59e0b",
+  "#8b5cf6",
+  "#ec4899",
+  "#0ea5e9",
+  "#f97316",
+  "#22c55e",
+  "#14b8a6",
+  "#e11d48",
+];
+
+function hashToIndex(str: string, mod: number): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  return h % mod;
+}
+
 type GhlUser = {
   id: string;
   name?: string | null;
@@ -76,6 +97,11 @@ function extractGhlUserId(data: Record<string, unknown>): string {
 function cleanFirebaseUid(data: Record<string, unknown>): string {
   const uid = (data as { firebaseUid?: unknown }).firebaseUid;
   return typeof uid === "string" ? uid.trim() : "";
+}
+
+function colorForUser(id: string | null | undefined): string {
+  const key = (id || "Unassigned").trim() || "Unassigned";
+  return palette[hashToIndex(key, palette.length)];
 }
 
 function storeDisplay(target: Record<string, string>, id: string | null | undefined, display: string | null | undefined) {
@@ -641,25 +667,16 @@ export default function DashboardInsights({ locationId }: Props) {
   }, [submissions]);
 
   const donutData = useMemo<DonutDatum[]>(() => {
-    const palette = [
-      "#2563eb",
-      "#10b981",
-      "#f59e0b",
-      "#8b5cf6",
-      "#ec4899",
-      "#0ea5e9",
-      "#f97316",
-    ];
     const grouped = new Map<string, number>();
     submissions.forEach((s) => {
       const key = s.createdByUserId || "Unassigned";
       grouped.set(key, (grouped.get(key) ?? 0) + 1);
     });
     const entries = Array.from(grouped.entries()).sort((a, b) => b[1] - a[1]);
-    return entries.map(([label, value], idx) => ({
+    return entries.map(([label, value]) => ({
       label: resolveUserName(label),
       value,
-      color: palette[idx % palette.length],
+      color: colorForUser(label),
     }));
   }, [submissions, resolveUserName]);
 
@@ -682,6 +699,33 @@ export default function DashboardInsights({ locationId }: Props) {
   }, [submissions]);
 
   const recent = useMemo(() => submissions.slice(0, 6), [submissions]);
+
+  const userColorGuide = useMemo(
+    () => {
+      const counts = new Map<string, number>();
+      submissions.forEach((s) => {
+        const id = (s.createdByUserId || "Unassigned").trim() || "Unassigned";
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      });
+      Object.keys(userNames)
+        .filter((id) => id.length > 10) // likely full GHL/Firebase IDs, not short aliases
+        .forEach((id) => {
+          if (!counts.has(id)) counts.set(id, 0);
+        });
+      return Array.from(counts.entries())
+        .map(([id, count]) => ({
+          id,
+          name: resolveUserName(id),
+          color: colorForUser(id),
+          count,
+        }))
+        .sort((a, b) => {
+          if (b.count !== a.count) return b.count - a.count;
+          return a.name.localeCompare(b.name);
+        });
+    },
+    [submissions, userNames, resolveUserName],
+  );
 
   return (
     <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
@@ -746,6 +790,50 @@ export default function DashboardInsights({ locationId }: Props) {
         </div>
       </div>
 
+      <div className="card" style={{ margin: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+          <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Users & colors</h3>
+        </div>
+        {userColorGuide.length ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
+            {userColorGuide.map((u) => (
+              <div
+                key={u.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  padding: "8px 10px",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "10px",
+                  background: "#fff",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: "16px",
+                    height: "16px",
+                    borderRadius: "6px",
+                    background: u.color,
+                    border: "1px solid rgba(15,23,42,0.12)",
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+                  }}
+                />
+                <div style={{ display: "grid", gap: "2px" }}>
+                  <div style={{ fontWeight: 600, color: "#0f172a" }}>{u.name}</div>
+                  <div style={{ fontSize: "0.85rem", color: "#475569" }}>
+                    {u.count} submission{u.count === 1 ? "" : "s"}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>No users yet.</div>
+        )}
+      </div>
+
       <div
         style={{
           display: "grid",
@@ -773,40 +861,63 @@ export default function DashboardInsights({ locationId }: Props) {
             {recent.length === 0 ? (
               <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>Nothing yet.</div>
             ) : (
-              recent.map((s) => (
-                <div
-                  key={s.id}
-                  style={{
-                    padding: "10px 12px",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: "10px",
-                    background: "#fff",
-                    boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
-                    <div style={{ fontWeight: 600, color: "#0f172a" }}>
-                      {s.addressLabel || "No address label"}
+              recent.map((s) => {
+                const ownerId = s.createdByUserId || "Unassigned";
+                const ownerColor = colorForUser(ownerId);
+                return (
+                  <div
+                    key={s.id}
+                    style={{
+                      padding: "10px 12px",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: "10px",
+                      background: "#fff",
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
+                      <div style={{ fontWeight: 600, color: "#0f172a" }}>
+                        {s.addressLabel || "No address label"}
+                      </div>
+                      <div style={{ fontSize: "0.9rem", color: "#475569" }}>
+                        {s.createdAt ? new Date(s.createdAt).toLocaleString() : "—"}
+                      </div>
                     </div>
-                    <div style={{ fontSize: "0.9rem", color: "#475569" }}>
-                      {s.createdAt ? new Date(s.createdAt).toLocaleString() : "—"}
+                    <div style={{ marginTop: "4px", fontSize: "0.9rem", color: "#475569" }}>
+                      {s.coordinates ? `${s.coordinates.lat.toFixed(5)}, ${s.coordinates.lng.toFixed(5)}` : "No coordinates"}
+                    </div>
+                    <div style={{ marginTop: "6px", display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                      <span
+                        className="badge-muted badge"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          borderColor: `${ownerColor}33`,
+                          background: `${ownerColor}14`,
+                          color: "#0f172a",
+                        }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "999px",
+                            background: ownerColor,
+                          }}
+                        />
+                        {s.createdByUserId
+                          ? `Owner: ${resolveUserName(ownerId, "User")}`
+                          : "Unassigned"}
+                      </span>
+                      <span className="badge-muted badge">
+                        Status: {(s.status || "pending").toLowerCase()}
+                      </span>
                     </div>
                   </div>
-                  <div style={{ marginTop: "4px", fontSize: "0.9rem", color: "#475569" }}>
-                    {s.coordinates ? `${s.coordinates.lat.toFixed(5)}, ${s.coordinates.lng.toFixed(5)}` : "No coordinates"}
-                  </div>
-                  <div style={{ marginTop: "6px", display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-                    <span className="badge-muted badge">
-                      {s.createdByUserId
-                        ? `Owner: ${resolveUserName(s.createdByUserId, "User")}`
-                        : "Unassigned"}
-                    </span>
-                    <span className="badge-muted badge">
-                      Status: {(s.status || "pending").toLowerCase()}
-                    </span>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
