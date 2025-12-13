@@ -254,6 +254,12 @@ function useLocationStreams(locationId: string) {
 }
 
 type DonutDatum = { label: string; value: number; color: string };
+type ActivityBar = {
+  label: string;
+  total: number;
+  key?: string;
+  segments: { id: string; value: number; color: string }[];
+};
 
 function DonutChart({ data }: { data: DonutDatum[] }) {
   const total = data.reduce((sum, d) => sum + d.value, 0);
@@ -377,8 +383,8 @@ function DonutChart({ data }: { data: DonutDatum[] }) {
   );
 }
 
-function MiniBars({ data }: { data: { label: string; value: number; key?: string }[] }) {
-  const max = Math.max(...data.map((d) => d.value), 1);
+function MiniBars({ data }: { data: ActivityBar[] }) {
+  const max = Math.max(...data.map((d) => d.total), 1);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -405,20 +411,46 @@ function MiniBars({ data }: { data: { label: string; value: number; key?: string
           minWidth: `${Math.max(data.length * 48, 280)}px`,
         }}
       >
-        {data.map((d) => (
-          <div key={d.key ?? d.label} style={{ flex: 1, textAlign: "center" }}>
-            <div
-              style={{
-                height: `${(d.value / max) * 120}px`,
-                background: "linear-gradient(180deg, #3b82f6, #2563eb)",
-                borderRadius: "10px 10px 6px 6px",
-                boxShadow: "0 6px 12px rgba(37, 99, 235, 0.18)",
-              }}
-              title={`${d.label}: ${d.value}`}
-            />
-            <div style={{ marginTop: "6px", fontSize: "11px", color: "#475569" }}>{d.label}</div>
-          </div>
-        ))}
+        {data.map((d) => {
+          const barHeight = (d.total / max) * 120;
+          const sorted = [...d.segments].sort((a, b) => b.value - a.value);
+          return (
+            <div key={d.key ?? d.label} style={{ flex: 1, textAlign: "center", display: "grid", gap: "4px" }}>
+              <div
+                style={{
+                  position: "relative",
+                  height: barHeight ? `${barHeight}px` : "6px",
+                  borderRadius: "10px 10px 6px 6px",
+                  overflow: "hidden",
+                  boxShadow: d.total ? "0 6px 12px rgba(37, 99, 235, 0.18)" : "none",
+                  background: d.total ? "#e2e8f0" : "linear-gradient(180deg, #e2e8f0, #cbd5e1)",
+                  border: d.total ? "1px solid #e2e8f0" : "none",
+                  display: "flex",
+                  flexDirection: "column-reverse",
+                  justifyContent: d.total ? "flex-start" : "center",
+                }}
+                title={`${d.label}: ${d.total}`}
+              >
+                {barHeight > 0
+                  ? sorted.map((s) => {
+                      const h = d.total ? (s.value / d.total) * barHeight : 0;
+                      return (
+                        <div
+                          key={`${d.key ?? d.label}-${s.id}`}
+                          style={{
+                            height: `${h}px`,
+                            background: s.color,
+                          }}
+                          aria-hidden="true"
+                        />
+                      );
+                    })
+                  : null}
+              </div>
+              <div style={{ fontSize: "11px", color: "#475569" }}>{d.label}</div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -791,10 +823,10 @@ export default function DashboardInsights({ locationId }: Props) {
     }));
   }, [submissions, resolveUserName]);
 
-  const activitySeries = useMemo(() => {
+  const activitySeries = useMemo<ActivityBar[]>(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const days: { label: string; value: number; key: string }[] = [];
+    const days: ActivityBar[] = [];
     for (let i = timeRangeDays - 1; i >= 0; i -= 1) {
       const d = new Date(today);
       d.setDate(today.getDate() - i);
@@ -803,21 +835,30 @@ export default function DashboardInsights({ locationId }: Props) {
         timeRangeDays <= 14
           ? d.toLocaleDateString(undefined, { weekday: "short" })
           : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      const value = submissions.filter((s) => {
-        if (!s.createdAt) return false;
+      const perUser = new Map<string, number>();
+      submissions.forEach((s) => {
+        if (!s.createdAt) return;
         const dayKey = new Date(s.createdAt).toISOString().slice(0, 10);
-        return dayKey === key;
-      }).length;
-      days.push({ label, value, key });
+        if (dayKey !== key) return;
+        const ownerId = (s.createdByUserId || "Unassigned").trim() || "Unassigned";
+        perUser.set(ownerId, (perUser.get(ownerId) ?? 0) + 1);
+      });
+      const total = Array.from(perUser.values()).reduce((sum, v) => sum + v, 0);
+      const segments = Array.from(perUser.entries()).map(([id, value]) => ({
+        id,
+        value,
+        color: colorForUser(id),
+      }));
+      days.push({ label, total, key, segments });
     }
     return days;
   }, [submissions, timeRangeDays]);
 
   const activitySummary = useMemo(() => {
-    const total = activitySeries.reduce((sum, d) => sum + d.value, 0);
+    const total = activitySeries.reduce((sum, d) => sum + d.total, 0);
     const peak =
       activitySeries.reduce<{ label: string; value: number } | null>(
-        (top, d) => (!top || d.value > top.value ? { label: d.label, value: d.value } : top),
+        (top, d) => (!top || d.total > top.value ? { label: d.label, value: d.total } : top),
         null,
       ) ?? { label: "—", value: 0 };
     const avg = timeRangeDays ? total / timeRangeDays : 0;
@@ -894,12 +935,12 @@ export default function DashboardInsights({ locationId }: Props) {
       <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: "0.9rem", color: "#475569", fontWeight: 600 }}>Location dashboard</div>
+          <div style={{ fontSize: "0.9rem", color: "#475569", fontWeight: 600 }}>Live operations</div>
           <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
-            Submissions & coverage
+            Coverage, submissions, and team activity
           </h2>
           <div style={{ marginTop: "4px", color: "#64748b" }}>
-            Real-time view of drivers, map coverage, and contacts.
+            Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
           </div>
         </div>
         <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right" }}>
