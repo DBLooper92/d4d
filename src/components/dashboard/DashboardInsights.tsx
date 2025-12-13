@@ -1047,7 +1047,7 @@ export default function DashboardInsights({ locationId }: Props) {
         }}
       >
         <div style={{ display: "grid", gap: "16px", minWidth: 0 }}>
-          <div className="card" style={{ margin: 0 }}>
+          <div className="card" style={{ margin: 0, maxWidth: "880px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
               <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
               <button
@@ -1068,7 +1068,7 @@ export default function DashboardInsights({ locationId }: Props) {
               </button>
             </div>
             {userColorGuide.length ? (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "10px", maxWidth: "760px" }}>
                 {userColorGuide.map((u) => (
                   <div
                     key={u.id}
