@@ -24,6 +24,7 @@ type SubmissionDoc = {
   createdByUserId: string | null;
   addressLabel: string | null;
   status: string | null;
+  contactId: string | null;
 };
 
 type MarkerDoc = {
@@ -129,6 +130,14 @@ function parseSubmission(docSnap: QueryDocumentSnapshot<DocumentData>): Submissi
       : null;
   const lat = coords && typeof coords.lat === "number" ? coords.lat : null;
   const lng = coords && typeof coords.lng === "number" ? coords.lng : null;
+  const nestedContactId =
+    typeof (data as { ghl?: { contactId?: unknown } })?.ghl?.contactId === "string"
+      ? ((data as { ghl?: { contactId?: string } }).ghl?.contactId ?? null)
+      : null;
+  const contactId =
+    typeof (data as { contactId?: unknown })?.contactId === "string"
+      ? ((data as { contactId?: string }).contactId ?? null)
+      : nestedContactId;
 
   return {
     id: docSnap.id,
@@ -145,6 +154,7 @@ function parseSubmission(docSnap: QueryDocumentSnapshot<DocumentData>): Submissi
     status: typeof (data as { status?: unknown })?.status === "string"
       ? ((data as { status?: string }).status ?? null)
       : null,
+    contactId: contactId ?? null,
   };
 }
 
@@ -889,6 +899,10 @@ export default function DashboardInsights({ locationId }: Props) {
               recent.map((s) => {
                 const ownerId = s.createdByUserId || "Unassigned";
                 const ownerColor = colorForUser(ownerId);
+                const contactUrl =
+                  locationId && s.contactId
+                    ? `https://app.gohighlevel.com/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(s.contactId)}`
+                    : null;
                 return (
                   <div
                     key={s.id}
@@ -936,9 +950,34 @@ export default function DashboardInsights({ locationId }: Props) {
                           ? `Driver: ${resolveUserName(ownerId, "User")}`
                           : "Unassigned"}
                       </span>
-                      <span className="badge-muted badge">
-                        Status: {(s.status || "pending").toLowerCase()}
-                      </span>
+                      {contactUrl ? (
+                        <a
+                          href={contactUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "6px 10px",
+                            borderRadius: "8px",
+                            background: "#2563eb",
+                            color: "#fff",
+                            fontWeight: 600,
+                            textDecoration: "none",
+                            boxShadow: "0 1px 2px rgba(37,99,235,0.24)",
+                          }}
+                        >
+                          View Contact
+                        </a>
+                      ) : (
+                        <span
+                          className="badge-muted badge"
+                          style={{ color: "#475569", background: "#f8fafc" }}
+                        >
+                          Contact not available
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
