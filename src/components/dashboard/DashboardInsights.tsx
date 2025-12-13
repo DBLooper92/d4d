@@ -40,17 +40,18 @@ type Props = {
   locationId: string;
 };
 
+// Color priority: blue → green → yellow → purple → orange → red → remaining accents
 const palette = [
-  "#2563eb",
-  "#10b981",
-  "#f59e0b",
-  "#8b5cf6",
-  "#ec4899",
-  "#0ea5e9",
-  "#f97316",
-  "#22c55e",
-  "#14b8a6",
-  "#e11d48",
+  "#2563eb", // blue
+  "#10b981", // green
+  "#f59e0b", // yellow/amber
+  "#8b5cf6", // purple
+  "#f97316", // orange
+  "#e11d48", // red
+  "#0ea5e9", // cyan
+  "#22c55e", // spring green
+  "#14b8a6", // teal
+  "#ec4899", // pink
 ];
 
 function hashToIndex(str: string, mod: number): number {
