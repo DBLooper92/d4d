@@ -482,7 +482,7 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+      style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
       center: [-98.5795, 39.8283],
       zoom: 3.5,
       attributionControl: false,
@@ -558,7 +558,7 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
       ref={containerRef}
       style={{
         width: "100%",
-        height: "320px",
+        height: "640px",
         borderRadius: "12px",
         overflow: "hidden",
         border: "1px solid #e2e8f0",
