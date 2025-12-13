@@ -571,7 +571,7 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
 
 export default function DashboardInsights({ locationId }: Props) {
   const { submissions, markers, loading } = useLocationStreams(locationId);
-  const [timeRangeDays, setTimeRangeDays] = useState<number>(7);
+  const [timeRangeDays, setTimeRangeDays] = useState<number>(14);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
   const inviteHref = useMemo(
     () => (locationId ? `/app/invites?location_id=${encodeURIComponent(locationId)}` : "/app/invites"),
@@ -850,13 +850,13 @@ export default function DashboardInsights({ locationId }: Props) {
       submissionCounts.set(id, (submissionCounts.get(id) ?? 0) + 1);
     });
 
-    const entries = new Map<string, { id: string; name: string; color: string; count: number }>();
+    const entries = new Map<string, { id: string; name: string; color: string; count: number; active: boolean }>();
     const addEntry = (id: string, count: number) => {
       const name = resolveUserName(id);
       const key = name.toLowerCase();
       const existing = entries.get(key);
       if (!existing || count > existing.count) {
-        entries.set(key, { id, name, color: colorForUser(id), count });
+        entries.set(key, { id, name, color: colorForUser(id), count, active: count > 0 });
       }
     };
 
@@ -931,7 +931,7 @@ export default function DashboardInsights({ locationId }: Props) {
 
       <div className="card" style={{ margin: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
-          <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Users & colors</h3>
+          <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
           <a
             className="btn primary"
             href={inviteHref}
@@ -974,9 +974,12 @@ export default function DashboardInsights({ locationId }: Props) {
                   }}
                 />
                 <div style={{ display: "grid", gap: "2px" }}>
-                  <div style={{ fontWeight: 600, color: "#0f172a" }}>{u.name}</div>
-                  <div style={{ fontSize: "0.85rem", color: "#475569" }}>
-                    {u.count} submission{u.count === 1 ? "" : "s"}
+                  <div style={{ fontWeight: 600, color: u.active ? "#0f172a" : "#94a3b8" }}>{u.name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem" }}>
+                    <span style={{ color: "#475569" }}>{u.count} submission{u.count === 1 ? "" : "s"}</span>
+                    {!u.active && (
+                      <span style={{ color: "#94a3b8", fontWeight: 600 }}>(inactive)</span>
+                    )}
                   </div>
                 </div>
               </div>
