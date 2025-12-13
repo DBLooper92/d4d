@@ -68,7 +68,7 @@ type GhlUser = {
   firstName?: string | null;
   lastName?: string | null;
 };
-type ManageUser = GhlUser & { firebaseUid?: string | null; active?: boolean | null };
+type ManageUser = GhlUser & { firebaseUid?: string | null };
 
 function extractDisplayName(data: Record<string, unknown>): string | null {
   const first = typeof data.firstName === "string" ? data.firstName.trim() : "";
@@ -139,13 +139,6 @@ function storeDisplay(target: Record<string, string>, id: string | null | undefi
   if (!target[key]) target[key] = value;
   const short = key.length > 6 ? key.slice(0, 6) : "";
   if (short && !target[short]) target[short] = value;
-}
-
-function storeActive(target: Record<string, boolean>, id: string | null | undefined, active: unknown) {
-  if (typeof active !== "boolean") return;
-  const key = (id || "").trim();
-  if (!key) return;
-  target[key] = active;
 }
 
 function toMillis(value: unknown): number | null {
@@ -580,7 +573,6 @@ export default function DashboardInsights({ locationId }: Props) {
   const { submissions, markers, loading } = useLocationStreams(locationId);
   const [timeRangeDays, setTimeRangeDays] = useState<number>(14);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
-  const [userActive, setUserActive] = useState<Record<string, boolean>>({});
   const inviteHref = useMemo(
     () => (locationId ? `/app/invites?location_id=${encodeURIComponent(locationId)}` : "/app/invites"),
     [locationId],
@@ -610,12 +602,10 @@ export default function DashboardInsights({ locationId }: Props) {
     async function loadUsers() {
       if (!locationId) {
         setUserNames({});
-        setUserActive({});
         return;
       }
       try {
         const map: Record<string, string> = {};
-        const activeMap: Record<string, boolean> = {};
 
         // 1) Authenticated manage endpoint (includes firebaseUid)
         try {
@@ -638,8 +628,6 @@ export default function DashboardInsights({ locationId }: Props) {
             if (!display) return;
             storeDisplay(map, u.firebaseUid, display);
             storeDisplay(map, u.id, display);
-            storeActive(activeMap, u.firebaseUid, (u as { active?: boolean }).active);
-            storeActive(activeMap, u.id, (u as { active?: boolean }).active);
           });
         } catch {
           /* non-fatal */
@@ -681,8 +669,6 @@ export default function DashboardInsights({ locationId }: Props) {
                 storeDisplay(map, ghlUserId, display || null);
                 const firebaseUid = cleanFirebaseUid(entry);
                 storeDisplay(map, firebaseUid, display || null);
-                storeActive(activeMap, ghlUserId, (entry as { active?: boolean }).active);
-                storeActive(activeMap, firebaseUid, (entry as { active?: boolean }).active);
               });
             }
           }
@@ -698,29 +684,19 @@ export default function DashboardInsights({ locationId }: Props) {
             const data = (docSnap.data() || {}) as Record<string, unknown>;
             const uid = docSnap.id;
             const display = extractDisplayName(data);
-            const active = (data as { active?: unknown }).active;
             if (display) {
               storeDisplay(map, uid, display);
               const ghlId = extractGhlUserId(data);
               storeDisplay(map, ghlId, display);
             }
-            storeActive(activeMap, uid, active);
-            const ghlId = extractGhlUserId(data);
-            storeActive(activeMap, ghlId, active);
           });
         } catch {
           /* ignore */
         }
 
-        if (!cancelled) {
-          setUserNames(map);
-          setUserActive(activeMap);
-        }
+        if (!cancelled) setUserNames(map);
       } catch {
-        if (!cancelled) {
-          setUserNames({});
-          setUserActive({});
-        }
+        if (!cancelled) setUserNames({});
       }
     }
     void loadUsers();
@@ -879,10 +855,8 @@ export default function DashboardInsights({ locationId }: Props) {
       const name = resolveUserName(id);
       const key = name.toLowerCase();
       const existing = entries.get(key);
-      const activeFlag = userActive[id] ?? userActive[id.trim()] ?? null;
-      const active = activeFlag !== null ? activeFlag : count > 0;
       if (!existing || count > existing.count) {
-        entries.set(key, { id, name, color: colorForUser(id), count, active });
+        entries.set(key, { id, name, color: colorForUser(id), count, active: count > 0 });
       }
     };
 
@@ -899,7 +873,7 @@ export default function DashboardInsights({ locationId }: Props) {
       if (b.count !== a.count) return b.count - a.count;
       return a.name.localeCompare(b.name);
     });
-  }, [submissions, userNames, resolveUserName, userActive]);
+  }, [submissions, userNames, resolveUserName]);
 
   return (
     <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
