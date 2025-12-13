@@ -30,6 +30,7 @@ type MarkerDoc = {
   id: string;
   lat: number;
   lng: number;
+  createdByUserId?: string | null;
 };
 
 type Props = {
@@ -152,7 +153,11 @@ function parseMarker(docSnap: QueryDocumentSnapshot<DocumentData>): MarkerDoc | 
   const lat = typeof data.lat === "number" ? data.lat : null;
   const lng = typeof data.lng === "number" ? data.lng : null;
   if (lat === null || lng === null) return null;
-  return { id: docSnap.id, lat, lng };
+  const createdByUserId =
+    typeof (data as { createdByUserId?: unknown }).createdByUserId === "string"
+      ? ((data as { createdByUserId?: string }).createdByUserId as string)
+      : null;
+  return { id: docSnap.id, lat, lng, createdByUserId };
 }
 
 function useLocationStreams(locationId: string) {
@@ -412,7 +417,7 @@ function DashboardMap({ markers }: { markers: MarkerDoc[] }) {
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: "https://demotiles.maplibre.org/style.json",
+      style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
       center: [-98.5795, 39.8283],
       zoom: 3.5,
       attributionControl: false,
@@ -440,7 +445,9 @@ function DashboardMap({ markers }: { markers: MarkerDoc[] }) {
     const bounds = new maplibregl.LngLatBounds();
     markers.forEach((m) => {
       bounds.extend([m.lng, m.lat]);
-      const marker = new maplibregl.Marker({ color: "#2563eb" }).setLngLat([m.lng, m.lat]).addTo(map);
+      const marker = new maplibregl.Marker({ color: colorForUser(m.createdByUserId) })
+        .setLngLat([m.lng, m.lat])
+        .addTo(map);
       markerRefs.current.push(marker);
     });
 
@@ -884,11 +891,8 @@ export default function DashboardInsights({ locationId }: Props) {
                         {s.addressLabel || "No address label"}
                       </div>
                       <div style={{ fontSize: "0.9rem", color: "#475569" }}>
-                        {s.createdAt ? new Date(s.createdAt).toLocaleString() : "—"}
+                        {s.createdAt ? `Submission date/time: ${new Date(s.createdAt).toLocaleString()}` : "—"}
                       </div>
-                    </div>
-                    <div style={{ marginTop: "4px", fontSize: "0.9rem", color: "#475569" }}>
-                      {s.coordinates ? `${s.coordinates.lat.toFixed(5)}, ${s.coordinates.lng.toFixed(5)}` : "No coordinates"}
                     </div>
                     <div style={{ marginTop: "6px", display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
                       <span
@@ -912,7 +916,7 @@ export default function DashboardInsights({ locationId }: Props) {
                           }}
                         />
                         {s.createdByUserId
-                          ? `Owner: ${resolveUserName(ownerId, "User")}`
+                          ? `Driver: ${resolveUserName(ownerId, "User")}`
                           : "Unassigned"}
                       </span>
                       <span className="badge-muted badge">
