@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
@@ -108,6 +108,27 @@ function colorForUser(id: string | null | undefined): string {
 
 function coordKey(lat: number, lng: number): string {
   return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatDateTime(value: number | null): string {
+  return value ? new Date(value).toLocaleString() : "—";
+}
+
+function buildContactUrl(locationId: string, contactId: string | null): string | null {
+  return locationId && contactId
+    ? `https://app.gohighlevel.com/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(
+        contactId,
+      )}`
+    : null;
 }
 
 function storeDisplay(target: Record<string, string>, id: string | null | undefined, display: string | null | undefined) {
@@ -284,7 +305,7 @@ function DonutChart({ data }: { data: DonutDatum[] }) {
     <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: "16px", alignItems: "center" }}>
       <div style={{ position: "relative", width: 200, height: 200 }}>
         <svg viewBox="0 0 200 200" role="img" aria-label="Submissions by person">
-          {arcs.map((arc, idx) => (
+          {arcs.map((arc) => (
             <g key={arc.name}>
               <path
                 d={arc.path}
@@ -354,7 +375,7 @@ function DonutChart({ data }: { data: DonutDatum[] }) {
   );
 }
 
-function MiniBars({ data }: { data: { label: string; value: number }[] }) {
+function MiniBars({ data }: { data: { label: string; value: number; key?: string }[] }) {
   const max = Math.max(...data.map((d) => d.value), 1);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -383,7 +404,7 @@ function MiniBars({ data }: { data: { label: string; value: number }[] }) {
         }}
       >
         {data.map((d) => (
-          <div key={d.label} style={{ flex: 1, textAlign: "center" }}>
+          <div key={d.key ?? d.label} style={{ flex: 1, textAlign: "center" }}>
             <div
               style={{
                 height: `${(d.value / max) * 120}px`,
@@ -461,25 +482,8 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
   const markerRefs = useRef<maplibregl.Marker[]>([]);
   const popupRef = useRef<maplibregl.Popup | null>(null);
 
-  const escapeHtml = (value: string): string =>
-    value
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-
-  const formatDateTime = (value: number | null): string =>
-    value ? new Date(value).toLocaleString() : "—";
-
-  const buildContactUrl = (contactId: string | null): string | null =>
-    locationId && contactId
-      ? `https://app.gohighlevel.com/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(
-          contactId,
-        )}`
-      : null;
-
-  const buildPopupContent = (submission: SubmissionDoc | null, ownerColor: string): string => {
+  const buildPopupContent = useCallback(
+    (submission: SubmissionDoc | null, ownerColor: string): string => {
     if (!submission) {
       return `<div style="padding:12px 14px; max-width:320px; font-family:Inter, system-ui, -apple-system, sans-serif; color:#0f172a;">
         <div style="font-weight:700; font-size:1.05rem; margin-bottom:4px;">No submission details</div>
@@ -490,7 +494,7 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
     const ownerLabel = submission.createdByUserId
       ? `Driver: ${escapeHtml(resolveUserName(submission.createdByUserId, "User"))}`
       : "Unassigned";
-    const contactUrl = buildContactUrl(submission.contactId);
+    const contactUrl = buildContactUrl(locationId, submission.contactId);
     const address = escapeHtml(submission.addressLabel || "No address label");
 
     return `<div style="padding:12px 14px; max-width:360px; font-family:Inter, system-ui, -apple-system, sans-serif; color:#0f172a;">
@@ -516,7 +520,9 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
         }
       </div>
     </div>`;
-  };
+    },
+    [locationId, resolveUserName],
+  );
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -591,7 +597,7 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
     } else {
       map.fitBounds(bounds, { padding: 40, maxZoom: 12, duration: 600 });
     }
-  }, [markers, markerOwners, submissionLookup, resolveUserName, locationId]);
+  }, [markers, markerOwners, submissionLookup, resolveUserName, locationId, buildPopupContent]);
 
   return (
     <div
