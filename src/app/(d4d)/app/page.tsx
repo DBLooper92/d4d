@@ -1,6 +1,5 @@
 // src/app/(d4d)/app/page.tsx
 import RequireLocationAuth from "@/components/auth/RequireLocationAuth";
-import SkiptraceToggle from "@/components/dashboard/SkiptraceToggle";
 import DashboardInsights from "@/components/dashboard/DashboardInsights";
 
 type PageParamRecord = Record<string, string | string[] | undefined>;
@@ -52,27 +51,6 @@ export default async function AppPage({ searchParams }: Props) {
 return (
   <RequireLocationAuth>
     <main className="p-6 max-w-4xl mx-auto">
-
-        <header className="hero card" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1.5rem", flexWrap: "wrap" }}>
-          <div style={{ display: "grid", gap: "0.4rem" }}>
-            <div style={{ color: "#475569", fontSize: "0.95rem", fontWeight: 600 }}>Location</div>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-              <div className="badge" style={{ fontWeight: 700, fontSize: "1rem" }}>{locationId}</div>
-              <span style={{ color: "#64748b" }}>Dashboard overview</span>
-            </div>
-            <p style={{ margin: 0, color: "#475569", fontSize: "0.95rem", maxWidth: "42ch" }}>
-              Track driver output, map coverage, and GHL contacts in real time.
-            </p>
-          </div>
-          <div style={{ display: "grid", gap: "0.5rem", justifyItems: "end", textAlign: "right", minWidth: "220px" }}>
-            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
-            <SkiptraceToggle locationId={locationId} />
-            <p style={{ margin: 0, color: "#475569", fontSize: "0.9rem", maxWidth: "28ch" }}>
-              Auto-skiptrace new properties. $0.15 per property while enabled.
-            </p>
-          </div>
-        </header>
-
         <DashboardInsights locationId={locationId} />
       </main>
     </RequireLocationAuth>

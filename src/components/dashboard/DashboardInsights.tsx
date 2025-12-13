@@ -16,6 +16,7 @@ import {
 } from "firebase/firestore";
 import { getFirebaseFirestore, getFirebaseAuth } from "@/lib/firebaseClient";
 import { getDocs } from "firebase/firestore";
+import SkiptraceToggle from "./SkiptraceToggle";
 
 type SubmissionDoc = {
   id: string;
@@ -884,6 +885,13 @@ export default function DashboardInsights({ locationId }: Props) {
           </h2>
           <div style={{ marginTop: "4px", color: "#64748b" }}>
             Real-time view of drivers, map coverage, and contacts.
+          </div>
+        </div>
+        <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right" }}>
+          <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
+          <SkiptraceToggle locationId={locationId} />
+          <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
+            Auto-skiptrace new properties ($0.15 each) while enabled.
           </div>
         </div>
         {loading && <div className="skel" style={{ width: "120px", height: "14px" }} />}
