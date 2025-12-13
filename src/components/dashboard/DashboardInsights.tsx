@@ -466,7 +466,6 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
       ? `Driver: ${escapeHtml(resolveUserName(submission.createdByUserId, "User"))}`
       : "Unassigned";
     const contactUrl = buildContactUrl(submission.contactId);
-    const statusText = escapeHtml((submission.status || "pending").toLowerCase());
     const address = escapeHtml(submission.addressLabel || "No address label");
 
     return `<div style="padding:12px 14px; max-width:360px; font-family:Inter, system-ui, -apple-system, sans-serif; color:#0f172a;">
@@ -490,9 +489,6 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
               </a>`
             : `<span style="display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:12px; border:1px solid #e2e8f0; background:#f8fafc; color:#475569;">Contact not available</span>`
         }
-        <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:12px; border:1px solid #e2e8f0; background:#fff; color:#475569; font-weight:600;">
-          Status: ${statusText}
-        </span>
       </div>
     </div>`;
   };
@@ -589,7 +585,12 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
 
 export default function DashboardInsights({ locationId }: Props) {
   const { submissions, markers, loading } = useLocationStreams(locationId);
+  const [timeRangeDays, setTimeRangeDays] = useState<number>(7);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
+  const inviteHref = useMemo(
+    () => (locationId ? `/app/invites?location_id=${encodeURIComponent(locationId)}` : "/app/invites"),
+    [locationId],
+  );
 
   const resolveUserName = useMemo(
     () =>
@@ -801,23 +802,45 @@ export default function DashboardInsights({ locationId }: Props) {
     }));
   }, [submissions, resolveUserName]);
 
-  const last7Days = useMemo(() => {
+  const activitySeries = useMemo(() => {
     const today = new Date();
-    const days: { label: string; value: number }[] = [];
-    for (let i = 6; i >= 0; i -= 1) {
+    today.setHours(0, 0, 0, 0);
+    const days: { label: string; value: number; key: string }[] = [];
+    for (let i = timeRangeDays - 1; i >= 0; i -= 1) {
       const d = new Date(today);
       d.setDate(today.getDate() - i);
       const key = d.toISOString().slice(0, 10);
-      const label = d.toLocaleDateString(undefined, { weekday: "short" });
+      const label =
+        timeRangeDays <= 14
+          ? d.toLocaleDateString(undefined, { weekday: "short" })
+          : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
       const value = submissions.filter((s) => {
         if (!s.createdAt) return false;
         const dayKey = new Date(s.createdAt).toISOString().slice(0, 10);
         return dayKey === key;
       }).length;
-      days.push({ label, value });
+      days.push({ label, value, key });
     }
     return days;
-  }, [submissions]);
+  }, [submissions, timeRangeDays]);
+
+  const activitySummary = useMemo(() => {
+    const total = activitySeries.reduce((sum, d) => sum + d.value, 0);
+    const peak =
+      activitySeries.reduce<{ label: string; value: number } | null>(
+        (top, d) => (!top || d.value > top.value ? { label: d.label, value: d.value } : top),
+        null,
+      ) ?? { label: "—", value: 0 };
+    const avg = timeRangeDays ? total / timeRangeDays : 0;
+    return { total, avg, peak };
+  }, [activitySeries, timeRangeDays]);
+
+  const rangeLabel = useMemo(() => {
+    if (timeRangeDays === 7) return "Last 7 days";
+    if (timeRangeDays === 14) return "Last 14 days";
+    if (timeRangeDays === 30) return "Last 30 days";
+    return `Last ${timeRangeDays} days`;
+  }, [timeRangeDays]);
 
   const recent = useMemo(() => submissions.slice(0, 6), [submissions]);
 
@@ -881,12 +904,12 @@ export default function DashboardInsights({ locationId }: Props) {
     <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: "0.9rem", color: "#475569" }}>Location data</div>
+          <div style={{ fontSize: "0.9rem", color: "#475569", fontWeight: 600 }}>Location dashboard</div>
           <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
             Submissions & coverage
           </h2>
           <div style={{ marginTop: "4px", color: "#64748b" }}>
-            Live from Firestore · {submissions.length} submissions · {markers.length} markers
+            Real-time view of drivers, map coverage, and contacts.
           </div>
         </div>
         {loading && <div className="skel" style={{ width: "120px", height: "14px" }} />}
@@ -900,22 +923,51 @@ export default function DashboardInsights({ locationId }: Props) {
         }}
       >
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem" }}>Total submissions</div>
+          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Total submissions</div>
           <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{submissions.length}</div>
+          <div style={{ color: "#64748b", marginTop: "4px" }}>All time</div>
         </div>
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem" }}>Active markers</div>
+          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Active markers</div>
           <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{markers.length}</div>
+          <div style={{ color: "#64748b", marginTop: "4px" }}>Currently visible on map</div>
         </div>
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem" }}>Status mix</div>
+          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Recent activity</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+            <div>
+              <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{activitySummary.total}</div>
+              <div style={{ color: "#64748b", marginTop: "4px" }}>{rangeLabel}</div>
+            </div>
+            <div style={{ textAlign: "right", color: "#475569", fontSize: "0.95rem" }}>
+              <div style={{ fontWeight: 700 }}>Avg {activitySummary.avg.toFixed(1)} / day</div>
+              <div style={{ color: "#64748b" }}>Peak: {activitySummary.peak.value} on {activitySummary.peak.label}</div>
+            </div>
+          </div>
+        </div>
+        <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Status mix</div>
           <StatusBadges counts={statusCounts} />
         </div>
       </div>
 
       <div className="card" style={{ margin: 0 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
           <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Users & colors</h3>
+          <a
+            className="btn primary"
+            href={inviteHref}
+            style={{
+              padding: "0.5rem 0.9rem",
+              borderRadius: "10px",
+              fontWeight: 700,
+              background: "#2563eb",
+              color: "#fff",
+              boxShadow: "0 8px 16px rgba(37,99,235,0.18)",
+            }}
+          >
+            Invite drivers
+          </a>
         </div>
         {userColorGuide.length ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
@@ -975,12 +1027,36 @@ export default function DashboardInsights({ locationId }: Props) {
         </div>
 
         <div className="card" style={{ margin: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "8px", flexWrap: "wrap" }}>
             <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
-              Last 7 days
+              Activity
             </h3>
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              {[7, 14, 30].map((d) => {
+                const active = timeRangeDays === d;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setTimeRangeDays(d)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: "10px",
+                      border: active ? "1px solid #2563eb" : "1px solid #e2e8f0",
+                      background: active ? "#eff6ff" : "#fff",
+                      color: active ? "#1d4ed8" : "#475569",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {d}d
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <MiniBars data={last7Days} />
+          <div style={{ color: "#64748b", fontSize: "0.9rem", marginBottom: "6px" }}>{rangeLabel}</div>
+          <MiniBars data={activitySeries} />
         </div>
       </div>
       <div
