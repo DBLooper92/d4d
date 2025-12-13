@@ -25,28 +25,37 @@ export default async function InviteDriversPage({ searchParams }: Props) {
 
   return (
     <RequireLocationAuth>
-      <main className="p-6 max-w-3xl mx-auto">
-        <header className="hero card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <h1 className="text-2xl font-semibold">Invite Drivers</h1>
-            {locationId ? (
-              <p className="text-gray-600 mt-1">
-                Location: <span className="badge">{locationId}</span>
-              </p>
-            ) : (
-              <p className="text-red-600 mt-1">
-                No <code>location_id</code> in URL — open from a sub-account sidebar.
-              </p>
-            )}
+      <main className="p-6 max-w-5xl mx-auto">
+        <header
+          className="hero card"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "14px",
+          }}
+        >
+          <div style={{ display: "grid", gap: "4px" }}>
+            <p style={{ color: "#475569", fontWeight: 700, fontSize: "0.95rem", margin: 0 }}>
+              Team settings
+            </p>
+            <h1 className="text-2xl font-semibold" style={{ margin: 0 }}>
+              Invite drivers
+            </h1>
+            <p className="text-gray-600" style={{ marginTop: "2px" }}>
+              Manage invitations and active status for this location without leaving the dashboard.
+            </p>
           </div>
-          <a className="btn" href={`/app${qs}`}>Dashboard</a>
+          <a className="btn" href={`/app${qs}`}>Back to dashboard</a>
         </header>
 
         <section className="mt-4">
           {locationId ? (
             <InviteList locationId={locationId} />
           ) : (
-            <div className="card">Add <code>?location_id=...</code> to the URL and refresh.</div>
+            <div className="card">
+              Add a <code>location_id</code> query string or open this page from the sub-account dashboard.
+            </div>
           )}
         </section>
       </main>

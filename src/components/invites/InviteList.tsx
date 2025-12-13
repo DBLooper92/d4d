@@ -10,6 +10,7 @@ type GhlUser = {
   name?: string | null;
   email?: string | null;
   role?: string | null;
+  phone?: string | null;
 };
 
 type ManagedUser = GhlUser & {
@@ -186,9 +187,10 @@ export default function InviteList({ locationId }: { locationId: string }) {
   if (loading) {
     return (
       <div className="grid gap-2">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="card">
-            <div className="skel" style={{ height: 20, width: "50%" }} />
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="card" style={{ padding: "14px 16px" }}>
+            <div className="skel" style={{ height: 18, width: "38%" }} />
+            <div className="skel" style={{ height: 14, width: "64%", marginTop: "8px" }} />
           </div>
         ))}
       </div>
@@ -197,10 +199,10 @@ export default function InviteList({ locationId }: { locationId: string }) {
 
   if (err) {
     return (
-      <div className="card" style={{ borderColor: "#fecaca" }}>
-        <div className="text-red-700 font-medium">Couldn&apos;t load sub-account users</div>
-        <div className="text-sm text-red-600 mt-1">{err}</div>
-        <div className="text-xs text-gray-500 mt-2">
+      <div className="card" style={{ borderColor: "#fecaca", background: "#fff1f2" }}>
+        <div className="font-medium" style={{ color: "#b91c1c" }}>Couldn&apos;t load drivers</div>
+        <div className="text-sm" style={{ color: "#b91c1c", marginTop: "4px" }}>{err}</div>
+        <div className="text-xs" style={{ color: "#9f1239", marginTop: "6px" }}>
           Tip: ensure the location has a valid refresh token in Firestore and that the marketplace app has <code>users.readonly</code>.
         </div>
       </div>
@@ -208,113 +210,213 @@ export default function InviteList({ locationId }: { locationId: string }) {
   }
 
   if (!items.length) {
-    return <div className="card">No users returned for this location.</div>;
+    return (
+      <div className="card" style={{ padding: "16px" }}>
+        <div className="font-medium" style={{ color: "#0f172a" }}>No drivers yet</div>
+        <div className="text-sm" style={{ color: "#475569", marginTop: "4px" }}>
+          Add users in HighLevel for this sub-account, then send invites here.
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="grid gap-3">
-      <div className="card flex items-center justify-between">
-        <div>
-          <div className="font-semibold">Active drivers</div>
-          <div className="text-sm text-gray-600">Up to {activeLimit} drivers plus the admin can be active.</div>
+      <div
+        className="card"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "12px",
+          padding: "14px 16px",
+          background: "#f8fafc",
+          borderColor: "#e2e8f0",
+        }}
+      >
+        <div style={{ display: "grid", gap: "4px" }}>
+          <div className="text-sm" style={{ color: "#0f172a", fontWeight: 700 }}>Driver access</div>
+          <div className="text-sm" style={{ color: "#475569" }}>
+            Admin is always active. {activeLimit} driver slots available.
+          </div>
         </div>
-        <div className="text-sm text-gray-700">
-          {activeCount} / {activeLimit} active
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontWeight: 700, color: "#0f172a", fontSize: "1.1rem" }}>
+            {activeCount} / {activeLimit}
+          </div>
+          <div style={{ color: "#475569", fontSize: "0.9rem" }}>Active drivers</div>
         </div>
       </div>
-      {banner ? <div className="card" style={{ borderColor: "#fecaca", color: "#b91c1c" }}>{banner}</div> : null}
-      {items.map((u) => {
-        const state = inviteState[u.id || ""];
-        const inviting = state?.status === "loading";
-        const inviteSent = state?.status === "success";
-        const inviteError = state?.status === "error" ? state.error : null;
-        const toggleDisabled = savingId === u.id || u.isAdmin || !u.accepted;
-        const isActive = u.isAdmin ? true : u.active;
-        const showInviteButton = !u.firebaseUid && !u.isAdmin;
-        const inviteLabel = u.invited ? "Resend Invite" : "Send Invite";
-        return (
-          <div key={u.id} className="card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-            <div style={{ display: "grid", gap: "0.15rem" }}>
-              <div className="font-medium flex items-center gap-2">
-                <span>{u.name || u.email || "(unnamed user)"}</span>
-                {u.isAdmin ? <span className="badge badge-muted">Admin</span> : null}
-                {u.accepted && !u.isAdmin ? <span className="badge badge-muted">Joined</span> : null}
+      {banner ? <div className="card" style={{ borderColor: "#fee2e2", background: "#fef2f2", color: "#b91c1c" }}>{banner}</div> : null}
+      <div className="grid gap-2">
+        {items.map((u) => {
+          const state = inviteState[u.id || ""];
+          const inviting = state?.status === "loading";
+          const inviteSent = state?.status === "success" || u.invited;
+          const inviteError = state?.status === "error" ? state.error : null;
+          const toggleDisabled = savingId === u.id || u.isAdmin || !u.accepted;
+          const isActive = u.isAdmin ? true : u.active;
+          const showInviteButton = !u.firebaseUid && !u.isAdmin;
+          const inviteLabel = u.invited ? "Resend invite" : "Send invite";
+          const primary = u.name || u.email || "Unnamed user";
+          const badgeData = [
+            u.isAdmin ? { label: "Admin", bg: "#e0f2fe", fg: "#0f172a" } : null,
+            u.accepted
+              ? { label: "Joined", bg: "#dcfce7", fg: "#166534" }
+              : { label: u.invited ? "Invite sent" : "Invite pending", bg: "#fef3c7", fg: "#92400e" },
+            { label: isActive ? "Active" : "Inactive", bg: isActive ? "#dcfce7" : "#e2e8f0", fg: isActive ? "#166534" : "#475569" },
+          ].filter(Boolean) as Array<{ label: string; bg: string; fg: string }>;
+          const initials = (primary || "D").trim().slice(0, 1).toUpperCase() || "D";
+          return (
+            <div
+              key={u.id}
+              className="card"
+              style={{
+                padding: "14px 16px",
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) auto",
+                gap: "12px",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ display: "grid", gap: "8px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      width: "42px",
+                      height: "42px",
+                      borderRadius: "12px",
+                      background: "linear-gradient(135deg, #e0f2fe, #bfdbfe)",
+                      display: "grid",
+                      placeItems: "center",
+                      color: "#1d4ed8",
+                      fontWeight: 800,
+                      fontSize: "1rem",
+                      boxShadow: "0 10px 20px rgba(37,99,235,0.18)",
+                    }}
+                  >
+                    {initials}
+                  </div>
+                  <div style={{ display: "grid", gap: "2px" }}>
+                    <div style={{ fontWeight: 700, color: "#0f172a" }}>{primary}</div>
+                    {u.email ? <div style={{ color: "#475569", fontSize: "0.92rem" }}>{u.email}</div> : null}
+                    {u.phone ? <div style={{ color: "#0f172a", fontSize: "0.92rem", fontWeight: 600 }}>{u.phone}</div> : null}
+                    {!u.email && !u.phone ? (
+                      <div style={{ color: "#94a3b8", fontSize: "0.9rem" }}>No contact info on file</div>
+                    ) : null}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  {badgeData.map((b) => (
+                    <span
+                      key={b.label}
+                      className="badge"
+                      style={{
+                        background: b.bg,
+                        color: b.fg,
+                        borderColor: `${b.fg}22`,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {b.label}
+                    </span>
+                  ))}
+                  {inviteSent && showInviteButton ? (
+                    <span className="text-xs" style={{ color: "#16a34a", fontWeight: 700 }}>Invite sent</span>
+                  ) : null}
+                  {inviteError ? (
+                    <span className="text-xs" style={{ color: "#b91c1c", fontWeight: 700 }}>Invite failed</span>
+                  ) : null}
+                </div>
               </div>
-              <div className="text-xs text-gray-500">GHL User ID: {u.id}</div>
-              {u.email ? <div className="text-xs text-gray-500">{u.email}</div> : null}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-              <div style={{ textAlign: "right" }}>
-                {showInviteButton ? (
-                  inviteError ? (
-                    <div className="text-xs text-red-600">Error: {inviteError}</div>
-                  ) : (
-                    <button className="btn" type="button" onClick={() => sendInvite(u)} disabled={inviting}>
+              <div style={{ display: "grid", gap: "8px", justifyItems: "end" }}>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", justifyContent: "flex-end" }}>
+                  {showInviteButton ? (
+                    <button
+                      className="btn primary"
+                      type="button"
+                      onClick={() => sendInvite(u)}
+                      disabled={inviting}
+                      style={{ padding: "8px 12px" }}
+                    >
                       {inviting ? "Sending..." : inviteLabel}
                     </button>
-                  )
-                ) : inviteSent ? (
-                  <div className="text-xs text-green-700 font-medium">Invite sent</div>
+                  ) : inviteSent ? (
+                    <span className="text-xs" style={{ color: "#16a34a", fontWeight: 700 }}>Invite sent</span>
+                  ) : null}
+                </div>
+                {inviteError ? (
+                  <div className="text-xs" style={{ color: "#b91c1c", maxWidth: "240px", textAlign: "right" }}>
+                    {inviteError}
+                  </div>
                 ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={() => toggleActive(u)}
-                disabled={toggleDisabled}
-                aria-pressed={isActive}
-                aria-label={isActive ? "Set inactive" : "Set active"}
-                style={{
-                  position: "relative",
-                  width: "60px",
-                  height: "32px",
-                  borderRadius: "999px",
-                  border: "1px solid #e2e8f0",
-                  background: isActive ? "#dcfce7" : "#e5e7eb",
-                  padding: 0,
-                  cursor: toggleDisabled ? "not-allowed" : "pointer",
-                  transition: "background-color 150ms ease, box-shadow 150ms ease",
-                  boxShadow: isActive ? "0 0 0 4px rgba(34,197,94,0.12)" : "none",
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    position: "absolute",
-                    top: "4px",
-                    left: isActive ? "32px" : "4px",
-                    width: "24px",
-                    height: "24px",
-                    borderRadius: "999px",
-                    background: isActive ? "#16a34a" : "#cbd5e1",
-                    boxShadow: "0 2px 6px rgba(0,0,0,0.14)",
-                    transition: "left 150ms ease, background-color 150ms ease",
-                    display: "grid",
-                    placeItems: "center",
-                  }}
-                >
-                  <span
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: "0.85rem", color: "#475569", fontWeight: 600 }}>
+                      {u.isAdmin
+                        ? "Admin always active"
+                        : u.accepted
+                          ? isActive
+                            ? "Active in dashboard"
+                            : "Inactive in dashboard"
+                          : "Awaiting join"}
+                    </div>
+                    {!u.accepted ? (
+                      <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>Enable after they join</div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleActive(u)}
+                    disabled={toggleDisabled}
+                    aria-pressed={isActive}
+                    aria-label={isActive ? "Set inactive" : "Set active"}
                     style={{
-                      width: "8px",
-                      height: "8px",
+                      position: "relative",
+                      width: "66px",
+                      height: "34px",
                       borderRadius: "999px",
-                      background: isActive ? "#15803d" : "#94a3b8",
+                      border: "1px solid #e2e8f0",
+                      background: isActive ? "#dcfce7" : "#e5e7eb",
+                      padding: 0,
+                      cursor: toggleDisabled ? "not-allowed" : "pointer",
+                      transition: "background-color 150ms ease, box-shadow 150ms ease",
+                      boxShadow: isActive ? "0 0 0 4px rgba(34,197,94,0.16)" : "none",
                     }}
-                  />
-                </span>
-              </button>
-              <div className="text-xs text-gray-600" style={{ minWidth: "110px", textAlign: "right" }}>
-                {u.isAdmin
-                  ? "Active (admin)"
-                  : !u.accepted
-                    ? "Pending acceptance"
-                    : isActive
-                      ? "Active"
-                      : "Inactive"}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute",
+                        top: "4px",
+                        left: isActive ? "34px" : "4px",
+                        width: "26px",
+                        height: "26px",
+                        borderRadius: "999px",
+                        background: isActive ? "#16a34a" : "#cbd5e1",
+                        boxShadow: "0 2px 6px rgba(0,0,0,0.14)",
+                        transition: "left 150ms ease, background-color 150ms ease",
+                        display: "grid",
+                        placeItems: "center",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: "8px",
+                          height: "8px",
+                          borderRadius: "999px",
+                          background: isActive ? "#15803d" : "#94a3b8",
+                        }}
+                      />
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }

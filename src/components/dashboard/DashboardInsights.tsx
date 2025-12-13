@@ -17,6 +17,7 @@ import {
 import { getFirebaseFirestore, getFirebaseAuth } from "@/lib/firebaseClient";
 import { getDocs } from "firebase/firestore";
 import SkiptraceToggle from "./SkiptraceToggle";
+import InviteList from "../invites/InviteList";
 
 type SubmissionDoc = {
   id: string;
@@ -573,10 +574,23 @@ export default function DashboardInsights({ locationId }: Props) {
   const { submissions, markers, loading } = useLocationStreams(locationId);
   const [timeRangeDays, setTimeRangeDays] = useState<number>(14);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
-  const inviteHref = useMemo(
-    () => (locationId ? `/app/invites?location_id=${encodeURIComponent(locationId)}` : "/app/invites"),
-    [locationId],
-  );
+  const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
+
+  const openInviteModal = useCallback(() => setShowInviteModal(true), []);
+  const closeInviteModal = useCallback(() => setShowInviteModal(false), []);
+
+  useEffect(() => {
+    if (!showInviteModal) return;
+    const onKeyDown = (evt: KeyboardEvent) => {
+      if (evt.key === "Escape") {
+        setShowInviteModal(false);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showInviteModal]);
 
   const resolveUserName = useMemo(
     () =>
@@ -876,7 +890,8 @@ export default function DashboardInsights({ locationId }: Props) {
   }, [submissions, userNames, resolveUserName]);
 
   return (
-    <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
+    <>
+      <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: "0.9rem", color: "#475569", fontWeight: 600 }}>Location dashboard</div>
@@ -891,7 +906,7 @@ export default function DashboardInsights({ locationId }: Props) {
           <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
           <SkiptraceToggle locationId={locationId} />
           <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
-            Auto-skiptrace new properties ($0.15 each) while enabled.
+            Auto-skiptrace new properties ($0.12 each) while enabled.
           </div>
         </div>
         {loading && <div className="skel" style={{ width: "120px", height: "14px" }} />}
@@ -932,9 +947,10 @@ export default function DashboardInsights({ locationId }: Props) {
       <div className="card" style={{ margin: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
           <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
-          <a
+          <button
+            type="button"
             className="btn primary"
-            href={inviteHref}
+            onClick={openInviteModal}
             style={{
               padding: "0.5rem 0.9rem",
               borderRadius: "10px",
@@ -942,10 +958,11 @@ export default function DashboardInsights({ locationId }: Props) {
               background: "#2563eb",
               color: "#fff",
               boxShadow: "0 8px 16px rgba(37,99,235,0.18)",
+              cursor: "pointer",
             }}
           >
             Invite drivers
-          </a>
+          </button>
         </div>
         {userColorGuide.length ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
@@ -1163,6 +1180,81 @@ export default function DashboardInsights({ locationId }: Props) {
           </div>
         </div>
       </div>
-    </section>
+      </section>
+      {showInviteModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Invite drivers"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeInviteModal();
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 50,
+            background: "rgba(15,23,42,0.55)",
+            backdropFilter: "blur(4px)",
+            display: "grid",
+            placeItems: "center",
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "min(1100px, 96vw)",
+              maxHeight: "90vh",
+              background: "#fff",
+              borderRadius: "18px",
+              overflow: "hidden",
+              border: "1px solid #e2e8f0",
+              boxShadow: "0 24px 70px rgba(15,23,42,0.35)",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                padding: "14px 16px",
+                borderBottom: "1px solid #e2e8f0",
+                background: "#f8fafc",
+              }}
+            >
+              <div>
+                <div style={{ color: "#0f172a", fontWeight: 700, fontSize: "1.05rem" }}>Invite drivers</div>
+                <div style={{ color: "#475569", marginTop: "2px" }}>Send invites and toggle active status without leaving the dashboard.</div>
+              </div>
+              <button
+                type="button"
+                onClick={closeInviteModal}
+                aria-label="Close invite modal"
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "12px",
+                  border: "1px solid #e2e8f0",
+                  background: "#fff",
+                  cursor: "pointer",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#0f172a",
+                  fontWeight: 800,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ padding: "16px 16px 18px", overflow: "auto" }}>
+              <InviteList locationId={locationId} />
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

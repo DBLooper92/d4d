@@ -16,6 +16,7 @@ type ManageUser = {
   role?: string | null;
   firstName?: string | null;
   lastName?: string | null;
+  phone?: string | null;
 };
 
 type ManageResponse = {
@@ -57,6 +58,12 @@ function cacheHeaders() {
 function cleanString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function cleanPhone(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.replace(/\s+/g, " ").trim();
   return trimmed.length ? trimmed : null;
 }
 
@@ -248,7 +255,10 @@ export async function GET(req: Request) {
   const locData = (locSnap.data() || {}) as {
     activeUsers?: Record<string, boolean>;
     invites?: Record<string, InviteMeta>;
-    userDirectory?: Record<string, { name?: string; email?: string; role?: string; firebaseUid?: string | null }>;
+    userDirectory?: Record<
+      string,
+      { name?: string; email?: string; role?: string; firebaseUid?: string | null; phone?: string | null }
+    >;
   };
   const activeUsers = { ...(locData.activeUsers || {}) };
   const invites = { ...(locData.invites || {}) } as Record<string, InviteMeta>;
@@ -331,9 +341,16 @@ export async function GET(req: Request) {
       changed = true;
     }
 
+    const phone =
+      cleanPhone((u as { phone?: unknown }).phone) ||
+      cleanPhone((u as { mobilePhone?: unknown }).mobilePhone) ||
+      cleanPhone((u as { phoneNumber?: unknown }).phoneNumber) ||
+      null;
+
     return {
       ...u,
       name: u.name ?? displayName ?? null,
+      phone,
       active,
       isAdmin,
       invited,
@@ -348,9 +365,12 @@ export async function GET(req: Request) {
   try {
     const existingDirectory = (locData.userDirectory || {}) as Record<
       string,
-      { name?: string; email?: string; role?: string; firebaseUid?: string | null }
+      { name?: string; email?: string; role?: string; firebaseUid?: string | null; phone?: string | null }
     >;
-    const patch: Record<string, { name?: string; email?: string; role?: string; firebaseUid?: string | null }> = {};
+    const patch: Record<
+      string,
+      { name?: string; email?: string; role?: string; firebaseUid?: string | null; phone?: string | null }
+    > = {};
 
     mapped.forEach((u) => {
       const userId = cleanString(u.id);
@@ -359,8 +379,15 @@ export async function GET(req: Request) {
       const nextEmail = cleanString(u.email);
       const nextRole = cleanString(u.role);
       const nextFirebaseUid = cleanString(u.firebaseUid);
+      const nextPhone = cleanPhone(u.phone);
       const current = existingDirectory[userId] || {};
-      const updated: { name?: string; email?: string; role?: string; firebaseUid?: string | null } = { ...current };
+      const updated: {
+        name?: string;
+        email?: string;
+        role?: string;
+        firebaseUid?: string | null;
+        phone?: string | null;
+      } = { ...current };
       let dirty = false;
 
       if (nextName && nextName !== current.name) {
@@ -377,6 +404,10 @@ export async function GET(req: Request) {
       }
       if (nextFirebaseUid && nextFirebaseUid !== current.firebaseUid) {
         updated.firebaseUid = nextFirebaseUid;
+        dirty = true;
+      }
+      if (nextPhone && nextPhone !== current.phone) {
+        updated.phone = nextPhone;
         dirty = true;
       }
 
