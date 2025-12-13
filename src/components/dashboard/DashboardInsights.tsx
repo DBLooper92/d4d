@@ -106,6 +106,10 @@ function colorForUser(id: string | null | undefined): string {
   return palette[hashToIndex(key, palette.length)];
 }
 
+function coordKey(lat: number, lng: number): string {
+  return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+}
+
 function storeDisplay(target: Record<string, string>, id: string | null | undefined, display: string | null | undefined) {
   const key = (id || "").trim();
   const value = (display || "").trim();
@@ -418,10 +422,80 @@ function StatusBadges({ counts }: { counts: Record<string, number> }) {
   );
 }
 
-function DashboardMap({ markers, markerOwners }: { markers: MarkerDoc[]; markerOwners: Map<string, string> }) {
+type DashboardMapProps = {
+  markers: MarkerDoc[];
+  markerOwners: Map<string, string>;
+  submissionLookup: Map<string, SubmissionDoc>;
+  resolveUserName: (id: string | null | undefined, fallbackPrefix?: string) => string;
+  locationId: string;
+};
+
+function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName, locationId }: DashboardMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRefs = useRef<maplibregl.Marker[]>([]);
+  const popupRef = useRef<maplibregl.Popup | null>(null);
+
+  const escapeHtml = (value: string): string =>
+    value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  const formatDateTime = (value: number | null): string =>
+    value ? new Date(value).toLocaleString() : "—";
+
+  const buildContactUrl = (contactId: string | null): string | null =>
+    locationId && contactId
+      ? `https://app.gohighlevel.com/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(
+          contactId,
+        )}`
+      : null;
+
+  const buildPopupContent = (submission: SubmissionDoc | null, ownerColor: string): string => {
+    if (!submission) {
+      return `<div style="padding:12px 14px; max-width:320px; font-family:Inter, system-ui, -apple-system, sans-serif; color:#0f172a;">
+        <div style="font-weight:700; font-size:1.05rem; margin-bottom:4px;">No submission details</div>
+        <div style="color:#475569;">This marker has no linked submission.</div>
+      </div>`;
+    }
+
+    const ownerLabel = submission.createdByUserId
+      ? `Driver: ${escapeHtml(resolveUserName(submission.createdByUserId, "User"))}`
+      : "Unassigned";
+    const contactUrl = buildContactUrl(submission.contactId);
+    const statusText = escapeHtml((submission.status || "pending").toLowerCase());
+    const address = escapeHtml(submission.addressLabel || "No address label");
+
+    return `<div style="padding:12px 14px; max-width:360px; font-family:Inter, system-ui, -apple-system, sans-serif; color:#0f172a;">
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:6px;">
+        <div style="font-weight:700; font-size:1.05rem; line-height:1.3;">${address}</div>
+        <div style="display:grid; gap:2px; text-align:right; font-size:0.9rem;">
+          <div style="color:#0f172a; font-weight:700;">Submission date/time</div>
+          <div style="color:#475569;">${escapeHtml(formatDateTime(submission.createdAt))}</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px;">
+        <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:20px; border:1px solid ${ownerColor}33; background:${ownerColor}14; color:#0f172a; font-weight:600;">
+          <span aria-hidden="true" style="width:8px; height:8px; border-radius:999px; background:${ownerColor};"></span>
+          ${escapeHtml(ownerLabel)}
+        </span>
+        ${
+          contactUrl
+            ? `<a href="${contactUrl}" target="_blank" rel="noreferrer"
+                style="display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:8px; background:#2563eb; color:#fff; font-weight:700; text-decoration:none; box-shadow:0 1px 2px rgba(37,99,235,0.24);">
+                View Contact
+              </a>`
+            : `<span style="display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:12px; border:1px solid #e2e8f0; background:#f8fafc; color:#475569;">Contact not available</span>`
+        }
+        <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:12px; border:1px solid #e2e8f0; background:#fff; color:#475569; font-weight:600;">
+          Status: ${statusText}
+        </span>
+      </div>
+    </div>`;
+  };
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -437,6 +511,8 @@ function DashboardMap({ markers, markerOwners }: { markers: MarkerDoc[]; markerO
     return () => {
       markerRefs.current.forEach((m) => m.remove());
       markerRefs.current = [];
+      popupRef.current?.remove();
+      popupRef.current = null;
       map.remove();
       mapRef.current = null;
     };
@@ -447,6 +523,8 @@ function DashboardMap({ markers, markerOwners }: { markers: MarkerDoc[]; markerO
     if (!map) return;
     markerRefs.current.forEach((m) => m.remove());
     markerRefs.current = [];
+    popupRef.current?.remove();
+    popupRef.current = null;
     if (!markers.length) {
       map.easeTo({ center: [-98.5795, 39.8283], zoom: 3.5, duration: 400 });
       return;
@@ -455,11 +533,35 @@ function DashboardMap({ markers, markerOwners }: { markers: MarkerDoc[]; markerO
     const bounds = new maplibregl.LngLatBounds();
     markers.forEach((m) => {
       bounds.extend([m.lng, m.lat]);
-      const coordKey = `${m.lat.toFixed(5)},${m.lng.toFixed(5)}`;
-      const ownerId = (m.createdByUserId || "").trim() || markerOwners.get(coordKey) || "Unassigned";
-      const marker = new maplibregl.Marker({ color: colorForUser(ownerId) })
+      const key = coordKey(m.lat, m.lng);
+      const ownerId = (m.createdByUserId || "").trim() || markerOwners.get(key) || "Unassigned";
+      const markerColor = colorForUser(ownerId);
+      const marker = new maplibregl.Marker({ color: markerColor })
         .setLngLat([m.lng, m.lat])
         .addTo(map);
+
+      marker.getElement().addEventListener("click", () => {
+        const submission = submissionLookup.get(key) ?? null;
+        const html = buildPopupContent(submission, markerColor);
+
+        popupRef.current?.remove();
+        const popup = new maplibregl.Popup({
+          closeButton: true,
+          closeOnClick: false,
+          offset: 12,
+        })
+          .setLngLat([m.lng, m.lat])
+          .setHTML(html)
+          .addTo(map);
+
+        popupRef.current = popup;
+        popup.on("close", () => {
+          if (popupRef.current === popup) {
+            popupRef.current = null;
+          }
+        });
+      });
+
       markerRefs.current.push(marker);
     });
 
@@ -468,7 +570,7 @@ function DashboardMap({ markers, markerOwners }: { markers: MarkerDoc[]; markerO
     } else {
       map.fitBounds(bounds, { padding: 40, maxZoom: 12, duration: 600 });
     }
-  }, [markers]);
+  }, [markers, markerOwners, submissionLookup, resolveUserName, locationId]);
 
   return (
     <div
@@ -725,8 +827,20 @@ export default function DashboardInsights({ locationId }: Props) {
       if (!s.coordinates) return;
       const owner = (s.createdByUserId || "").trim();
       if (!owner) return;
-      const key = `${s.coordinates.lat.toFixed(5)},${s.coordinates.lng.toFixed(5)}`;
+      const key = coordKey(s.coordinates.lat, s.coordinates.lng);
       if (!map.has(key)) map.set(key, owner);
+    });
+    return map;
+  }, [submissions]);
+
+  const submissionLookup = useMemo(() => {
+    const map = new Map<string, SubmissionDoc>();
+    submissions.forEach((s) => {
+      if (!s.coordinates) return;
+      const key = coordKey(s.coordinates.lat, s.coordinates.lng);
+      if (!map.has(key)) {
+        map.set(key, s);
+      }
     });
     return map;
   }, [submissions]);
@@ -883,7 +997,13 @@ export default function DashboardInsights({ locationId }: Props) {
               Map coverage
             </h3>
           </div>
-          <DashboardMap markers={markers} markerOwners={markerOwnerMap} />
+          <DashboardMap
+            markers={markers}
+            markerOwners={markerOwnerMap}
+            submissionLookup={submissionLookup}
+            resolveUserName={resolveUserName}
+            locationId={locationId}
+          />
         </div>
 
         <div className="card" style={{ margin: 0 }}>
