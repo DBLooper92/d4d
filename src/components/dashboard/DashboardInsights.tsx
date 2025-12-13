@@ -422,52 +422,6 @@ function MiniBars({ data }: { data: { label: string; value: number; key?: string
   );
 }
 
-function StatusBadges({ counts }: { counts: Record<string, number> }) {
-  const palette = {
-    submitted: "#16a34a",
-    pending: "#2563eb",
-    failed: "#e11d48",
-  } as const;
-
-  const entries = Object.entries(counts).filter(([, v]) => v > 0);
-  if (!entries.length) {
-    return <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>No submissions yet</div>;
-  }
-  return (
-    <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-      {entries.map(([status, value]) => {
-        const color = (palette as Record<string, string>)[status] ?? "#0f172a";
-        return (
-          <div
-            key={status}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "8px",
-              padding: "6px 10px",
-              borderRadius: "999px",
-              border: "1px solid #e2e8f0",
-              background: "#fff",
-              boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-            }}
-          >
-            <span
-              style={{
-                width: "10px",
-                height: "10px",
-                borderRadius: "999px",
-                background: color,
-              }}
-            />
-            <span style={{ fontWeight: 600, color: "#0f172a" }}>{status}</span>
-            <span style={{ color: "#475569", fontSize: "0.9rem" }}>{value}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 type DashboardMapProps = {
   markers: MarkerDoc[];
   markerOwners: Map<string, string>;
@@ -808,17 +762,6 @@ export default function DashboardInsights({ locationId }: Props) {
     };
   }, [locationId, submissions, userNames]);
 
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { submitted: 0, pending: 0, failed: 0 };
-    submissions.forEach((s) => {
-      const status = (s.status || "pending").toLowerCase();
-      if (status.includes("fail") || status.includes("error")) counts.failed += 1;
-      else if (status.includes("submit")) counts.submitted += 1;
-      else counts.pending += 1;
-    });
-    return counts;
-  }, [submissions]);
-
   const donutData = useMemo<DonutDatum[]>(() => {
     const grouped = new Map<string, number>();
     submissions.forEach((s) => {
@@ -949,7 +892,7 @@ export default function DashboardInsights({ locationId }: Props) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
           gap: "12px",
         }}
       >
@@ -975,10 +918,6 @@ export default function DashboardInsights({ locationId }: Props) {
               <div style={{ color: "#64748b" }}>Peak: {activitySummary.peak.value} on {activitySummary.peak.label}</div>
             </div>
           </div>
-        </div>
-        <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Status mix</div>
-          <StatusBadges counts={statusCounts} />
         </div>
       </div>
 
