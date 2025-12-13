@@ -31,6 +31,14 @@ type ManageResp = {
   error?: string;
 };
 
+function sortUsers(list: ManagedUser[]): ManagedUser[] {
+  return [...list].sort((a, b) => {
+    if (a.isAdmin && !b.isAdmin) return -1;
+    if (!a.isAdmin && b.isAdmin) return 1;
+    return 0;
+  });
+}
+
 export default function InviteList({ locationId }: { locationId: string }) {
   const auth = useMemo(() => getFirebaseAuth(), []);
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -129,7 +137,7 @@ export default function InviteList({ locationId }: { locationId: string }) {
         }
         if (!Array.isArray(parsed.users)) throw new Error("Unexpected response shape.");
         if (!cancelled) {
-          setItems(parsed.users);
+          setItems(sortUsers(parsed.users));
           setActiveLimit(parsed.activeLimit ?? 5);
           setActiveCount(parsed.activeCount ?? 0);
         }
