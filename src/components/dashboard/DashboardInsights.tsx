@@ -1041,12 +1041,12 @@ export default function DashboardInsights({ locationId }: Props) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(360px, 1.7fr) minmax(260px, 1fr)",
-          gap: "14px",
+          gridTemplateColumns: "minmax(0, 1fr) 340px",
+          gap: "18px",
           alignItems: "start",
         }}
       >
-        <div style={{ display: "grid", gap: "14px" }}>
+        <div style={{ display: "grid", gap: "16px", minWidth: 0 }}>
           <div className="card" style={{ margin: 0 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
               <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
@@ -1118,21 +1118,21 @@ export default function DashboardInsights({ locationId }: Props) {
             </div>
             <DonutChart data={donutData} />
           </div>
-        </div>
+          </div>
 
-        <div style={{ display: "grid", gap: "14px" }}>
+        <div style={{ display: "grid", gap: "12px", minWidth: 0 }}>
           <div style={{ display: "grid", gap: "10px" }}>
-            <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+            <div className="card" style={{ margin: 0, borderColor: "#e2e8f0", paddingBottom: "12px" }}>
               <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Total submissions</div>
               <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{submissions.length}</div>
               <div style={{ color: "#64748b", marginTop: "4px" }}>All time</div>
             </div>
-            <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+            <div className="card" style={{ margin: 0, borderColor: "#e2e8f0", paddingBottom: "12px" }}>
               <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Active markers</div>
               <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{markers.length}</div>
               <div style={{ color: "#64748b", marginTop: "4px" }}>Currently visible on map</div>
             </div>
-            <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+            <div className="card" style={{ margin: 0, borderColor: "#e2e8f0", paddingBottom: "12px" }}>
               <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Recent activity</div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
                 <div>
