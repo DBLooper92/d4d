@@ -408,7 +408,7 @@ function StatusBadges({ counts }: { counts: Record<string, number> }) {
   );
 }
 
-function DashboardMap({ markers }: { markers: MarkerDoc[] }) {
+function DashboardMap({ markers, markerOwners }: { markers: MarkerDoc[]; markerOwners: Map<string, string> }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRefs = useRef<maplibregl.Marker[]>([]);
@@ -445,7 +445,9 @@ function DashboardMap({ markers }: { markers: MarkerDoc[] }) {
     const bounds = new maplibregl.LngLatBounds();
     markers.forEach((m) => {
       bounds.extend([m.lng, m.lat]);
-      const marker = new maplibregl.Marker({ color: colorForUser(m.createdByUserId) })
+      const coordKey = `${m.lat.toFixed(5)},${m.lng.toFixed(5)}`;
+      const ownerId = (m.createdByUserId || "").trim() || markerOwners.get(coordKey) || "Unassigned";
+      const marker = new maplibregl.Marker({ color: colorForUser(ownerId) })
         .setLngLat([m.lng, m.lat])
         .addTo(map);
       markerRefs.current.push(marker);
@@ -707,6 +709,18 @@ export default function DashboardInsights({ locationId }: Props) {
 
   const recent = useMemo(() => submissions.slice(0, 6), [submissions]);
 
+  const markerOwnerMap = useMemo(() => {
+    const map = new Map<string, string>();
+    submissions.forEach((s) => {
+      if (!s.coordinates) return;
+      const owner = (s.createdByUserId || "").trim();
+      if (!owner) return;
+      const key = `${s.coordinates.lat.toFixed(5)},${s.coordinates.lng.toFixed(5)}`;
+      if (!map.has(key)) map.set(key, owner);
+    });
+    return map;
+  }, [submissions]);
+
   const userColorGuide = useMemo(() => {
     const submissionCounts = new Map<string, number>();
     submissions.forEach((s) => {
@@ -859,7 +873,7 @@ export default function DashboardInsights({ locationId }: Props) {
               Map coverage
             </h3>
           </div>
-          <DashboardMap markers={markers} />
+          <DashboardMap markers={markers} markerOwners={markerOwnerMap} />
         </div>
 
         <div className="card" style={{ margin: 0 }}>
@@ -890,8 +904,11 @@ export default function DashboardInsights({ locationId }: Props) {
                       <div style={{ fontWeight: 600, color: "#0f172a" }}>
                         {s.addressLabel || "No address label"}
                       </div>
-                      <div style={{ fontSize: "0.9rem", color: "#475569" }}>
-                        {s.createdAt ? `Submission date/time: ${new Date(s.createdAt).toLocaleString()}` : "—"}
+                      <div style={{ display: "grid", gap: "2px", alignItems: "start", textAlign: "right" }}>
+                        <div style={{ fontSize: "0.9rem", color: "#0f172a", fontWeight: 700 }}>Submission date/time</div>
+                        <div style={{ fontSize: "0.9rem", color: "#475569" }}>
+                          {s.createdAt ? new Date(s.createdAt).toLocaleString() : "—"}
+                        </div>
                       </div>
                     </div>
                     <div style={{ marginTop: "6px", display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
