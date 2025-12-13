@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
@@ -258,7 +258,7 @@ type ActivityBar = {
   label: string;
   total: number;
   key?: string;
-  segments: { id: string; value: number; color: string }[];
+  segments: { id: string; value: number; color: string; name: string }[];
 };
 
 function DonutChart({ data }: { data: DonutDatum[] }) {
@@ -385,7 +385,9 @@ function DonutChart({ data }: { data: DonutDatum[] }) {
 
 function MiniBars({ data }: { data: ActivityBar[] }) {
   const max = Math.max(...data.map((d) => d.total), 1);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [hovered, setHovered] = useState<{ bar: ActivityBar; left: number; top: number } | null>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -394,64 +396,145 @@ function MiniBars({ data }: { data: ActivityBar[] }) {
     }
   }, [data]);
 
+  function handleHover(bar: ActivityBar, e: MouseEvent<HTMLDivElement>) {
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    const barRect = e.currentTarget.getBoundingClientRect();
+    if (!containerRect) return;
+    const centerX = barRect.left - containerRect.left + barRect.width / 2;
+    const top = barRect.top - containerRect.top - 10;
+    setHovered({ bar, left: centerX, top });
+  }
+
+  function handleLeave() {
+    setHovered(null);
+  }
+
+  const tooltipWidth = 280;
+  const tooltipLeft = (() => {
+    if (!hovered || !containerRef.current) return 0;
+    const containerWidth = containerRef.current.clientWidth;
+    const raw = hovered.left - tooltipWidth / 2;
+    const min = 8;
+    const maxClamp = Math.max(min, containerWidth - tooltipWidth - 8);
+    return Math.min(Math.max(raw, min), maxClamp);
+  })();
+  const tooltipTop = hovered ? Math.max(8, hovered.top) : 0;
+
   return (
-    <div
-      ref={scrollRef}
-      style={{
-        overflowX: "auto",
-        paddingBottom: "6px",
-      }}
-    >
+    <div ref={containerRef} style={{ position: "relative" }}>
       <div
+        ref={scrollRef}
         style={{
-          display: "flex",
-          alignItems: "flex-end",
-          gap: "10px",
-          height: "140px",
-          minWidth: `${Math.max(data.length * 48, 280)}px`,
+          overflowX: "auto",
+          paddingBottom: "6px",
         }}
       >
-        {data.map((d) => {
-          const barHeight = (d.total / max) * 120;
-          const sorted = [...d.segments].sort((a, b) => b.value - a.value);
-          return (
-            <div key={d.key ?? d.label} style={{ flex: 1, textAlign: "center", display: "grid", gap: "4px" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            gap: "10px",
+            height: "140px",
+            minWidth: `${Math.max(data.length * 48, 280)}px`,
+          }}
+        >
+          {data.map((d) => {
+            const barHeight = (d.total / max) * 120;
+            const sorted = [...d.segments].sort((a, b) => b.value - a.value);
+            return (
               <div
-                style={{
-                  position: "relative",
-                  height: barHeight ? `${barHeight}px` : "6px",
-                  borderRadius: "10px 10px 6px 6px",
-                  overflow: "hidden",
-                  boxShadow: d.total ? "0 6px 12px rgba(37, 99, 235, 0.18)" : "none",
-                  background: d.total ? "#e2e8f0" : "linear-gradient(180deg, #e2e8f0, #cbd5e1)",
-                  border: d.total ? "1px solid #e2e8f0" : "none",
-                  display: "flex",
-                  flexDirection: "column-reverse",
-                  justifyContent: d.total ? "flex-start" : "center",
-                }}
-                title={`${d.label}: ${d.total}`}
+                key={d.key ?? d.label}
+                style={{ flex: 1, textAlign: "center", display: "grid", gap: "4px" }}
+                onMouseEnter={(e) => handleHover(d, e)}
+                onMouseMove={(e) => handleHover(d, e)}
+                onMouseLeave={handleLeave}
               >
-                {barHeight > 0
-                  ? sorted.map((s) => {
-                      const h = d.total ? (s.value / d.total) * barHeight : 0;
-                      return (
-                        <div
-                          key={`${d.key ?? d.label}-${s.id}`}
-                          style={{
-                            height: `${h}px`,
-                            background: s.color,
-                          }}
-                          aria-hidden="true"
-                        />
-                      );
-                    })
-                  : null}
+                <div
+                  style={{
+                    position: "relative",
+                    height: barHeight ? `${barHeight}px` : "6px",
+                    borderRadius: "10px 10px 6px 6px",
+                    overflow: "hidden",
+                    boxShadow: d.total ? "0 6px 12px rgba(37, 99, 235, 0.18)" : "none",
+                    background: d.total ? "#e2e8f0" : "linear-gradient(180deg, #e2e8f0, #cbd5e1)",
+                    border: d.total ? "1px solid #e2e8f0" : "none",
+                    display: "flex",
+                    flexDirection: "column-reverse",
+                    justifyContent: d.total ? "flex-start" : "center",
+                  }}
+                  aria-label={`${d.label}: ${d.total}`}
+                >
+                  {barHeight > 0
+                    ? sorted.map((s) => {
+                        const h = d.total ? (s.value / d.total) * barHeight : 0;
+                        return (
+                          <div
+                            key={`${d.key ?? d.label}-${s.id}`}
+                            style={{
+                              height: `${h}px`,
+                              background: s.color,
+                            }}
+                            aria-hidden="true"
+                          />
+                        );
+                      })
+                    : null}
+                </div>
+                <div style={{ fontSize: "11px", color: "#475569" }}>{d.label}</div>
               </div>
-              <div style={{ fontSize: "11px", color: "#475569" }}>{d.label}</div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
+      {hovered ? (
+        <div
+          style={{
+            position: "absolute",
+            left: tooltipLeft,
+            top: tooltipTop,
+            width: `${tooltipWidth}px`,
+            maxWidth: "calc(100% - 16px)",
+            background: "#fff",
+            borderRadius: "12px",
+            border: "1px solid #e2e8f0",
+            boxShadow: "0 14px 36px rgba(15,23,42,0.18)",
+            padding: "12px 14px",
+            zIndex: 5,
+            pointerEvents: "none",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+            <div style={{ color: "#0f172a", fontWeight: 700 }}>{hovered.bar.label}</div>
+            <div style={{ color: "#0f172a", fontWeight: 700 }}>{hovered.bar.total} total</div>
+          </div>
+          {hovered.bar.segments.length ? (
+            <div style={{ display: "grid", gap: "6px" }}>
+              {[...hovered.bar.segments]
+                .sort((a, b) => b.value - a.value)
+                .map((s) => (
+                  <div key={`${hovered.bar.label}-${s.id}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#0f172a" }}>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          width: "10px",
+                          height: "10px",
+                          borderRadius: "999px",
+                          background: s.color,
+                          boxShadow: "0 0 0 1px rgba(15,23,42,0.08)",
+                        }}
+                      />
+                      <span style={{ fontWeight: 600 }}>{s.name}</span>
+                    </div>
+                    <span style={{ color: "#475569", fontWeight: 600 }}>{s.value}</span>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>No submissions</div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -848,11 +931,12 @@ export default function DashboardInsights({ locationId }: Props) {
         id,
         value,
         color: colorForUser(id),
+        name: resolveUserName(id),
       }));
       days.push({ label, total, key, segments });
     }
     return days;
-  }, [submissions, timeRangeDays]);
+  }, [submissions, timeRangeDays, resolveUserName]);
 
   const activitySummary = useMemo(() => {
     const total = activitySeries.reduce((sum, d) => sum + d.total, 0);
