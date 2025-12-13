@@ -264,7 +264,6 @@ export default function InviteList({ locationId }: { locationId: string }) {
             u.accepted
               ? { label: "Joined", bg: "#dcfce7", fg: "#166534" }
               : { label: u.invited ? "Invite sent" : "Invite pending", bg: "#fef3c7", fg: "#92400e" },
-            { label: isActive ? "Active" : "Inactive", bg: isActive ? "#dcfce7" : "#e2e8f0", fg: isActive ? "#166534" : "#475569" },
           ].filter(Boolean) as Array<{ label: string; bg: string; fg: string }>;
           const initials = (primary || "D").trim().slice(0, 1).toUpperCase() || "D";
           return (

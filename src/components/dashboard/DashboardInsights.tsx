@@ -1226,7 +1226,7 @@ export default function DashboardInsights({ locationId }: Props) {
             >
               <div>
                 <div style={{ color: "#0f172a", fontWeight: 700, fontSize: "1.05rem" }}>Invite drivers</div>
-                <div style={{ color: "#475569", marginTop: "2px" }}>Send invites and toggle active status without leaving the dashboard.</div>
+                <div style={{ color: "#475569", marginTop: "2px" }}>Invite drivers and manage their access for this location.</div>
               </div>
               <button
                 type="button"
@@ -1246,7 +1246,7 @@ export default function DashboardInsights({ locationId }: Props) {
                   boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
                 }}
               >
-                Close
+                ×
               </button>
             </div>
             <div style={{ padding: "16px 16px 18px", overflow: "auto" }}>
