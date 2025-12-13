@@ -356,22 +356,47 @@ function DonutChart({ data }: { data: DonutDatum[] }) {
 
 function MiniBars({ data }: { data: { label: string; value: number }[] }) {
   const max = Math.max(...data.map((d) => d.value), 1);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollLeft = el.scrollWidth;
+    }
+  }, [data]);
+
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: "10px", height: "140px" }}>
-      {data.map((d) => (
-        <div key={d.label} style={{ flex: 1, textAlign: "center" }}>
-          <div
-            style={{
-              height: `${(d.value / max) * 120}px`,
-              background: "linear-gradient(180deg, #3b82f6, #2563eb)",
-              borderRadius: "10px 10px 6px 6px",
-              boxShadow: "0 6px 12px rgba(37, 99, 235, 0.18)",
-            }}
-            title={`${d.label}: ${d.value}`}
-          />
-          <div style={{ marginTop: "6px", fontSize: "11px", color: "#475569" }}>{d.label}</div>
-        </div>
-      ))}
+    <div
+      ref={scrollRef}
+      style={{
+        overflowX: "auto",
+        paddingBottom: "6px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          gap: "10px",
+          height: "140px",
+          minWidth: `${Math.max(data.length * 48, 280)}px`,
+        }}
+      >
+        {data.map((d) => (
+          <div key={d.label} style={{ flex: 1, textAlign: "center" }}>
+            <div
+              style={{
+                height: `${(d.value / max) * 120}px`,
+                background: "linear-gradient(180deg, #3b82f6, #2563eb)",
+                borderRadius: "10px 10px 6px 6px",
+                boxShadow: "0 6px 12px rgba(37, 99, 235, 0.18)",
+              }}
+              title={`${d.label}: ${d.value}`}
+            />
+            <div style={{ marginTop: "6px", fontSize: "11px", color: "#475569" }}>{d.label}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
