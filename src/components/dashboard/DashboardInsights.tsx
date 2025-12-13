@@ -700,32 +700,37 @@ export default function DashboardInsights({ locationId }: Props) {
 
   const recent = useMemo(() => submissions.slice(0, 6), [submissions]);
 
-  const userColorGuide = useMemo(
-    () => {
-      const counts = new Map<string, number>();
-      submissions.forEach((s) => {
-        const id = (s.createdByUserId || "Unassigned").trim() || "Unassigned";
-        counts.set(id, (counts.get(id) ?? 0) + 1);
+  const userColorGuide = useMemo(() => {
+    const submissionCounts = new Map<string, number>();
+    submissions.forEach((s) => {
+      const id = (s.createdByUserId || "Unassigned").trim() || "Unassigned";
+      submissionCounts.set(id, (submissionCounts.get(id) ?? 0) + 1);
+    });
+
+    const entries = new Map<string, { id: string; name: string; color: string; count: number }>();
+    const addEntry = (id: string, count: number) => {
+      const name = resolveUserName(id);
+      const key = name.toLowerCase();
+      const existing = entries.get(key);
+      if (!existing || count > existing.count) {
+        entries.set(key, { id, name, color: colorForUser(id), count });
+      }
+    };
+
+    submissionCounts.forEach((count, id) => addEntry(id, count));
+
+    Object.keys(userNames)
+      .filter((id) => id.length > 10) // skip short aliases
+      .forEach((id) => {
+        const count = submissionCounts.get(id) ?? 0;
+        addEntry(id, count);
       });
-      Object.keys(userNames)
-        .filter((id) => id.length > 10) // likely full GHL/Firebase IDs, not short aliases
-        .forEach((id) => {
-          if (!counts.has(id)) counts.set(id, 0);
-        });
-      return Array.from(counts.entries())
-        .map(([id, count]) => ({
-          id,
-          name: resolveUserName(id),
-          color: colorForUser(id),
-          count,
-        }))
-        .sort((a, b) => {
-          if (b.count !== a.count) return b.count - a.count;
-          return a.name.localeCompare(b.name);
-        });
-    },
-    [submissions, userNames, resolveUserName],
-  );
+
+    return Array.from(entries.values()).sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.name.localeCompare(b.name);
+    });
+  }, [submissions, userNames, resolveUserName]);
 
   return (
     <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
@@ -760,33 +765,6 @@ export default function DashboardInsights({ locationId }: Props) {
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
           <div style={{ color: "#475569", fontSize: "0.9rem" }}>Status mix</div>
           <StatusBadges counts={statusCounts} />
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(320px, 1fr) minmax(320px, 1fr)",
-          gap: "14px",
-          alignItems: "stretch",
-        }}
-      >
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
-              Submissions by person
-            </h3>
-          </div>
-          <DonutChart data={donutData} />
-        </div>
-
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
-              Last 7 days
-            </h3>
-          </div>
-          <MiniBars data={last7Days} />
         </div>
       </div>
 
@@ -834,6 +812,32 @@ export default function DashboardInsights({ locationId }: Props) {
         )}
       </div>
 
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(320px, 1fr) minmax(320px, 1fr)",
+          gap: "14px",
+          alignItems: "stretch",
+        }}
+      >
+        <div className="card" style={{ margin: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
+              Submissions by person
+            </h3>
+          </div>
+          <DonutChart data={donutData} />
+        </div>
+
+        <div className="card" style={{ margin: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
+              Last 7 days
+            </h3>
+          </div>
+          <MiniBars data={last7Days} />
+        </div>
+      </div>
       <div
         style={{
           display: "grid",
