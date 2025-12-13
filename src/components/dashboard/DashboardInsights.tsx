@@ -1041,146 +1041,144 @@ export default function DashboardInsights({ locationId }: Props) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-          gap: "12px",
+          gridTemplateColumns: "minmax(360px, 1.7fr) minmax(260px, 1fr)",
+          gap: "14px",
+          alignItems: "start",
         }}
       >
-        <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Total submissions</div>
-          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{submissions.length}</div>
-          <div style={{ color: "#64748b", marginTop: "4px" }}>All time</div>
-        </div>
-        <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Active markers</div>
-          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{markers.length}</div>
-          <div style={{ color: "#64748b", marginTop: "4px" }}>Currently visible on map</div>
-        </div>
-        <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Recent activity</div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
-            <div>
-              <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{activitySummary.total}</div>
-              <div style={{ color: "#64748b", marginTop: "4px" }}>{rangeLabel}</div>
-            </div>
-            <div style={{ textAlign: "right", color: "#475569", fontSize: "0.95rem" }}>
-              <div style={{ fontWeight: 700 }}>Avg {activitySummary.avg.toFixed(1)} / day</div>
-              <div style={{ color: "#64748b" }}>Peak: {activitySummary.peak.value} on {activitySummary.peak.label}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="card" style={{ margin: 0 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
-          <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={openInviteModal}
-            style={{
-              padding: "0.5rem 0.9rem",
-              borderRadius: "10px",
-              fontWeight: 700,
-              background: "#2563eb",
-              color: "#fff",
-              boxShadow: "0 8px 16px rgba(37,99,235,0.18)",
-              cursor: "pointer",
-            }}
-          >
-            Invite drivers
-          </button>
-        </div>
-        {userColorGuide.length ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
-            {userColorGuide.map((u) => (
-              <div
-                key={u.id}
+        <div style={{ display: "grid", gap: "14px" }}>
+          <div className="card" style={{ margin: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
+              <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={openInviteModal}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  padding: "8px 10px",
-                  border: "1px solid #e2e8f0",
+                  padding: "0.5rem 0.9rem",
                   borderRadius: "10px",
-                  background: "#fff",
+                  fontWeight: 700,
+                  background: "#2563eb",
+                  color: "#fff",
+                  boxShadow: "0 8px 16px rgba(37,99,235,0.18)",
+                  cursor: "pointer",
                 }}
               >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: "16px",
-                    height: "16px",
-                    borderRadius: "6px",
-                    background: u.color,
-                    border: "1px solid rgba(15,23,42,0.12)",
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
-                  }}
-                />
-                <div style={{ display: "grid", gap: "2px" }}>
-                  <div style={{ fontWeight: 600, color: u.active ? "#0f172a" : "#94a3b8" }}>{u.name}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem" }}>
-                    <span style={{ color: "#475569" }}>{u.count} submission{u.count === 1 ? "" : "s"}</span>
-                    {!u.active && (
-                      <span style={{ color: "#94a3b8", fontWeight: 600 }}>(inactive)</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>No users yet.</div>
-        )}
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(320px, 1fr) minmax(320px, 1fr)",
-          gap: "14px",
-          alignItems: "stretch",
-        }}
-      >
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
-              Submissions by person
-            </h3>
-          </div>
-          <DonutChart data={donutData} />
-        </div>
-
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "8px", flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
-              Activity
-            </h3>
-            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-              {[7, 14, 30].map((d) => {
-                const active = timeRangeDays === d;
-                return (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => setTimeRangeDays(d)}
+                Invite drivers
+              </button>
+            </div>
+            {userColorGuide.length ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
+                {userColorGuide.map((u) => (
+                  <div
+                    key={u.id}
                     style={{
-                      padding: "6px 10px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      padding: "8px 10px",
+                      border: "1px solid #e2e8f0",
                       borderRadius: "10px",
-                      border: active ? "1px solid #2563eb" : "1px solid #e2e8f0",
-                      background: active ? "#eff6ff" : "#fff",
-                      color: active ? "#1d4ed8" : "#475569",
-                      fontWeight: 600,
-                      cursor: "pointer",
+                      background: "#fff",
                     }}
                   >
-                    {d}d
-                  </button>
-                );
-              })}
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        width: "16px",
+                        height: "16px",
+                        borderRadius: "6px",
+                        background: u.color,
+                        border: "1px solid rgba(15,23,42,0.12)",
+                        boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+                      }}
+                    />
+                    <div style={{ display: "grid", gap: "2px" }}>
+                      <div style={{ fontWeight: 600, color: u.active ? "#0f172a" : "#94a3b8" }}>{u.name}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem" }}>
+                        <span style={{ color: "#475569" }}>{u.count} submission{u.count === 1 ? "" : "s"}</span>
+                        {!u.active && (
+                          <span style={{ color: "#94a3b8", fontWeight: 600 }}>(inactive)</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>No users yet.</div>
+            )}
+          </div>
+
+          <div className="card" style={{ margin: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+              <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
+                Submissions by person
+              </h3>
+            </div>
+            <DonutChart data={donutData} />
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gap: "14px" }}>
+          <div style={{ display: "grid", gap: "10px" }}>
+            <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+              <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Total submissions</div>
+              <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{submissions.length}</div>
+              <div style={{ color: "#64748b", marginTop: "4px" }}>All time</div>
+            </div>
+            <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+              <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Active markers</div>
+              <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{markers.length}</div>
+              <div style={{ color: "#64748b", marginTop: "4px" }}>Currently visible on map</div>
+            </div>
+            <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+              <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Recent activity</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+                <div>
+                  <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{activitySummary.total}</div>
+                  <div style={{ color: "#64748b", marginTop: "4px" }}>{rangeLabel}</div>
+                </div>
+                <div style={{ textAlign: "right", color: "#475569", fontSize: "0.95rem" }}>
+                  <div style={{ fontWeight: 700 }}>Avg {activitySummary.avg.toFixed(1)} / day</div>
+                  <div style={{ color: "#64748b" }}>Peak: {activitySummary.peak.value} on {activitySummary.peak.label}</div>
+                </div>
+              </div>
             </div>
           </div>
-          <div style={{ color: "#64748b", fontSize: "0.9rem", marginBottom: "6px" }}>{rangeLabel}</div>
-          <MiniBars data={activitySeries} />
+
+          <div className="card" style={{ margin: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "8px", flexWrap: "wrap" }}>
+              <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
+                Activity
+              </h3>
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                {[7, 14, 30].map((d) => {
+                  const active = timeRangeDays === d;
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setTimeRangeDays(d)}
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: "10px",
+                        border: active ? "1px solid #2563eb" : "1px solid #e2e8f0",
+                        background: active ? "#eff6ff" : "#fff",
+                        color: active ? "#1d4ed8" : "#475569",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {d}d
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ color: "#64748b", fontSize: "0.9rem", marginBottom: "6px" }}>{rangeLabel}</div>
+            <MiniBars data={activitySeries} />
+          </div>
         </div>
       </div>
       <div
