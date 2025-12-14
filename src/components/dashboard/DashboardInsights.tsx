@@ -1051,18 +1051,18 @@ export default function DashboardInsights({ locationId }: Props) {
             type="button"
             onClick={openQuickStart}
             style={{
-              padding: "0.65rem 1.1rem",
+              padding: "0.5rem 0.9rem",
               borderRadius: "12px",
               background: "#facc15",
               color: "#0f172a",
               fontWeight: 800,
               letterSpacing: "0.02em",
               border: "1px solid #eab308",
-              boxShadow: "0 10px 18px rgba(250, 204, 21, 0.35)",
+              boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
               cursor: "pointer",
               textTransform: "uppercase",
               width: "fit-content",
-              minWidth: "160px",
+              minWidth: "140px",
               textAlign: "center",
             }}
           >
