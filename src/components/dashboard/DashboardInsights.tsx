@@ -1025,23 +1025,16 @@ export default function DashboardInsights({ locationId }: Props) {
   return (
     <>
       <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
         <div style={{ display: "grid", gap: "6px", flex: "1 1 320px", minWidth: "260px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <div
-              style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "12px",
-                background: "#f0f9ff",
-                border: "1px solid #e0f2fe",
-                display: "grid",
-                placeItems: "center",
-                boxShadow: "0 6px 14px rgba(1,185,250,0.18)",
-              }}
-            >
-              <Image src={logoImage} alt="Driving4Dollars.co logo" width={28} height={28} style={{ objectFit: "contain" }} />
-            </div>
+            <Image
+              src={logoImage}
+              alt="Driving4Dollars.co logo"
+              width={32}
+              height={32}
+              style={{ objectFit: "contain", filter: "drop-shadow(0 8px 18px rgba(1,185,250,0.3))" }}
+            />
             <span style={{ color: "#01B9FA", fontWeight: 800, letterSpacing: "0.02em", fontSize: "1.05rem" }}>
               Driving4Dollars.co
             </span>
@@ -1053,33 +1046,37 @@ export default function DashboardInsights({ locationId }: Props) {
             Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
           </div>
         </div>
-        <button
-          type="button"
-          onClick={openQuickStart}
-          style={{
-            padding: "0.65rem 1.1rem",
-            borderRadius: "12px",
-            background: "#facc15",
-            color: "#0f172a",
-            fontWeight: 800,
-            letterSpacing: "0.02em",
-            border: "1px solid #eab308",
-            boxShadow: "0 10px 18px rgba(250, 204, 21, 0.35)",
-            cursor: "pointer",
-            textTransform: "uppercase",
-            flex: "0 0 auto",
-          }}
-        >
-          GET STARTED
-        </button>
-        <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", marginLeft: "auto" }}>
+        <div style={{ flex: "1 1 180px", minWidth: "180px", display: "flex", justifyContent: "center" }}>
+          <button
+            type="button"
+            onClick={openQuickStart}
+            style={{
+              padding: "0.65rem 1.1rem",
+              borderRadius: "12px",
+              background: "#facc15",
+              color: "#0f172a",
+              fontWeight: 800,
+              letterSpacing: "0.02em",
+              border: "1px solid #eab308",
+              boxShadow: "0 10px 18px rgba(250, 204, 21, 0.35)",
+              cursor: "pointer",
+              textTransform: "uppercase",
+              width: "fit-content",
+              minWidth: "160px",
+              textAlign: "center",
+            }}
+          >
+            GET STARTED
+          </button>
+        </div>
+        <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", flex: "1 1 240px" }}>
           <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
           <SkiptraceToggle locationId={locationId} />
           <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
             Auto-skiptrace new properties ($0.12 each) while enabled.
           </div>
+          {loading && <div className="skel" style={{ width: "120px", height: "14px", justifySelf: "end" }} />}
         </div>
-        {loading && <div className="skel" style={{ width: "120px", height: "14px", marginLeft: "auto" }} />}
       </div>
 
       <div
