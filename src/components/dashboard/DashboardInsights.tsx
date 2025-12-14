@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import Image from "next/image";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
@@ -18,6 +19,8 @@ import { getFirebaseFirestore, getFirebaseAuth } from "@/lib/firebaseClient";
 import { getDocs } from "firebase/firestore";
 import SkiptraceToggle from "./SkiptraceToggle";
 import InviteList from "../invites/InviteList";
+import QuickStartGuideContent from "./QuickStartGuideContent";
+import logoImage from "../../../images/logo.png";
 
 type SubmissionDoc = {
   id: string;
@@ -691,22 +694,26 @@ export default function DashboardInsights({ locationId }: Props) {
   const [timeRangeDays, setTimeRangeDays] = useState<number>(14);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
+  const [showQuickStart, setShowQuickStart] = useState<boolean>(false);
 
   const openInviteModal = useCallback(() => setShowInviteModal(true), []);
   const closeInviteModal = useCallback(() => setShowInviteModal(false), []);
+  const openQuickStart = useCallback(() => setShowQuickStart(true), []);
+  const closeQuickStart = useCallback(() => setShowQuickStart(false), []);
 
   useEffect(() => {
-    if (!showInviteModal) return;
+    if (!showInviteModal && !showQuickStart) return;
     const onKeyDown = (evt: KeyboardEvent) => {
       if (evt.key === "Escape") {
         setShowInviteModal(false);
+        setShowQuickStart(false);
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [showInviteModal]);
+  }, [showInviteModal, showQuickStart]);
 
   const resolveUserName = useMemo(
     () =>
@@ -1018,9 +1025,27 @@ export default function DashboardInsights({ locationId }: Props) {
   return (
     <>
       <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: "0.9rem", color: "#475569", fontWeight: 600 }}>Live operations</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
+        <div style={{ display: "grid", gap: "6px", flex: "1 1 320px", minWidth: "260px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div
+              style={{
+                width: "40px",
+                height: "40px",
+                borderRadius: "12px",
+                background: "#f0f9ff",
+                border: "1px solid #e0f2fe",
+                display: "grid",
+                placeItems: "center",
+                boxShadow: "0 6px 14px rgba(1,185,250,0.18)",
+              }}
+            >
+              <Image src={logoImage} alt="Driving4Dollars.co logo" width={28} height={28} style={{ objectFit: "contain" }} />
+            </div>
+            <span style={{ color: "#01B9FA", fontWeight: 800, letterSpacing: "0.02em", fontSize: "1.05rem" }}>
+              Driving4Dollars.co
+            </span>
+          </div>
           <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
             Coverage, submissions, and team activity
           </h2>
@@ -1028,14 +1053,33 @@ export default function DashboardInsights({ locationId }: Props) {
             Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
           </div>
         </div>
-        <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right" }}>
+        <button
+          type="button"
+          onClick={openQuickStart}
+          style={{
+            padding: "0.65rem 1.1rem",
+            borderRadius: "12px",
+            background: "#facc15",
+            color: "#0f172a",
+            fontWeight: 800,
+            letterSpacing: "0.02em",
+            border: "1px solid #eab308",
+            boxShadow: "0 10px 18px rgba(250, 204, 21, 0.35)",
+            cursor: "pointer",
+            textTransform: "uppercase",
+            flex: "0 0 auto",
+          }}
+        >
+          GET STARTED
+        </button>
+        <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", marginLeft: "auto" }}>
           <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
           <SkiptraceToggle locationId={locationId} />
           <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
             Auto-skiptrace new properties ($0.12 each) while enabled.
           </div>
         </div>
-        {loading && <div className="skel" style={{ width: "120px", height: "14px" }} />}
+        {loading && <div className="skel" style={{ width: "120px", height: "14px", marginLeft: "auto" }} />}
       </div>
 
       <div
@@ -1081,13 +1125,13 @@ export default function DashboardInsights({ locationId }: Props) {
               padding: "0.5rem 0.9rem",
               borderRadius: "10px",
               fontWeight: 700,
-              background: "#2563eb",
+              background: "#01B9FA",
               color: "#fff",
-              boxShadow: "0 8px 16px rgba(37,99,235,0.18)",
+              boxShadow: "0 8px 16px rgba(1,185,250,0.24)",
               cursor: "pointer",
             }}
           >
-            Invite drivers
+            Invite Drivers
           </button>
         </div>
         {userColorGuide.length ? (
@@ -1307,6 +1351,76 @@ export default function DashboardInsights({ locationId }: Props) {
         </div>
       </div>
       </section>
+      {showQuickStart && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Quick start guide"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeQuickStart();
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 60,
+            background: "rgba(15,23,42,0.55)",
+            backdropFilter: "blur(4px)",
+            display: "grid",
+            placeItems: "center",
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "min(900px, 95vw)",
+              maxHeight: "90vh",
+              background: "#fff",
+              borderRadius: "16px",
+              overflow: "hidden",
+              border: "1px solid #e2e8f0",
+              boxShadow: "0 24px 70px rgba(15,23,42,0.35)",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                gap: "12px",
+                padding: "14px 16px",
+                borderBottom: "1px solid #e2e8f0",
+                background: "#f8fafc",
+              }}
+            >
+              <button
+                type="button"
+                onClick={closeQuickStart}
+                aria-label="Close quick start guide"
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "12px",
+                  border: "1px solid #e2e8f0",
+                  background: "#fff",
+                  cursor: "pointer",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#0f172a",
+                  fontWeight: 800,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                }}
+              >
+                X
+              </button>
+            </div>
+            <div style={{ padding: "16px 16px 18px", overflow: "auto" }}>
+              <QuickStartGuideContent />
+            </div>
+          </div>
+        </div>
+      )}
       {showInviteModal && (
         <div
           role="dialog"
