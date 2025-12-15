@@ -746,42 +746,23 @@ export default function DashboardInsights({ locationId }: Props) {
       setViewer((prev) => ({ ...prev, loading: true }));
       try {
         const db = getFirebaseFirestore();
-        const locSnap = await getDoc(doc(db, "locations", locationId, "users", authUser.uid));
-        const locData = locSnap.exists() ? ((locSnap.data() || {}) as Record<string, unknown>) : {};
-        const locRole = (locData as { role?: string }).role;
-        let isAdmin =
-          Boolean((locData as { isAdmin?: boolean }).isAdmin) ||
-          (typeof locRole === "string" && locRole.trim().toLowerCase() === "admin");
-        let ghlUserId = extractGhlUserId(locData);
-
-        if ((!isAdmin || !ghlUserId) && !locSnap.exists()) {
-          try {
-            const locationDoc = await getDoc(doc(db, "locations", locationId));
-            if (locationDoc.exists()) {
-              const directory = (locationDoc.data() as { userDirectory?: Record<string, unknown> }).userDirectory;
-              if (directory && typeof directory === "object") {
-                const matched = Object.entries(directory).find(([, raw]) => {
-                  if (!raw || typeof raw !== "object") return false;
-                  const firebaseUid = cleanFirebaseUid(raw as Record<string, unknown>);
-                  return firebaseUid && firebaseUid === authUser.uid;
-                });
-                if (matched) {
-                  const [ghlId, raw] = matched;
-                  ghlUserId = ghlUserId || ghlId;
-                  const dirRole = (raw as { role?: string }).role;
-                  if (!isAdmin && typeof dirRole === "string" && dirRole.trim().toLowerCase() === "admin") {
-                    isAdmin = true;
-                  }
-                }
-              }
-            }
-          } catch {
-            /* ignore */
-          }
+        let locData: Record<string, unknown> | null = null;
+        try {
+          const locSnap = await getDoc(doc(db, "locations", locationId, "users", authUser.uid));
+          locData = locSnap.exists() ? ((locSnap.data() || {}) as Record<string, unknown>) : {};
+        } catch {
+          // Keep going with other sources if Firestore denies this read for any reason.
+          locData = null;
         }
 
+        const locRole = (locData as { role?: string } | null)?.role;
+        let isAdmin =
+          Boolean((locData as { isAdmin?: boolean } | null)?.isAdmin) ||
+          (typeof locRole === "string" && locRole.trim().toLowerCase() === "admin");
+        let ghlUserId = locData ? extractGhlUserId(locData) : "";
+
         if (!ghlUserId) {
-          const directory = (locData as { userDirectory?: Record<string, unknown> }).userDirectory;
+          const directory = (locData as { userDirectory?: Record<string, unknown> } | null)?.userDirectory;
           if (directory && typeof directory === "object") {
             const matched = Object.entries(directory).find(([, raw]) => {
               if (!raw || typeof raw !== "object") return false;
@@ -798,19 +779,54 @@ export default function DashboardInsights({ locationId }: Props) {
           }
         }
 
-        if (!isAdmin || !ghlUserId) {
-          const rootSnap = await getDoc(doc(db, "users", authUser.uid));
-          if (rootSnap.exists()) {
-            const rootData = (rootSnap.data() || {}) as Record<string, unknown>;
-            const rootRole = (rootData as { role?: string }).role;
-            if (!isAdmin) {
-              isAdmin =
-                Boolean((rootData as { isAdmin?: boolean }).isAdmin) ||
-                (typeof rootRole === "string" && rootRole.trim().toLowerCase() === "admin");
+        try {
+          if (!isAdmin || !ghlUserId) {
+            const rootSnap = await getDoc(doc(db, "users", authUser.uid));
+            if (rootSnap.exists()) {
+              const rootData = (rootSnap.data() || {}) as Record<string, unknown>;
+              const rootRole = (rootData as { role?: string }).role;
+              if (!isAdmin) {
+                isAdmin =
+                  Boolean((rootData as { isAdmin?: boolean }).isAdmin) ||
+                  (typeof rootRole === "string" && rootRole.trim().toLowerCase() === "admin");
+              }
+              if (!ghlUserId) {
+                ghlUserId = extractGhlUserId(rootData);
+              }
             }
-            if (!ghlUserId) {
-              ghlUserId = extractGhlUserId(rootData);
+          }
+        } catch {
+          /* ignore root user read errors */
+        }
+
+        if (!isAdmin) {
+          // Server-side fallback: trust the manage endpoint (Admin SDK) so UI still unlocks if client rules block the doc read.
+          try {
+            const token = await authUser.getIdToken();
+            const qs = new URLSearchParams({ location_id: locationId });
+            if (token) qs.set("idToken", token);
+            const resp = await fetch(`/api/location-users/manage?${qs.toString()}`, {
+              cache: "no-store",
+              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            });
+            const parsed = (await resp.json().catch(() => ({}))) as
+              | { users?: ManageUser[]; adminGhlUserId?: string | null; error?: string }
+              | { data?: { users?: ManageUser[] }; adminGhlUserId?: string | null; error?: string };
+            if (resp.ok && !(parsed as { error?: string }).error) {
+              const users = (parsed as { users?: ManageUser[] }).users ??
+                (parsed as { data?: { users?: ManageUser[] } }).data?.users ??
+                [];
+              const adminGhlUserId = (parsed as { adminGhlUserId?: string | null }).adminGhlUserId ?? null;
+              const adminMatch = users.find(
+                (u) => u.firebaseUid === authUser.uid || (adminGhlUserId && u.id === adminGhlUserId),
+              );
+              if (adminMatch) {
+                isAdmin = true;
+                if (!ghlUserId && adminMatch.id) ghlUserId = adminMatch.id;
+              }
             }
+          } catch {
+            /* ignore manage fallback errors */
           }
         }
 

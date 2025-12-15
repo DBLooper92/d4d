@@ -156,33 +156,16 @@ async function requireAuth(req: Request) {
 async function requireLocationAdmin(uid: string, locationId: string) {
   const ref = db().collection("locations").doc(locationId).collection("users").doc(uid);
   const snap = await ref.get();
-  const data = snap.exists ? (snap.data() || {}) : {};
-  const locIsAdmin = Boolean((data as { isAdmin?: boolean; role?: string }).isAdmin) || (data as { role?: string }).role === "admin";
-  const locGhlUserId =
+  if (!snap.exists) return { error: NextResponse.json({ error: "Forbidden" }, { status: 403, headers: cacheHeaders() }) };
+  const data = snap.data() || {};
+  const isAdmin = Boolean((data as { isAdmin?: boolean; role?: string }).isAdmin) || (data as { role?: string }).role === "admin";
+  if (!isAdmin) {
+    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403, headers: cacheHeaders() }) };
+  }
+  const ghlUserId =
     (data as { ghlUserId?: string }).ghlUserId ||
     ((data as { ghl?: { userId?: string } }).ghl?.userId ?? null);
-
-  if (locIsAdmin) {
-    return { locationUser: data, adminGhlUserId: locGhlUserId ? String(locGhlUserId) : null };
-  }
-
-  // Fallback: treat root-level admin as a location admin so they can manage users even if the location doc is missing.
-  const rootSnap = await db().collection("users").doc(uid).get();
-  if (rootSnap.exists()) {
-    const rootData = rootSnap.data() || {};
-    const rootIsAdmin =
-      Boolean((rootData as { isAdmin?: boolean; role?: string }).isAdmin) ||
-      (rootData as { role?: string }).role === "admin";
-    if (rootIsAdmin) {
-      const rootGhlUserId =
-        (rootData as { ghlUserId?: string }).ghlUserId ||
-        ((rootData as { ghl?: { userId?: string } }).ghl?.userId ?? null) ||
-        locGhlUserId;
-      return { locationUser: rootData, adminGhlUserId: rootGhlUserId ? String(rootGhlUserId) : null };
-    }
-  }
-
-  return { error: NextResponse.json({ error: "Forbidden" }, { status: 403, headers: cacheHeaders() }) };
+  return { locationUser: data, adminGhlUserId: ghlUserId ? String(ghlUserId) : null };
 }
 
 async function fetchGhlUsers(locationId: string): Promise<ManageUser[]> {
