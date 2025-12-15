@@ -491,7 +491,7 @@ export default function AuthClient() {
                 Choose the owner for this location
               </div>
               <p style={{ color: "#475569", margin: 0 }}>
-                Pick the person who should manage this Location in Driving for Dollars. They control invites, billing, and settings.
+                Pick the person who should manage this Location in Driving for Dollars. They control invites, settings and they can view all submissions.
               </p>
             </div>
 
@@ -673,61 +673,122 @@ export default function AuthClient() {
 
   // default: register
   return (
-    <main className="p-6 max-w-5xl mx-auto">
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-        <div className="md:col-span-2">
-          <section className="hero card">
-            <h1 className="text-2xl font-semibold">Driving for Dollars</h1>
-            <p className="text-gray-600 mt-1">Create your admin account.</p>
-            <ul className="text-sm text-gray-600 mt-3" style={{ listStyle: "disc", paddingLeft: "1.25rem" }}>
-              <li>Open from your sub-account custom menu so <code>location_id</code> is auto-passed</li>
-              <li>After registration you&apos;ll be routed to the Dashboard</li>
-            </ul>
-          </section>
-        </div>
-        <div className="md:col-span-3">
-          <section className="card">
-            <div className="mb-4">
-              <button type="button" onClick={handleBackToSelect} className="text-sm text-blue-600 underline">
-                &larr; Back to user selection
-              </button>
+    <main
+      className="p-6 min-h-screen"
+      style={{ background: mainBg }}
+    >
+      <div className="max-w-4xl mx-auto">
+        <section
+          className="card"
+          style={{
+            background: heroGradient,
+            borderColor: accentBorder,
+            boxShadow: "0 14px 40px rgba(1,185,250,0.14)",
+            padding: "1.5rem",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <Image
+                src={logoImage}
+                alt="Driving4Dollars.co logo"
+                width={42}
+                height={42}
+                style={{ objectFit: "contain", filter: "drop-shadow(0 10px 22px rgba(1,185,250,0.25))" }}
+              />
+              <div style={{ display: "grid", gap: "2px" }}>
+                <span style={{ fontWeight: 800, color: "#0f172a", letterSpacing: "0.01em" }}>Driving4Dollars.co</span>
+                <span style={{ color: "#0284c7", fontWeight: 700, fontSize: "0.9rem" }}>Owner setup</span>
+              </div>
             </div>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void handleRegister();
+            <button
+              type="button"
+              onClick={handleBackToSelect}
+              className="btn"
+              style={{
+                borderColor: "#e2e8f0",
+                fontWeight: 700,
+                color: "#0f172a",
+                background: "#fff",
               }}
-              className="space-y-4"
             >
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm mb-1">First name</label>
-                  <input value={firstName} onChange={(ev) => setFirst(ev.target.value)} className="input" required />
-                </div>
-                <div>
-                  <label className="block text-sm mb-1">Last name</label>
-                  <input value={lastName} onChange={(ev) => setLast(ev.target.value)} className="input" required />
-                </div>
+              &larr; Back
+            </button>
+          </div>
+
+          <div style={{ marginTop: "14px", display: "grid", gap: "10px" }}>
+            <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#0f172a" }}>
+              Create the owner account
+            </div>
+            <p style={{ color: "#475569", margin: 0 }}>
+              All fields are required. This account manages drivers, billing, and settings for this HighLevel sub-account.
+            </p>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleRegister();
+            }}
+            className="space-y-4"
+            style={{ marginTop: "16px" }}
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm mb-1 font-semibold text-slate-800">First name *</label>
+                <input value={firstName} onChange={(ev) => setFirst(ev.target.value)} className="input" required />
               </div>
               <div>
-                <label className="block text-sm mb-1">Email</label>
-                <input type="email" value={email} onChange={(ev) => setEmail(ev.target.value)} className="input" required />
+                <label className="block text-sm mb-1 font-semibold text-slate-800">Last name *</label>
+                <input value={lastName} onChange={(ev) => setLast(ev.target.value)} className="input" required />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm mb-1 font-semibold text-slate-800">Email *</label>
+              <input type="email" value={email} onChange={(ev) => setEmail(ev.target.value)} className="input" required />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm mb-1 font-semibold text-slate-800">Password *</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(ev) => setPassword(ev.target.value)}
+                  className="input"
+                  required
+                  minLength={6}
+                  placeholder="At least 6 characters"
+                />
               </div>
               <div>
-                <label className="block text-sm mb-1">Password</label>
-                <input type="password" value={password} onChange={(ev) => setPassword(ev.target.value)} className="input" required minLength={6} />
+                <label className="block text-sm mb-1 font-semibold text-slate-800">Confirm password *</label>
+                <input
+                  type="password"
+                  value={confirm}
+                  onChange={(ev) => setConfirm(ev.target.value)}
+                  className="input"
+                  required
+                  minLength={6}
+                />
               </div>
-              <div>
-                <label className="block text-sm mb-1">Confirm password</label>
-                <input type="password" value={confirm} onChange={(ev) => setConfirm(ev.target.value)} className="input" required minLength={6} />
-              </div>
-              {err && <p className="text-sm text-red-600">{err}</p>}
-              <button type="submit" disabled={busy} className="btn primary w-full">
-                {busy ? "Creating account..." : "Register"}
-              </button>
-            </form>
-          </section>
-        </div>
+            </div>
+            {err && <p className="text-sm text-red-600">{err}</p>}
+            <button
+              type="submit"
+              disabled={busy}
+              className="btn primary w-full"
+              style={{
+                background: accentColor,
+                borderColor: accentColor,
+                color: "#fff",
+                fontWeight: 800,
+                boxShadow: "0 10px 24px rgba(1,185,250,0.24)",
+              }}
+            >
+              {busy ? "Creating account..." : "Create owner account"}
+            </button>
+          </form>
+        </section>
       </div>
     </main>
   );
