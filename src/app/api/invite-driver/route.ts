@@ -87,10 +87,20 @@ export async function POST(req: Request) {
       },
     );
 
+    if (!upsert.ok) {
+      console.error("Contact upsert failed; email send will be skipped.", upsert.status, upsert.text);
+    }
+
+    // GHL upsert sometimes nests the id; check the common shapes before falling back to search.
+    const possibleContactIds = [
+      (upsert.data as Record<string, unknown> | null | undefined)?.id,
+      (upsert.data as Record<string, unknown> | null | undefined)?.contactId,
+      (upsert.data as { contact?: { id?: unknown; contactId?: unknown } } | null | undefined)?.contact?.id,
+      (upsert.data as { contact?: { id?: unknown; contactId?: unknown } } | null | undefined)?.contact?.contactId,
+    ];
+
     let contactId: string | null =
-      (upsert.data?.id as string | undefined) ||
-      (upsert.data?.contactId as string | undefined) ||
-      null;
+      (possibleContactIds.find((v) => typeof v === "string" && v.trim()) as string | undefined) || null;
 
     // If upsert did not return an id, try a lightweight search by email
     if (!contactId) {
@@ -108,7 +118,11 @@ export async function POST(req: Request) {
       if (search.ok && Array.isArray(search.data?.contacts) && search.data!.contacts.length > 0) {
         contactId = search.data!.contacts[0].id;
       } else {
-        console.error("Could not obtain contactId after upsert; email send will be skipped.", search.status, search.text);
+        console.error(
+          "Could not obtain contactId after upsert; email send will be skipped.",
+          search.status,
+          search.text || upsert.text,
+        );
       }
     }
 
