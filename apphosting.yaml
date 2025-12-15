@@ -33,25 +33,26 @@ env:
   # --- Secrets (server-only) ---
   - variable: GHL_CLIENT_ID
     secret: GHL_CLIENT_ID
-    version: 2
+    version: 3
     availability: [RUNTIME]
   - variable: GHL_CLIENT_SECRET
     secret: GHL_CLIENT_SECRET
-    version: 2
+    version: 3
     availability: [RUNTIME]
   - variable: GHL_SHARED_SECRET_KEY
     secret: GHL_SHARED_SECRET_KEY
-    version: 2
+    version: 3
     availability: [RUNTIME]
   - variable: GHL_WEBHOOK_PUBLIC_KEY
     secret: GHL_WEBHOOK_PUBLIC_KEY
     availability: [RUNTIME]
   - variable: GHL_SCOPES
     secret: GHL_SCOPES
-    version: 5
+    version: 6
     availability: [RUNTIME]
   - variable: GHL_INTEGRATION_ID
     secret: GHL_INTEGRATION_ID
+    version: 2
     availability: [RUNTIME]
   - variable: GHL_REDIRECT_PATH
     value: /api/oauth/callback
