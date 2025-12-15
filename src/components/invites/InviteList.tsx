@@ -271,7 +271,9 @@ export default function InviteList({ locationId }: { locationId: string }) {
             u.isAdmin ? { label: "Admin", bg: "#e0f2fe", fg: "#0f172a" } : null,
             u.accepted
               ? { label: "Joined", bg: "#dcfce7", fg: "#166534" }
-              : { label: u.invited ? "Invite sent" : "Invite pending", bg: "#fef3c7", fg: "#92400e" },
+              : u.invited
+                ? { label: "Invite sent", bg: "#fef3c7", fg: "#92400e" }
+                : { label: "Not invited", bg: "#e2e8f0", fg: "#475569" },
           ].filter(Boolean) as Array<{ label: string; bg: string; fg: string }>;
           const initials = (primary || "D").trim().slice(0, 1).toUpperCase() || "D";
           return (

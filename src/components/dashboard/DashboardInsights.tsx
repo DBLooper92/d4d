@@ -74,7 +74,14 @@ type GhlUser = {
   firstName?: string | null;
   lastName?: string | null;
 };
-type ManageUser = GhlUser & { firebaseUid?: string | null };
+type ManageUser = GhlUser & {
+  firebaseUid?: string | null;
+  active?: boolean;
+  invited?: boolean;
+  accepted?: boolean;
+  isAdmin?: boolean;
+  inviteStatus?: string | null;
+};
 
 function extractDisplayName(data: Record<string, unknown>): string | null {
   const first = typeof data.firstName === "string" ? data.firstName.trim() : "";
@@ -694,6 +701,9 @@ export default function DashboardInsights({ locationId }: Props) {
   const { submissions: allSubmissions, markers: allMarkers, loading } = useLocationStreams(locationId);
   const [timeRangeDays, setTimeRangeDays] = useState<number>(14);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
+  const [userMeta, setUserMeta] = useState<
+    Record<string, { active?: boolean; invited?: boolean; accepted?: boolean; isAdmin?: boolean }>
+  >({});
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
   const [showQuickStart, setShowQuickStart] = useState<boolean>(false);
   const auth = useMemo(() => getFirebaseAuth(), []);
@@ -850,6 +860,28 @@ export default function DashboardInsights({ locationId }: Props) {
   }, [authReady, authUser, locationId]);
 
   useEffect(() => {
+    // Ensure admin metadata exists so the Drivers section always shows admin as active.
+    if (!viewer.isAdmin) return;
+    setUserMeta((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      const setAdmin = (id: string | null | undefined) => {
+        const key = (id || "").trim();
+        if (!key) return;
+        const current = next[key] || {};
+        const updated = { ...current, isAdmin: true, active: true, invited: true, accepted: true };
+        if (JSON.stringify(updated) !== JSON.stringify(current)) {
+          next[key] = updated;
+          changed = true;
+        }
+      };
+      setAdmin(viewer.ghlUserId);
+      setAdmin(authUser?.uid);
+      return changed ? next : prev;
+    });
+  }, [viewer.isAdmin, viewer.ghlUserId, authUser?.uid]);
+
+  useEffect(() => {
     if (!viewer.isAdmin) {
       setShowInviteModal(false);
       setShowQuickStart(false);
@@ -880,10 +912,20 @@ export default function DashboardInsights({ locationId }: Props) {
     async function loadUsers() {
       if (!locationId) {
         setUserNames({});
+        setUserMeta({});
         return;
       }
       try {
         const map: Record<string, string> = {};
+        const meta: Record<string, { active?: boolean; invited?: boolean; accepted?: boolean; isAdmin?: boolean }> =
+          {};
+
+        const storeMeta = (id: string | null | undefined, data: typeof meta[string]) => {
+          const key = (id || "").trim();
+          if (!key) return;
+          const existing = meta[key] || {};
+          meta[key] = { ...existing, ...data };
+        };
 
         // 1) Authenticated manage endpoint (includes firebaseUid)
         try {
@@ -905,6 +947,13 @@ export default function DashboardInsights({ locationId }: Props) {
             if (!display) return;
             storeDisplay(map, u.firebaseUid, display);
             storeDisplay(map, u.id, display);
+            const isAdmin = Boolean(u.isAdmin);
+            const active = Boolean(u.active || isAdmin);
+            const invited = Boolean(u.invited);
+            const accepted = Boolean(u.accepted);
+            const payload = { active: active || isAdmin, invited, accepted, isAdmin };
+            storeMeta(u.id, payload);
+            storeMeta(u.firebaseUid, payload);
           });
         } catch {
           /* non-fatal */
@@ -971,9 +1020,15 @@ export default function DashboardInsights({ locationId }: Props) {
           /* ignore */
         }
 
-        if (!cancelled) setUserNames(map);
+        if (!cancelled) {
+          setUserNames(map);
+          setUserMeta(meta);
+        }
       } catch {
-        if (!cancelled) setUserNames({});
+        if (!cancelled) {
+          setUserNames({});
+          setUserMeta((prev) => prev);
+        }
       }
     }
     void loadUsers();
@@ -1168,6 +1223,13 @@ export default function DashboardInsights({ locationId }: Props) {
   }, [visibleSubmissions]);
 
   const userColorGuide = useMemo(() => {
+    const allowedIds = new Set(
+      Object.entries(userMeta)
+        .filter(([, m]) => m.isAdmin || m.invited || m.accepted)
+        .map(([id]) => id.trim())
+        .filter(Boolean),
+    );
+
     const submissionCounts = new Map<string, number>();
     visibleSubmissions.forEach((s) => {
       const id = (s.createdByUserId || "Unassigned").trim() || "Unassigned";
@@ -1178,26 +1240,30 @@ export default function DashboardInsights({ locationId }: Props) {
     const addEntry = (id: string, count: number) => {
       const name = resolveUserName(id);
       const key = name.toLowerCase();
+      if (!allowedIds.has(id.trim())) return;
       const existing = entries.get(key);
-      if (!existing || count > existing.count) {
-        entries.set(key, { id, name, color: colorForUser(id), count, active: count > 0 });
+      const meta = userMeta[id] || {};
+      const active = meta.active ?? (meta.isAdmin ? true : count > 0);
+      if (!existing || count > existing.count || (active && !existing.active)) {
+        entries.set(key, { id, name, color: colorForUser(id), count, active });
       }
     };
 
-    submissionCounts.forEach((count, id) => addEntry(id, count));
+    submissionCounts.forEach((count, id) => {
+      if (!allowedIds.has(id.trim())) return;
+      addEntry(id, count);
+    });
 
-    Object.keys(userNames)
-      .filter((id) => id.length > 10) // skip short aliases
-      .forEach((id) => {
-        const count = submissionCounts.get(id) ?? 0;
-        addEntry(id, count);
-      });
+    allowedIds.forEach((id) => {
+      const count = submissionCounts.get(id) ?? 0;
+      addEntry(id, count);
+    });
 
     return Array.from(entries.values()).sort((a, b) => {
       if (b.count !== a.count) return b.count - a.count;
       return a.name.localeCompare(b.name);
     });
-  }, [visibleSubmissions, userNames, resolveUserName]);
+  }, [visibleSubmissions, userMeta, resolveUserName]);
 
   return (
     <>
