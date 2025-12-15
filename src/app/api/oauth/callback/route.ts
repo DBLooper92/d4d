@@ -249,22 +249,41 @@ export async function GET(request: Request) {
     if (agencyId && installationTarget === "Company") {
       let locs: Array<{ id: string; name: string | null; isInstalled: boolean }> = [];
       if (integrationId) {
+        const installedUrl = ghlInstalledLocationsUrl(agencyId, integrationId);
         try {
-          const r = await fetch(ghlInstalledLocationsUrl(agencyId, integrationId), {
-            headers: lcHeaders(tokens.access_token),
-          });
+          const r = await fetch(installedUrl, { headers: lcHeaders(tokens.access_token) });
+          const bodyText = await r.text().catch(() => "");
+
+          let data: LCListLocationsResponse | null = null;
+          try {
+            data = bodyText ? (JSON.parse(bodyText) as LCListLocationsResponse) : null;
+          } catch {
+            /* ignore parse errors; handled below */
+          }
+
           if (r.ok) {
-            const data = (await r.json()) as LCListLocationsResponse;
-            const arr = pickLocs(data);
+            const arr = data ? pickLocs(data) : [];
             locs = arr
               .map((e) => ({ id: safeId(e), name: safeName(e), isInstalled: safeInstalled(e) }))
               .filter((x): x is { id: string; name: string | null; isInstalled: boolean } => !!x.id);
-            olog("installedLocations discovered", { count: locs.length });
+            olog("installedLocations discovered", {
+              count: locs.length,
+              status: r.status,
+              bodyLength: bodyText.length,
+              integrationIdTail: integrationId.slice(-6),
+            });
           } else {
-            olog("installedLocations failed, will fallback", { status: r.status, body: await r.text().catch(() => "") });
+            olog("installedLocations failed, will fallback", {
+              status: r.status,
+              sample: bodyText.slice(0, 400),
+              integrationIdTail: integrationId.slice(-6),
+            });
           }
         } catch (e) {
-          olog("installedLocations error, will fallback", { err: String(e) });
+          olog("installedLocations error, will fallback", {
+            err: String(e),
+            integrationIdTail: integrationId.slice(-6),
+          });
         }
       }
 
