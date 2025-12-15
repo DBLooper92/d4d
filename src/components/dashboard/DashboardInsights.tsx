@@ -15,6 +15,7 @@ import {
   type FirestoreError,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
+import { onAuthStateChanged, type User } from "firebase/auth";
 import { getFirebaseFirestore, getFirebaseAuth } from "@/lib/firebaseClient";
 import { getDocs } from "firebase/firestore";
 import SkiptraceToggle from "./SkiptraceToggle";
@@ -690,11 +691,19 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
 }
 
 export default function DashboardInsights({ locationId }: Props) {
-  const { submissions, markers, loading } = useLocationStreams(locationId);
+  const { submissions: allSubmissions, markers: allMarkers, loading } = useLocationStreams(locationId);
   const [timeRangeDays, setTimeRangeDays] = useState<number>(14);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
   const [showQuickStart, setShowQuickStart] = useState<boolean>(false);
+  const auth = useMemo(() => getFirebaseAuth(), []);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+  const [viewer, setViewer] = useState<{ loading: boolean; isAdmin: boolean; ghlUserId: string | null }>({
+    loading: true,
+    isAdmin: false,
+    ghlUserId: null,
+  });
 
   const openInviteModal = useCallback(() => setShowInviteModal(true), []);
   const closeInviteModal = useCallback(() => setShowInviteModal(false), []);
@@ -714,6 +723,96 @@ export default function DashboardInsights({ locationId }: Props) {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [showInviteModal, showQuickStart]);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setAuthUser(u);
+      setAuthReady(true);
+    });
+    return () => unsub();
+  }, [auth]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadViewer() {
+      if (!authReady) return;
+      if (!locationId || !authUser) {
+        if (!cancelled) {
+          setViewer({ loading: false, isAdmin: false, ghlUserId: null });
+        }
+        return;
+      }
+
+      setViewer((prev) => ({ ...prev, loading: true }));
+      try {
+        const db = getFirebaseFirestore();
+        const locSnap = await getDoc(doc(db, "locations", locationId, "users", authUser.uid));
+        const locData = locSnap.exists() ? ((locSnap.data() || {}) as Record<string, unknown>) : {};
+        const locRole = (locData as { role?: string }).role;
+        let isAdmin =
+          Boolean((locData as { isAdmin?: boolean }).isAdmin) ||
+          (typeof locRole === "string" && locRole.trim().toLowerCase() === "admin");
+        let ghlUserId = extractGhlUserId(locData);
+
+        if (!ghlUserId) {
+          const directory = (locData as { userDirectory?: Record<string, unknown> }).userDirectory;
+          if (directory && typeof directory === "object") {
+            const matched = Object.entries(directory).find(([, raw]) => {
+              if (!raw || typeof raw !== "object") return false;
+              const firebaseUid = cleanFirebaseUid(raw as Record<string, unknown>);
+              return firebaseUid && firebaseUid === authUser.uid;
+            });
+            if (matched) {
+              ghlUserId = matched[0];
+              const dirRole = (matched[1] as { role?: string }).role;
+              if (!isAdmin && typeof dirRole === "string" && dirRole.trim().toLowerCase() === "admin") {
+                isAdmin = true;
+              }
+            }
+          }
+        }
+
+        if (!isAdmin || !ghlUserId) {
+          const rootSnap = await getDoc(doc(db, "users", authUser.uid));
+          if (rootSnap.exists()) {
+            const rootData = (rootSnap.data() || {}) as Record<string, unknown>;
+            const rootRole = (rootData as { role?: string }).role;
+            if (!isAdmin) {
+              isAdmin =
+                Boolean((rootData as { isAdmin?: boolean }).isAdmin) ||
+                (typeof rootRole === "string" && rootRole.trim().toLowerCase() === "admin");
+            }
+            if (!ghlUserId) {
+              ghlUserId = extractGhlUserId(rootData);
+            }
+          }
+        }
+
+        if (!cancelled) {
+          setViewer({
+            loading: false,
+            isAdmin,
+            ghlUserId: ghlUserId || null,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setViewer({ loading: false, isAdmin: false, ghlUserId: null });
+        }
+      }
+    }
+    void loadViewer();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, authUser, locationId]);
+
+  useEffect(() => {
+    if (!viewer.isAdmin) {
+      setShowInviteModal(false);
+      setShowQuickStart(false);
+    }
+  }, [viewer.isAdmin]);
 
   const resolveUserName = useMemo(
     () =>
@@ -746,7 +845,6 @@ export default function DashboardInsights({ locationId }: Props) {
 
         // 1) Authenticated manage endpoint (includes firebaseUid)
         try {
-          const auth = getFirebaseAuth();
           const token = await auth.currentUser?.getIdToken();
           const qs = new URLSearchParams({ location_id: locationId });
           if (token) qs.set("idToken", token);
@@ -840,14 +938,14 @@ export default function DashboardInsights({ locationId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [locationId]);
+  }, [locationId, auth]);
 
   useEffect(() => {
     if (!locationId) return;
 
     const uniqueIds = Array.from(
       new Set(
-        submissions
+        allSubmissions
           .map((s) => (s.createdByUserId || "").trim())
           .filter((id): id is string => Boolean(id)),
       )
@@ -898,11 +996,48 @@ export default function DashboardInsights({ locationId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [locationId, submissions, userNames]);
+  }, [locationId, allSubmissions, userNames]);
+
+  const ownerIds = useMemo(() => {
+    const ids: string[] = [];
+    if (viewer.ghlUserId) ids.push(viewer.ghlUserId.trim());
+    if (authUser?.uid) ids.push(authUser.uid);
+    return Array.from(new Set(ids.filter(Boolean)));
+  }, [viewer.ghlUserId, authUser?.uid]);
+
+  // Limit visibility to the current user unless they are an admin.
+  const visibleSubmissions = useMemo(() => {
+    if (viewer.isAdmin) return allSubmissions;
+    const allowed = new Set(ownerIds.map((id) => id.trim()).filter(Boolean));
+    if (!allowed.size) return [];
+    return allSubmissions.filter((s) => allowed.has((s.createdByUserId || "").trim()));
+  }, [allSubmissions, viewer.isAdmin, ownerIds]);
+
+  const allowedCoordKeys = useMemo(() => {
+    if (viewer.isAdmin) return new Set<string>();
+    const keys = new Set<string>();
+    visibleSubmissions.forEach((s) => {
+      if (!s.coordinates) return;
+      keys.add(coordKey(s.coordinates.lat, s.coordinates.lng));
+    });
+    return keys;
+  }, [viewer.isAdmin, visibleSubmissions]);
+
+  const visibleMarkers = useMemo(() => {
+    if (viewer.isAdmin) return allMarkers;
+    const allowed = new Set(ownerIds.map((id) => id.trim()).filter(Boolean));
+    if (!allowed.size) return [];
+    return allMarkers.filter((m) => {
+      const owner = (m.createdByUserId || "").trim();
+      if (owner && allowed.has(owner)) return true;
+      const key = coordKey(m.lat, m.lng);
+      return allowedCoordKeys.has(key);
+    });
+  }, [allMarkers, viewer.isAdmin, ownerIds, allowedCoordKeys]);
 
   const donutData = useMemo<DonutDatum[]>(() => {
     const grouped = new Map<string, number>();
-    submissions.forEach((s) => {
+    visibleSubmissions.forEach((s) => {
       const key = s.createdByUserId || "Unassigned";
       grouped.set(key, (grouped.get(key) ?? 0) + 1);
     });
@@ -912,7 +1047,7 @@ export default function DashboardInsights({ locationId }: Props) {
       value,
       color: colorForUser(label),
     }));
-  }, [submissions, resolveUserName]);
+  }, [visibleSubmissions, resolveUserName]);
 
   const activitySeries = useMemo<ActivityBar[]>(() => {
     const today = new Date();
@@ -927,7 +1062,7 @@ export default function DashboardInsights({ locationId }: Props) {
           ? d.toLocaleDateString(undefined, { weekday: "short" })
           : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
       const perUser = new Map<string, number>();
-      submissions.forEach((s) => {
+      visibleSubmissions.forEach((s) => {
         if (!s.createdAt) return;
         const dayKey = new Date(s.createdAt).toISOString().slice(0, 10);
         if (dayKey !== key) return;
@@ -944,7 +1079,7 @@ export default function DashboardInsights({ locationId }: Props) {
       days.push({ label, total, key, segments });
     }
     return days;
-  }, [submissions, timeRangeDays, resolveUserName]);
+  }, [visibleSubmissions, timeRangeDays, resolveUserName]);
 
   const activitySummary = useMemo(() => {
     const total = activitySeries.reduce((sum, d) => sum + d.total, 0);
@@ -964,11 +1099,11 @@ export default function DashboardInsights({ locationId }: Props) {
     return `Last ${timeRangeDays} days`;
   }, [timeRangeDays]);
 
-  const recent = useMemo(() => submissions.slice(0, 6), [submissions]);
+  const recent = useMemo(() => visibleSubmissions.slice(0, 6), [visibleSubmissions]);
 
   const markerOwnerMap = useMemo(() => {
     const map = new Map<string, string>();
-    submissions.forEach((s) => {
+    visibleSubmissions.forEach((s) => {
       if (!s.coordinates) return;
       const owner = (s.createdByUserId || "").trim();
       if (!owner) return;
@@ -976,11 +1111,11 @@ export default function DashboardInsights({ locationId }: Props) {
       if (!map.has(key)) map.set(key, owner);
     });
     return map;
-  }, [submissions]);
+  }, [visibleSubmissions]);
 
   const submissionLookup = useMemo(() => {
     const map = new Map<string, SubmissionDoc>();
-    submissions.forEach((s) => {
+    visibleSubmissions.forEach((s) => {
       if (!s.coordinates) return;
       const key = coordKey(s.coordinates.lat, s.coordinates.lng);
       if (!map.has(key)) {
@@ -988,11 +1123,11 @@ export default function DashboardInsights({ locationId }: Props) {
       }
     });
     return map;
-  }, [submissions]);
+  }, [visibleSubmissions]);
 
   const userColorGuide = useMemo(() => {
     const submissionCounts = new Map<string, number>();
-    submissions.forEach((s) => {
+    visibleSubmissions.forEach((s) => {
       const id = (s.createdByUserId || "Unassigned").trim() || "Unassigned";
       submissionCounts.set(id, (submissionCounts.get(id) ?? 0) + 1);
     });
@@ -1020,7 +1155,7 @@ export default function DashboardInsights({ locationId }: Props) {
       if (b.count !== a.count) return b.count - a.count;
       return a.name.localeCompare(b.name);
     });
-  }, [submissions, userNames, resolveUserName]);
+  }, [visibleSubmissions, userNames, resolveUserName]);
 
   return (
     <>
@@ -1046,37 +1181,55 @@ export default function DashboardInsights({ locationId }: Props) {
             Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
           </div>
         </div>
-        <div style={{ flex: "1 1 180px", minWidth: "180px", display: "flex", justifyContent: "center" }}>
-          <button
-            type="button"
-            onClick={openQuickStart}
+        {!viewer.isAdmin && !viewer.loading ? (
+          <div
+            className="badge"
             style={{
-              padding: "0.5rem 0.9rem",
-              borderRadius: "12px",
-              background: "#facc15",
+              alignSelf: "flex-start",
+              background: "#f0f9ff",
               color: "#0f172a",
-              fontWeight: 800,
-              letterSpacing: "0.02em",
-              border: "1px solid #eab308",
-              boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
-              cursor: "pointer",
-              textTransform: "uppercase",
-              width: "fit-content",
-              minWidth: "140px",
-              textAlign: "center",
+              borderColor: "#bae6fd",
+              fontWeight: 700,
             }}
           >
-            GET STARTED
-          </button>
-        </div>
-        <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", flex: "1 1 240px" }}>
-          <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
-          <SkiptraceToggle locationId={locationId} />
-          <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
-            Auto-skiptrace new properties ($0.12 each) while enabled.
+            Showing your submissions
           </div>
-          {loading && <div className="skel" style={{ width: "120px", height: "14px", justifySelf: "end" }} />}
-        </div>
+        ) : null}
+        {viewer.isAdmin ? (
+          <div style={{ flex: "1 1 180px", minWidth: "180px", display: "flex", justifyContent: "center" }}>
+            <button
+              type="button"
+              onClick={openQuickStart}
+              style={{
+                padding: "0.5rem 0.9rem",
+                borderRadius: "12px",
+                background: "#facc15",
+                color: "#0f172a",
+                fontWeight: 800,
+                letterSpacing: "0.02em",
+                border: "1px solid #eab308",
+                boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
+                cursor: "pointer",
+                textTransform: "uppercase",
+                width: "fit-content",
+                minWidth: "140px",
+                textAlign: "center",
+              }}
+            >
+              GET STARTED
+            </button>
+          </div>
+        ) : null}
+        {viewer.isAdmin ? (
+          <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", flex: "1 1 240px" }}>
+            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
+            <SkiptraceToggle locationId={locationId} />
+            <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
+              Auto-skiptrace new properties ($0.12 each) while enabled.
+            </div>
+            {loading && <div className="skel" style={{ width: "120px", height: "14px", justifySelf: "end" }} />}
+          </div>
+        ) : null}
       </div>
 
       <div
@@ -1088,12 +1241,12 @@ export default function DashboardInsights({ locationId }: Props) {
       >
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
           <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Total submissions</div>
-          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{submissions.length}</div>
+          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{visibleSubmissions.length}</div>
           <div style={{ color: "#64748b", marginTop: "4px" }}>All time</div>
         </div>
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
           <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Active markers</div>
-          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{markers.length}</div>
+          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{visibleMarkers.length}</div>
           <div style={{ color: "#64748b", marginTop: "4px" }}>Currently visible on map</div>
         </div>
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
@@ -1111,68 +1264,70 @@ export default function DashboardInsights({ locationId }: Props) {
         </div>
       </div>
 
-      <div className="card" style={{ margin: 0 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
-          <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={openInviteModal}
-            style={{
-              padding: "0.5rem 0.9rem",
-              borderRadius: "10px",
-              fontWeight: 700,
-              background: "#01B9FA",
-              color: "#fff",
-              boxShadow: "0 8px 16px rgba(1,185,250,0.24)",
-              cursor: "pointer",
-            }}
-          >
-            Invite Drivers
-          </button>
-        </div>
-        {userColorGuide.length ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
-            {userColorGuide.map((u) => (
-              <div
-                key={u.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  padding: "8px 10px",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: "10px",
-                  background: "#fff",
-                }}
-              >
-                <span
-                  aria-hidden="true"
+      {viewer.isAdmin ? (
+        <div className="card" style={{ margin: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
+            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={openInviteModal}
+              style={{
+                padding: "0.5rem 0.9rem",
+                borderRadius: "10px",
+                fontWeight: 700,
+                background: "#01B9FA",
+                color: "#fff",
+                boxShadow: "0 8px 16px rgba(1,185,250,0.24)",
+                cursor: "pointer",
+              }}
+            >
+              Invite Drivers
+            </button>
+          </div>
+          {userColorGuide.length ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
+              {userColorGuide.map((u) => (
+                <div
+                  key={u.id}
                   style={{
-                    width: "16px",
-                    height: "16px",
-                    borderRadius: "6px",
-                    background: u.color,
-                    border: "1px solid rgba(15,23,42,0.12)",
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    padding: "8px 10px",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "10px",
+                    background: "#fff",
                   }}
-                />
-                <div style={{ display: "grid", gap: "2px" }}>
-                  <div style={{ fontWeight: 600, color: u.active ? "#0f172a" : "#94a3b8" }}>{u.name}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem" }}>
-                    <span style={{ color: "#475569" }}>{u.count} submission{u.count === 1 ? "" : "s"}</span>
-                    {!u.active && (
-                      <span style={{ color: "#94a3b8", fontWeight: 600 }}>(inactive)</span>
-                    )}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: "16px",
+                      height: "16px",
+                      borderRadius: "6px",
+                      background: u.color,
+                      border: "1px solid rgba(15,23,42,0.12)",
+                      boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+                    }}
+                  />
+                  <div style={{ display: "grid", gap: "2px" }}>
+                    <div style={{ fontWeight: 600, color: u.active ? "#0f172a" : "#94a3b8" }}>{u.name}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem" }}>
+                      <span style={{ color: "#475569" }}>{u.count} submission{u.count === 1 ? "" : "s"}</span>
+                      {!u.active && (
+                        <span style={{ color: "#94a3b8", fontWeight: 600 }}>(inactive)</span>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>No users yet.</div>
-        )}
-      </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>No users yet.</div>
+          )}
+        </div>
+      ) : null}
 
       <div
         style={{
@@ -1239,7 +1394,7 @@ export default function DashboardInsights({ locationId }: Props) {
             </h3>
           </div>
           <DashboardMap
-            markers={markers}
+            markers={visibleMarkers}
             markerOwners={markerOwnerMap}
             submissionLookup={submissionLookup}
             resolveUserName={resolveUserName}
@@ -1348,7 +1503,7 @@ export default function DashboardInsights({ locationId }: Props) {
         </div>
       </div>
       </section>
-      {showQuickStart && (
+      {viewer.isAdmin && showQuickStart && (
         <div
           role="dialog"
           aria-modal="true"
@@ -1418,7 +1573,7 @@ export default function DashboardInsights({ locationId }: Props) {
           </div>
         </div>
       )}
-      {showInviteModal && (
+      {viewer.isAdmin && showInviteModal && (
         <div
           role="dialog"
           aria-modal="true"
