@@ -27,6 +27,10 @@ export const runtime = "nodejs";
 
 type CreateMenuResponse = { id?: string; data?: { id?: string } };
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Ensure a CML exists and return its id if known.
 async function ensureCml(
   accessToken: string,
@@ -250,40 +254,54 @@ export async function GET(request: Request) {
       let locs: Array<{ id: string; name: string | null; isInstalled: boolean }> = [];
       if (integrationId) {
         const installedUrl = ghlInstalledLocationsUrl(agencyId, integrationId);
-        try {
-          const r = await fetch(installedUrl, { headers: lcHeaders(tokens.access_token) });
-          const bodyText = await r.text().catch(() => "");
-
-          let data: LCListLocationsResponse | null = null;
+        const attempts = 3;
+        for (let attempt = 1; attempt <= attempts; attempt++) {
           try {
-            data = bodyText ? (JSON.parse(bodyText) as LCListLocationsResponse) : null;
-          } catch {
-            /* ignore parse errors; handled below */
-          }
+            const r = await fetch(installedUrl, { headers: lcHeaders(tokens.access_token) });
+            const bodyText = await r.text().catch(() => "");
 
-          if (r.ok) {
-            const arr = data ? pickLocs(data) : [];
-            locs = arr
-              .map((e) => ({ id: safeId(e), name: safeName(e), isInstalled: safeInstalled(e) }))
-              .filter((x): x is { id: string; name: string | null; isInstalled: boolean } => !!x.id);
-            olog("installedLocations discovered", {
-              count: locs.length,
-              status: r.status,
-              bodyLength: bodyText.length,
+            let data: LCListLocationsResponse | null = null;
+            try {
+              data = bodyText ? (JSON.parse(bodyText) as LCListLocationsResponse) : null;
+            } catch {
+              /* ignore parse errors; handled below */
+            }
+
+            if (r.ok) {
+              const arr = data ? pickLocs(data) : [];
+              locs = arr
+                .map((e) => ({ id: safeId(e), name: safeName(e), isInstalled: safeInstalled(e) }))
+                .filter((x): x is { id: string; name: string | null; isInstalled: boolean } => !!x.id);
+              olog("installedLocations discovered", {
+                count: locs.length,
+                status: r.status,
+                bodyLength: bodyText.length,
+                integrationIdTail: integrationId.slice(-6),
+                attempt,
+              });
+              if (locs.length) break;
+
+              // Retry if empty; GHL can lag immediately after install.
+              if (attempt < attempts) {
+                await sleep(700);
+                continue;
+              }
+            } else {
+              olog("installedLocations failed, will fallback", {
+                status: r.status,
+                sample: bodyText.slice(0, 400),
+                integrationIdTail: integrationId.slice(-6),
+                attempt,
+              });
+            }
+          } catch (e) {
+            olog("installedLocations error, will fallback", {
+              err: String(e),
               integrationIdTail: integrationId.slice(-6),
-            });
-          } else {
-            olog("installedLocations failed, will fallback", {
-              status: r.status,
-              sample: bodyText.slice(0, 400),
-              integrationIdTail: integrationId.slice(-6),
+              attempt,
             });
           }
-        } catch (e) {
-          olog("installedLocations error, will fallback", {
-            err: String(e),
-            integrationIdTail: integrationId.slice(-6),
-          });
+          if (locs.length) break;
         }
       }
 
