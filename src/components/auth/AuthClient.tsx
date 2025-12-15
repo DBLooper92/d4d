@@ -491,7 +491,7 @@ export default function AuthClient() {
                 Choose the owner for this location
               </div>
               <p style={{ color: "#475569", margin: 0 }}>
-                Pick the person who should manage this HighLevel sub-account in Driving for Dollars. They control invites, billing, and settings.
+                Pick the person who should manage this Location in Driving for Dollars. They control invites, billing, and settings.
               </p>
             </div>
 
@@ -510,7 +510,7 @@ export default function AuthClient() {
                   <div className="text-red-700 font-medium">Couldn&apos;t load users for this sub-account.</div>
                   <div className="text-sm text-red-600 mt-1">{usersErr}</div>
                   <div className="text-xs text-gray-500 mt-2">
-                    Tip: open from the HighLevel sub-account custom menu so we can read the location users.
+                    Tip: open from the Location custom menu so we can read the location users.
                   </div>
                 </div>
               ) : !users.length ? (
@@ -610,7 +610,7 @@ export default function AuthClient() {
                 Sign in as the location owner
               </div>
               <p style={{ color: "#475569", margin: 0 }}>
-                Use the owner login you set for this HighLevel sub-account. Once signed in, you can invite drivers and manage billing.
+                Use the owner login you set for this Location. Once signed in, you can invite drivers and manage billing.
               </p>
             </div>
 
