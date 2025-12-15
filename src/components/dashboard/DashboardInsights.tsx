@@ -754,6 +754,32 @@ export default function DashboardInsights({ locationId }: Props) {
           (typeof locRole === "string" && locRole.trim().toLowerCase() === "admin");
         let ghlUserId = extractGhlUserId(locData);
 
+        if ((!isAdmin || !ghlUserId) && !locSnap.exists()) {
+          try {
+            const locationDoc = await getDoc(doc(db, "locations", locationId));
+            if (locationDoc.exists()) {
+              const directory = (locationDoc.data() as { userDirectory?: Record<string, unknown> }).userDirectory;
+              if (directory && typeof directory === "object") {
+                const matched = Object.entries(directory).find(([, raw]) => {
+                  if (!raw || typeof raw !== "object") return false;
+                  const firebaseUid = cleanFirebaseUid(raw as Record<string, unknown>);
+                  return firebaseUid && firebaseUid === authUser.uid;
+                });
+                if (matched) {
+                  const [ghlId, raw] = matched;
+                  ghlUserId = ghlUserId || ghlId;
+                  const dirRole = (raw as { role?: string }).role;
+                  if (!isAdmin && typeof dirRole === "string" && dirRole.trim().toLowerCase() === "admin") {
+                    isAdmin = true;
+                  }
+                }
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+
         if (!ghlUserId) {
           const directory = (locData as { userDirectory?: Record<string, unknown> }).userDirectory;
           if (directory && typeof directory === "object") {
