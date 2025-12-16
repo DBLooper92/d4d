@@ -810,86 +810,57 @@ export default function DashboardInsights({ locationId }: Props) {
           (typeof locRole === "string" && locRole.trim().toLowerCase() === "admin");
         let ghlUserId = locData ? extractGhlUserId(locData) : "";
 
-        if (!ghlUserId) {
-          const directory = (locData as { userDirectory?: Record<string, unknown> } | null)?.userDirectory;
-          if (directory && typeof directory === "object") {
-            const matched = Object.entries(directory).find(([, raw]) => {
-              if (!raw || typeof raw !== "object") return false;
-              const firebaseUid = cleanFirebaseUid(raw as Record<string, unknown>);
-              return firebaseUid && firebaseUid === authUser.uid;
-            });
-            if (matched) {
-              ghlUserId = matched[0];
-              const dirRole = (matched[1] as { role?: string }).role;
-              if (!isAdmin && typeof dirRole === "string" && dirRole.trim().toLowerCase() === "admin") {
-                isAdmin = true;
-              }
-            }
-          }
-        }
-
         try {
-          if (!isAdmin || !ghlUserId) {
-            const rootSnap = await getDoc(doc(db, "users", authUser.uid));
-            if (rootSnap.exists()) {
-              const rootData = (rootSnap.data() || {}) as Record<string, unknown>;
-              const rootRole = (rootData as { role?: string }).role;
-              if (!isAdmin) {
-                isAdmin =
-                  Boolean((rootData as { isAdmin?: boolean }).isAdmin) ||
-                  (typeof rootRole === "string" && rootRole.trim().toLowerCase() === "admin");
-              }
-              if (!ghlUserId) {
-                ghlUserId = extractGhlUserId(rootData);
-              }
+          const rootSnap = await getDoc(doc(db, "users", authUser.uid));
+          if (rootSnap.exists()) {
+            const rootData = (rootSnap.data() || {}) as Record<string, unknown>;
+            const rootRole = (rootData as { role?: string }).role;
+            if (!isAdmin) {
+              isAdmin =
+                Boolean((rootData as { isAdmin?: boolean }).isAdmin) ||
+                (typeof rootRole === "string" && rootRole.trim().toLowerCase() === "admin");
+            }
+            if (!ghlUserId) {
+              ghlUserId = extractGhlUserId(rootData);
             }
           }
         } catch {
           /* ignore root user read errors */
         }
 
-        if (!isAdmin) {
-          // Server-side fallback: trust the manage endpoint (Admin SDK) so UI still unlocks if client rules block the doc read.
-          try {
-            const token = await authUser.getIdToken();
-            const qs = new URLSearchParams({ location_id: locationId });
-            if (token) qs.set("idToken", token);
-            const resp = await fetch(`/api/location-users/manage?${qs.toString()}`, {
-              cache: "no-store",
-              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-            });
-            const parsed = (await resp.json().catch(() => ({}))) as
-              | { users?: ManageUser[]; adminGhlUserId?: string | null; error?: string }
-              | { data?: { users?: ManageUser[] }; adminGhlUserId?: string | null; error?: string };
-            if (resp.ok && !(parsed as { error?: string }).error) {
-              const users = (parsed as { users?: ManageUser[] }).users ??
-                (parsed as { data?: { users?: ManageUser[] } }).data?.users ??
-                [];
-              const adminGhlUserId = (parsed as { adminGhlUserId?: string | null }).adminGhlUserId ?? null;
-              const adminEntry =
-                users.find((u) => u.isAdmin) ??
-                (adminGhlUserId ? users.find((u) => u.id === adminGhlUserId) : undefined);
-              const selfEntry = users.find((u) => u.firebaseUid === authUser.uid);
-
-              // Capture the viewer's GHL user id even when they are not an admin so filtering works.
-              if (!ghlUserId && selfEntry?.id) {
-                ghlUserId = selfEntry.id;
-              }
-
-              const isSelfAdmin = Boolean(selfEntry?.isAdmin);
-              const isAdminByAdminId =
-                adminEntry && adminEntry.firebaseUid && adminEntry.firebaseUid === authUser.uid;
-
-              if (isSelfAdmin || isAdminByAdminId) {
-                isAdmin = true;
-                if (!ghlUserId && (selfEntry?.id || adminEntry?.id)) {
-                  ghlUserId = selfEntry?.id ?? adminEntry?.id ?? "";
-                }
-              }
+        // Server-side source of truth: rely on manage endpoint's self entry.
+        try {
+          const token = await authUser.getIdToken();
+          const qs = new URLSearchParams({ location_id: locationId });
+          if (token) qs.set("idToken", token);
+          const resp = await fetch(`/api/location-users/manage?${qs.toString()}`, {
+            cache: "no-store",
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          });
+          const parsed = (await resp.json().catch(() => ({}))) as
+            | { users?: ManageUser[]; adminGhlUserId?: string | null; error?: string }
+            | { data?: { users?: ManageUser[] }; adminGhlUserId?: string | null; error?: string };
+          if (resp.ok && !(parsed as { error?: string }).error) {
+            const users = (parsed as { users?: ManageUser[] }).users ??
+              (parsed as { data?: { users?: ManageUser[] } }).data?.users ??
+              [];
+            const adminGhlUserId = (parsed as { adminGhlUserId?: string | null }).adminGhlUserId ?? null;
+            const selfEntry = users.find((u) => u.firebaseUid === authUser.uid);
+            if (!ghlUserId && selfEntry?.id) {
+              ghlUserId = selfEntry.id;
             }
-          } catch {
-            /* ignore manage fallback errors */
+            const isSelfAdmin = Boolean(selfEntry?.isAdmin);
+            const adminByGhlId =
+              adminGhlUserId && selfEntry?.id && adminGhlUserId === selfEntry.id;
+            if (isSelfAdmin || adminByGhlId) {
+              isAdmin = true;
+            } else if (selfEntry && selfEntry.isAdmin === false) {
+              // Explicit false from server wins.
+              isAdmin = false;
+            }
           }
+        } catch {
+          /* ignore manage fallback errors */
         }
 
         if (locationAdminUid) {
