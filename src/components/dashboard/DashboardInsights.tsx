@@ -714,8 +714,12 @@ export default function DashboardInsights({ locationId }: Props) {
     isAdmin: false,
     ghlUserId: null,
   });
+  const canManageLocation = viewer.isAdmin;
 
-  const openInviteModal = useCallback(() => setShowInviteModal(true), []);
+  const openInviteModal = useCallback(() => {
+    if (!canManageLocation) return;
+    setShowInviteModal(true);
+  }, [canManageLocation]);
   const closeInviteModal = useCallback(() => setShowInviteModal(false), []);
   const openQuickStart = useCallback(() => setShowQuickStart(true), []);
   const closeQuickStart = useCallback(() => setShowQuickStart(false), []);
@@ -1351,7 +1355,7 @@ export default function DashboardInsights({ locationId }: Props) {
             Showing your submissions
           </div>
         ) : null}
-        {viewer.isAdmin ? (
+        {canManageLocation ? (
           <div style={{ flex: "1 1 180px", minWidth: "180px", display: "flex", justifyContent: "center" }}>
             <button
               type="button"
@@ -1376,7 +1380,7 @@ export default function DashboardInsights({ locationId }: Props) {
             </button>
           </div>
         ) : null}
-        {viewer.isAdmin ? (
+        {canManageLocation ? (
           <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", flex: "1 1 240px" }}>
             <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
             <SkiptraceToggle locationId={locationId} />
@@ -1420,7 +1424,7 @@ export default function DashboardInsights({ locationId }: Props) {
         </div>
       </div>
 
-      {viewer.isAdmin ? (
+      {canManageLocation ? (
         <div className="card" style={{ margin: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
             <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
@@ -1659,7 +1663,7 @@ export default function DashboardInsights({ locationId }: Props) {
         </div>
       </div>
       </section>
-      {viewer.isAdmin && showQuickStart && (
+      {canManageLocation && showQuickStart && (
         <div
           role="dialog"
           aria-modal="true"
@@ -1729,7 +1733,7 @@ export default function DashboardInsights({ locationId }: Props) {
           </div>
         </div>
       )}
-      {viewer.isAdmin && showInviteModal && (
+      {canManageLocation && showInviteModal && (
         <div
           role="dialog"
           aria-modal="true"
