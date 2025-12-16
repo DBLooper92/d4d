@@ -121,6 +121,7 @@ type GhlUser = {
 
 type ApiOk = { users?: GhlUser[] } | { data?: { users?: GhlUser[] } };
 type ApiErr = { error?: { code?: string; message?: string } };
+type ApiAdminMeta = { adminExists?: boolean; adminGhlUserId?: string | null; adminUid?: string | null };
 
 function visibleError(code: string): string {
   const c = code.toLowerCase();
@@ -145,6 +146,7 @@ export default function AuthClient() {
 
   // Step state
   const [step, setStep] = useState<UiStep>("select");
+  const [adminExists, setAdminExists] = useState<boolean | null>(null);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   // User list for the location
@@ -168,6 +170,8 @@ export default function AuthClient() {
   // SSO context (if running inside GHL)
   const [ssoContext, setSsoContext] = useState<SsoContext | null>(null);
 
+  const adminLocked = adminExists === true;
+
   useEffect(() => {
     (async () => {
       try {
@@ -184,6 +188,17 @@ export default function AuthClient() {
     const u = new URL(window.location.href);
     return { locationId: pickLikelyLocationId(u) };
   }, []);
+
+  const resolvedLocationId = useMemo(
+    () => contextFromUrl.locationId || ssoContext?.activeLocationId || "",
+    [contextFromUrl.locationId, ssoContext],
+  );
+
+  useEffect(() => {
+    setAdminExists(null);
+    setUsers([]);
+    setUsersErr(null);
+  }, [resolvedLocationId]);
 
   // Redirect when signed in
   useEffect(() => {
@@ -221,6 +236,11 @@ export default function AuthClient() {
   // Handlers to move between steps
   function handleSelectUser(userId: string) {
     setErr(null);
+    if (adminLocked) {
+      setSelectedUserId(null);
+      setStep("login");
+      return;
+    }
     setSelectedUserId(userId);
     if (typeof window !== "undefined") {
       try {
@@ -233,6 +253,10 @@ export default function AuthClient() {
   }
   function handleBackToSelect() {
     setErr(null);
+    if (adminLocked) {
+      setStep("login");
+      return;
+    }
     if (typeof window !== "undefined") {
       try {
         const url = new URL(window.location.href);
@@ -257,11 +281,13 @@ export default function AuthClient() {
   }
   function handleLoginBack() {
     setErr(null);
+    if (adminLocked) return;
     setStep("select");
   }
 
   // Preselect from ?ghl_user_id
   useEffect(() => {
+    if (adminExists !== false) return;
     if (typeof window === "undefined") return;
     try {
       const sp = new URLSearchParams(window.location.search);
@@ -271,29 +297,32 @@ export default function AuthClient() {
         setStep("register");
       }
     } catch {}
-  }, []);
+  }, [adminExists]);
 
-  // Load users when on the selection step
+  // Detect whether an admin already exists. If not, load the location users for selection.
   useEffect(() => {
-    if (step !== "select") return;
+    if (adminExists !== null) return;
     let cancelled = false;
     (async () => {
       setUsersLoading(true);
       setUsersErr(null);
       try {
-        const loc = contextFromUrl.locationId || ssoContext?.activeLocationId || "";
+        const loc = resolvedLocationId;
         if (!loc) {
-          setUsersErr("We couldn't detect your Location ID. Open the app from your sub-account custom menu.");
-          setUsers([]);
+          if (!cancelled) {
+            setAdminExists(false);
+            setUsersErr("We couldn't detect your Location ID. Open the app from your sub-account custom menu.");
+            setUsers([]);
+          }
           return;
         }
         const resp = await fetch(`/api/ghl/location-users?location_id=${encodeURIComponent(loc)}`, {
           headers: { "Cache-Control": "no-store" },
         });
         const text = await resp.text();
-        let parsed: ApiOk & ApiErr;
+        let parsed: ApiOk & ApiErr & ApiAdminMeta;
         try {
-          parsed = JSON.parse(text) as ApiOk & ApiErr;
+          parsed = JSON.parse(text) as ApiOk & ApiErr & ApiAdminMeta;
         } catch {
           throw new Error(`Non-JSON from API (${resp.status})`);
         }
@@ -303,9 +332,23 @@ export default function AuthClient() {
           throw new Error(`${code}: ${msg}`);
         }
         const list = ("users" in parsed && parsed.users) || ("data" in parsed && parsed.data?.users) || [];
-        if (!cancelled) setUsers(Array.isArray(list) ? list : []);
+        const adminFlag =
+          Boolean(parsed.adminExists) ||
+          Boolean(parsed.adminGhlUserId) ||
+          Boolean(parsed.adminUid);
+        if (!cancelled) {
+          setAdminExists(adminFlag);
+          if (adminFlag) {
+            setSelectedUserId(null);
+            setUsers([]);
+            setStep("login");
+          } else {
+            setUsers(Array.isArray(list) ? list : []);
+          }
+        }
       } catch (e) {
         if (!cancelled) {
+          setAdminExists(false);
           setUsersErr(e instanceof Error ? e.message : String(e));
           setUsers([]);
         }
@@ -316,7 +359,7 @@ export default function AuthClient() {
     return () => {
       cancelled = true;
     };
-  }, [step, contextFromUrl.locationId, ssoContext]);
+  }, [adminExists, resolvedLocationId]);
 
   const accentColor = "#01B9FA";
   const accentBorder = "#bae6fd";
@@ -326,6 +369,11 @@ export default function AuthClient() {
 
   async function handleRegister() {
     setErr(null);
+    if (adminLocked) {
+      setStep("login");
+      setErr("Registration is disabled for this location. Please sign in instead.");
+      return;
+    }
     if (!auth) { setErr("Auth not ready yet. Please try again."); return; }
     if (!email.trim() || !password.trim() || !firstName.trim() || !lastName.trim()) { setErr("Please fill in all fields."); return; }
     if (password !== confirm) { setErr("Passwords do not match."); return; }
@@ -434,6 +482,17 @@ export default function AuthClient() {
               {busy ? "Signing you out..." : "Sign out"}
             </button>
           </div>
+        </section>
+      </main>
+    );
+  }
+
+  if (!uid && adminExists === null) {
+    return (
+      <main className="p-6 max-w-3xl mx-auto">
+        <section className="hero card">
+          <h1 className="text-2xl font-semibold">Checking access...</h1>
+          <p className="text-gray-600 mt-1">Preparing the right sign-in experience for this location.</p>
         </section>
       </main>
     );
@@ -590,19 +649,21 @@ export default function AuthClient() {
                   <span style={{ color: "#0284c7", fontWeight: 700, fontSize: "0.9rem" }}>Owner sign-in</span>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={handleLoginBack}
-                className="btn"
-                style={{
-                  borderColor: "#e2e8f0",
-                  fontWeight: 700,
-                  color: "#0f172a",
-                  background: "#fff",
-                }}
-              >
-                &larr; Back
-              </button>
+              {!adminLocked ? (
+                <button
+                  type="button"
+                  onClick={handleLoginBack}
+                  className="btn"
+                  style={{
+                    borderColor: "#e2e8f0",
+                    fontWeight: 700,
+                    color: "#0f172a",
+                    background: "#fff",
+                  }}
+                >
+                  &larr; Back
+                </button>
+              ) : null}
             </div>
 
             <div style={{ marginTop: "14px", display: "grid", gap: "10px" }}>

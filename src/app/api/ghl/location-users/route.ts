@@ -2,11 +2,32 @@
 import { NextResponse } from "next/server";
 import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
 import { ghlFetch } from "@/lib/ghlClient";
+import { db } from "@/lib/firebaseAdmin";
 
 export const runtime = "nodejs";
 
 function err(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+async function fetchAdminMeta(locationId: string) {
+  try {
+    const snap = await db().collection("locations").doc(locationId).get();
+    const data = (snap.data() || {}) as { adminUid?: unknown; adminGhlUserId?: unknown };
+    const adminUid =
+      typeof data.adminUid === "string" && data.adminUid.trim() ? (data.adminUid as string).trim() : null;
+    const adminGhlUserId =
+      typeof data.adminGhlUserId === "string" && data.adminGhlUserId.trim()
+        ? (data.adminGhlUserId as string).trim()
+        : null;
+    return {
+      adminExists: Boolean(adminUid || adminGhlUserId),
+      adminGhlUserId,
+      adminUid,
+    };
+  } catch {
+    return { adminExists: false, adminGhlUserId: null, adminUid: null };
+  }
 }
 
 /**
@@ -26,6 +47,7 @@ export async function GET(req: Request) {
     const locationId = u.searchParams.get("location_id") || u.searchParams.get("locationId") || "";
     if (!locationId) return err(400, "MISSING_LOCATION_ID", "Provide ?location_id");
 
+    const adminMetaPromise = fetchAdminMeta(locationId);
     let accessToken: string;
     try {
       accessToken = await getValidAccessTokenForLocation(locationId);
@@ -60,8 +82,13 @@ export async function GET(req: Request) {
       (json as { data?: { users?: Array<{ id: string; name?: string; email?: string; role?: string }> } }).data?.users ??
       [];
 
+    const adminMeta = await adminMetaPromise;
     return NextResponse.json(
-      { users },
+      {
+        users,
+        adminExists: adminMeta.adminExists,
+        adminGhlUserId: adminMeta.adminGhlUserId ?? null,
+      },
       {
         status: 200,
         headers: {
