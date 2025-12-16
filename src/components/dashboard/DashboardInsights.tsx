@@ -756,6 +756,23 @@ export default function DashboardInsights({ locationId }: Props) {
       setViewer((prev) => ({ ...prev, loading: true }));
       try {
         const db = getFirebaseFirestore();
+        let locationAdminUid: string | null = null;
+        let locationAdminGhlUserId: string | null = null;
+        try {
+          const locRootSnap = await getDoc(doc(db, "locations", locationId));
+          if (locRootSnap.exists()) {
+            const rootData = (locRootSnap.data() || {}) as { adminUid?: unknown; adminGhlUserId?: unknown };
+            if (typeof rootData.adminUid === "string" && rootData.adminUid.trim()) {
+              locationAdminUid = rootData.adminUid.trim();
+            }
+            if (typeof rootData.adminGhlUserId === "string" && rootData.adminGhlUserId.trim()) {
+              locationAdminGhlUserId = rootData.adminGhlUserId.trim();
+            }
+          }
+        } catch {
+          /* ignore location root read errors */
+        }
+
         let locData: Record<string, unknown> | null = null;
         try {
           const locSnap = await getDoc(doc(db, "locations", locationId, "users", authUser.uid));
@@ -850,6 +867,24 @@ export default function DashboardInsights({ locationId }: Props) {
             }
           } catch {
             /* ignore manage fallback errors */
+          }
+        }
+
+        if (locationAdminUid) {
+          if (locationAdminUid === authUser.uid) {
+            isAdmin = true;
+          } else {
+            isAdmin = false;
+          }
+        }
+        if (locationAdminGhlUserId) {
+          if (ghlUserId && locationAdminGhlUserId === ghlUserId) {
+            isAdmin = true;
+          } else if (isAdmin && ghlUserId && locationAdminGhlUserId !== ghlUserId) {
+            isAdmin = false;
+          }
+          if (!ghlUserId && isAdmin) {
+            ghlUserId = locationAdminGhlUserId;
           }
         }
 

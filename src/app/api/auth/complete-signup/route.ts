@@ -71,6 +71,42 @@ export async function POST(req: Request) {
     const userEmail = (decoded.email || email || "").trim();
 
     const now = FieldValue.serverTimestamp();
+
+    // Decide whether this signup should be the location admin (first owner) or a driver invited later.
+    let adminExists = false;
+    let invitedDriver = false;
+    try {
+      const locDoc = await db().collection("locations").doc(normalizedLocationId).get();
+      const locData = (locDoc.data() || {}) as {
+        invites?: Record<string, unknown>;
+        adminUid?: string | null;
+        adminGhlUserId?: string | null;
+      };
+      if (locData.adminUid || locData.adminGhlUserId) {
+        adminExists = true;
+      }
+      if (!adminExists) {
+        // If any user at this location is already marked admin, do not promote this signup.
+        try {
+          const usersCol = db().collection("locations").doc(normalizedLocationId).collection("users");
+          const [flagSnap, roleSnap] = await Promise.all([
+            usersCol.where("isAdmin", "==", true).limit(1).get(),
+            usersCol.where("role", "==", "admin").limit(1).get(),
+          ]);
+          adminExists = !flagSnap.empty || !roleSnap.empty;
+        } catch {
+          /* ignore discovery errors */
+        }
+      }
+      if (ghlUserId && locData.invites && typeof locData.invites === "object") {
+        if (locData.invites[ghlUserId]) invitedDriver = true;
+      }
+    } catch {
+      /* ignore lookup errors; default to admin when nothing is known */
+    }
+
+    const shouldBeAdmin = !invitedDriver && !adminExists;
+    const role: "admin" | "driver" = shouldBeAdmin ? "admin" : "driver";
     const usersRef = db().collection("users").doc(uid);
     const locUserRef = db().collection("locations").doc(normalizedLocationId).collection("users").doc(uid);
 
@@ -84,8 +120,8 @@ export async function POST(req: Request) {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         updatedAt: now,
-        role: "admin" as const,
-        isAdmin: true,
+        role,
+        isAdmin: shouldBeAdmin,
       };
 
       if (!uSnap.exists) {
@@ -104,6 +140,18 @@ export async function POST(req: Request) {
         tx.set(locUserRef, { ...locProfile, createdAt: now });
       } else {
         tx.set(locUserRef, { ...locProfile }, { merge: true });
+      }
+
+      if (shouldBeAdmin) {
+        tx.set(
+          db().collection("locations").doc(normalizedLocationId),
+          {
+            adminUid: uid,
+            adminGhlUserId: ghlUserId ?? null,
+            adminSetAt: now,
+          },
+          { merge: true },
+        );
       }
     });
 

@@ -154,6 +154,15 @@ async function requireAuth(req: Request) {
 }
 
 async function requireLocationAdmin(uid: string, locationId: string) {
+  const locMetaSnap = await db().collection("locations").doc(locationId).get();
+  const locMeta = (locMetaSnap.data() || {}) as { adminUid?: unknown; adminGhlUserId?: unknown };
+  const storedAdminUid =
+    typeof locMeta.adminUid === "string" && locMeta.adminUid.trim() ? (locMeta.adminUid as string).trim() : null;
+  const storedAdminGhlUserId =
+    typeof locMeta.adminGhlUserId === "string" && locMeta.adminGhlUserId.trim()
+      ? (locMeta.adminGhlUserId as string).trim()
+      : null;
+
   const ref = db().collection("locations").doc(locationId).collection("users").doc(uid);
   const snap = await ref.get();
   if (!snap.exists) return { error: NextResponse.json({ error: "Forbidden" }, { status: 403, headers: cacheHeaders() }) };
@@ -165,6 +174,14 @@ async function requireLocationAdmin(uid: string, locationId: string) {
   const ghlUserId =
     (data as { ghlUserId?: string }).ghlUserId ||
     ((data as { ghl?: { userId?: string } }).ghl?.userId ?? null);
+
+  if (storedAdminUid && storedAdminUid !== uid) {
+    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403, headers: cacheHeaders() }) };
+  }
+  if (storedAdminGhlUserId && ghlUserId && storedAdminGhlUserId !== ghlUserId) {
+    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403, headers: cacheHeaders() }) };
+  }
+
   return { locationUser: data, adminGhlUserId: ghlUserId ? String(ghlUserId) : null };
 }
 
