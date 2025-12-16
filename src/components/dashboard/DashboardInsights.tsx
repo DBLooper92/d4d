@@ -827,12 +827,25 @@ export default function DashboardInsights({ locationId }: Props) {
                 (parsed as { data?: { users?: ManageUser[] } }).data?.users ??
                 [];
               const adminGhlUserId = (parsed as { adminGhlUserId?: string | null }).adminGhlUserId ?? null;
-              const adminMatch = users.find(
-                (u) => u.firebaseUid === authUser.uid || (adminGhlUserId && u.id === adminGhlUserId),
-              );
-              if (adminMatch) {
+              const adminEntry =
+                users.find((u) => u.isAdmin) ??
+                (adminGhlUserId ? users.find((u) => u.id === adminGhlUserId) : undefined);
+              const selfEntry = users.find((u) => u.firebaseUid === authUser.uid);
+
+              // Capture the viewer's GHL user id even when they are not an admin so filtering works.
+              if (!ghlUserId && selfEntry?.id) {
+                ghlUserId = selfEntry.id;
+              }
+
+              const isSelfAdmin = Boolean(selfEntry?.isAdmin);
+              const isAdminByAdminId =
+                adminEntry && adminEntry.firebaseUid && adminEntry.firebaseUid === authUser.uid;
+
+              if (isSelfAdmin || isAdminByAdminId) {
                 isAdmin = true;
-                if (!ghlUserId && adminMatch.id) ghlUserId = adminMatch.id;
+                if (!ghlUserId && (selfEntry?.id || adminEntry?.id)) {
+                  ghlUserId = selfEntry?.id ?? adminEntry?.id ?? "";
+                }
               }
             }
           } catch {
