@@ -1344,25 +1344,26 @@ export default function DashboardInsights({ locationId }: Props) {
               aria-label="Open settings"
               style={{
                 marginLeft: "6px",
-                width: "36px",
-                height: "36px",
-                borderRadius: "12px",
-                border: "1px solid #eab308",
-                background: "#facc15",
-                boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
+                width: "44px",
+                height: "44px",
+                padding: 0,
+                border: "none",
+                background: "transparent",
                 display: "grid",
                 placeItems: "center",
                 cursor: "pointer",
-                color: "#0f172a",
+                color: "#f59e0b",
+                filter: "drop-shadow(0 0 10px rgba(245, 158, 11, 0.5))",
               }}
             >
               <svg
-                width="18"
-                height="18"
+                width="24"
+                height="24"
                 viewBox="0 0 24 24"
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
                 aria-hidden="true"
+                style={{ filter: "drop-shadow(0 0 6px rgba(245, 158, 11, 0.5))" }}
               >
                 <path
                   d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm8.49 2.34-.93-.72a6.97 6.97 0 0 0 0-1.24l.93-.72a.75.75 0 0 0 .17-.96l-1-1.73a.75.75 0 0 0-.9-.34l-1.1.42a7.05 7.05 0 0 0-1.08-.63l-.17-1.17A.75.75 0 0 0 15.6 3h-2.2a.75.75 0 0 0-.74.63l-.17 1.17c-.38.17-.74.38-1.08.63l-1.1-.42a.75.75 0 0 0-.9.34l-1 1.73a.75.75 0 0 0 .17.96l.93.72c-.03.2-.04.41-.04.62 0 .21.02.42.04.62l-.93.72a.75.75 0 0 0-.17.96l1 1.73c.2.34.61.5.99.36l1.1-.42c.34.25.7.46 1.08.63l.17 1.17c.07.37.38.63.74.63h2.2c.36 0 .67-.26.73-.63l.17-1.17c.38-.17.74-.38 1.08-.63l1.1.42c.38.14.79-.02.99-.36l1-1.73a.75.75 0 0 0-.17-.96ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
