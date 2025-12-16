@@ -15,7 +15,7 @@ import {
   type FirestoreError,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
-import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { onAuthStateChanged, type User } from "firebase/auth";
 import { getFirebaseFirestore, getFirebaseAuth } from "@/lib/firebaseClient";
 import { getDocs } from "firebase/firestore";
 import SkiptraceToggle from "./SkiptraceToggle";
@@ -715,9 +715,6 @@ export default function DashboardInsights({ locationId }: Props) {
     ghlUserId: null,
   });
   const canManageLocation = viewer.isAdmin;
-  const [showSettings, setShowSettings] = useState(false);
-  const [hideGetStarted, setHideGetStarted] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
 
   const openInviteModal = useCallback(() => {
     if (!canManageLocation) return;
@@ -726,23 +723,20 @@ export default function DashboardInsights({ locationId }: Props) {
   const closeInviteModal = useCallback(() => setShowInviteModal(false), []);
   const openQuickStart = useCallback(() => setShowQuickStart(true), []);
   const closeQuickStart = useCallback(() => setShowQuickStart(false), []);
-  const openSettings = useCallback(() => setShowSettings(true), []);
-  const closeSettings = useCallback(() => setShowSettings(false), []);
 
   useEffect(() => {
-    if (!showInviteModal && !showQuickStart && !showSettings) return;
+    if (!showInviteModal && !showQuickStart) return;
     const onKeyDown = (evt: KeyboardEvent) => {
       if (evt.key === "Escape") {
         setShowInviteModal(false);
         setShowQuickStart(false);
-        setShowSettings(false);
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [showInviteModal, showQuickStart, showSettings]);
+  }, [showInviteModal, showQuickStart]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -751,18 +745,6 @@ export default function DashboardInsights({ locationId }: Props) {
     });
     return () => unsub();
   }, [auth]);
-
-  useEffect(() => {
-    const stored = typeof window !== "undefined" ? window.localStorage.getItem("d4d-hide-get-started") : null;
-    if (stored === "true") {
-      setHideGetStarted(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("d4d-hide-get-started", hideGetStarted ? "true" : "false");
-  }, [hideGetStarted]);
 
   useEffect(() => {
     let cancelled = false;
@@ -947,22 +929,6 @@ export default function DashboardInsights({ locationId }: Props) {
       },
     [userNames],
   );
-
-  const toggleGetStartedVisibility = useCallback(() => {
-    setHideGetStarted((prev) => !prev);
-  }, []);
-
-  const handleLogout = useCallback(async () => {
-    if (loggingOut) return;
-    setLoggingOut(true);
-    try {
-      await signOut(auth);
-    } catch {
-      /* ignore sign out errors to avoid trapping user */
-    } finally {
-      setLoggingOut(false);
-    }
-  }, [auth, loggingOut]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1338,39 +1304,6 @@ export default function DashboardInsights({ locationId }: Props) {
             <span style={{ color: "#01B9FA", fontWeight: 800, letterSpacing: "0.02em", fontSize: "1.05rem" }}>
               Driving4Dollars.co
             </span>
-            <button
-              type="button"
-              onClick={openSettings}
-              aria-label="Open settings"
-              style={{
-                marginLeft: "6px",
-                width: "44px",
-                height: "44px",
-                padding: 0,
-                border: "none",
-                background: "transparent",
-                display: "grid",
-                placeItems: "center",
-                cursor: "pointer",
-                color: "#f59e0b",
-                filter: "drop-shadow(0 0 10px rgba(245, 158, 11, 0.5))",
-              }}
-            >
-              <svg
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden="true"
-                style={{ filter: "drop-shadow(0 0 6px rgba(245, 158, 11, 0.5))" }}
-              >
-                <path
-                  d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm8.49 2.34-.93-.72a6.97 6.97 0 0 0 0-1.24l.93-.72a.75.75 0 0 0 .17-.96l-1-1.73a.75.75 0 0 0-.9-.34l-1.1.42a7.05 7.05 0 0 0-1.08-.63l-.17-1.17A.75.75 0 0 0 15.6 3h-2.2a.75.75 0 0 0-.74.63l-.17 1.17c-.38.17-.74.38-1.08.63l-1.1-.42a.75.75 0 0 0-.9.34l-1 1.73a.75.75 0 0 0 .17.96l.93.72c-.03.2-.04.41-.04.62 0 .21.02.42.04.62l-.93.72a.75.75 0 0 0-.17.96l1 1.73c.2.34.61.5.99.36l1.1-.42c.34.25.7.46 1.08.63l.17 1.17c.07.37.38.63.74.63h2.2c.36 0 .67-.26.73-.63l.17-1.17c.38-.17.74-.38 1.08-.63l1.1.42c.38.14.79-.02.99-.36l1-1.73a.75.75 0 0 0-.17-.96ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
-                  fill="currentColor"
-                />
-              </svg>
-            </button>
           </div>
           <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
             Coverage, submissions, and team activity
@@ -1393,7 +1326,7 @@ export default function DashboardInsights({ locationId }: Props) {
             Showing your submissions
           </div>
         ) : null}
-        {canManageLocation && !hideGetStarted ? (
+        {canManageLocation ? (
           <div style={{ flex: "1 1 180px", minWidth: "180px", display: "flex", justifyContent: "center" }}>
             <button
               type="button"
@@ -1701,182 +1634,6 @@ export default function DashboardInsights({ locationId }: Props) {
         </div>
       </div>
       </section>
-      {showSettings && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Settings"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) closeSettings();
-          }}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 60,
-            background: "rgba(15,23,42,0.55)",
-            backdropFilter: "blur(4px)",
-            display: "grid",
-            placeItems: "center",
-            padding: "20px",
-          }}
-        >
-          <div
-            style={{
-              width: "min(520px, 96vw)",
-              maxHeight: "90vh",
-              background: "#fff",
-              borderRadius: "16px",
-              overflow: "hidden",
-              border: "1px solid #e2e8f0",
-              boxShadow: "0 24px 70px rgba(15,23,42,0.35)",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "12px",
-                padding: "14px 16px",
-                borderBottom: "1px solid #e2e8f0",
-                background: "#f8fafc",
-              }}
-            >
-              <div>
-                <div style={{ color: "#0f172a", fontWeight: 700, fontSize: "1.05rem" }}>Settings</div>
-                <div style={{ color: "#475569", marginTop: "2px" }}>Control your dashboard view and account.</div>
-              </div>
-              <button
-                type="button"
-                onClick={closeSettings}
-                aria-label="Close settings"
-                style={{
-                  width: "36px",
-                  height: "36px",
-                  borderRadius: "12px",
-                  border: "1px solid #e2e8f0",
-                  background: "#fff",
-                  cursor: "pointer",
-                  display: "grid",
-                  placeItems: "center",
-                  color: "#0f172a",
-                  fontWeight: 800,
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-                }}
-              >
-                X
-              </button>
-            </div>
-            <div style={{ padding: "16px 16px 18px", overflow: "auto", display: "grid", gap: "14px" }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "12px",
-                  padding: "12px 14px",
-                  borderRadius: "12px",
-                  border: "1px solid #e2e8f0",
-                  background: "#f8fafc",
-                }}
-              >
-                <div style={{ display: "grid", gap: "4px" }}>
-                  <div style={{ color: "#0f172a", fontWeight: 700 }}>Show “GET STARTED” button</div>
-                  <div style={{ color: "#64748b", fontSize: "0.92rem" }}>
-                    {canManageLocation
-                      ? "Hide or bring back the onboarding button for yourself."
-                      : "Only location admins can see the onboarding button."}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={toggleGetStartedVisibility}
-                  disabled={!canManageLocation}
-                  aria-pressed={!hideGetStarted}
-                  aria-label="Toggle get started button visibility"
-                  style={{
-                    position: "relative",
-                    width: "62px",
-                    height: "34px",
-                    borderRadius: "999px",
-                    border: "1px solid #e2e8f0",
-                    background: hideGetStarted ? "#e5e7eb" : "#dcfce7",
-                    padding: 0,
-                    cursor: canManageLocation ? "pointer" : "not-allowed",
-                    transition: "background-color 150ms ease, box-shadow 150ms ease",
-                    boxShadow: hideGetStarted ? "none" : "0 0 0 4px rgba(34,197,94,0.16)",
-                    opacity: canManageLocation ? 1 : 0.5,
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      position: "absolute",
-                      top: "4px",
-                      left: hideGetStarted ? "4px" : "32px",
-                      width: "26px",
-                      height: "26px",
-                      borderRadius: "999px",
-                      background: hideGetStarted ? "#cbd5e1" : "#16a34a",
-                      boxShadow: "0 2px 6px rgba(0,0,0,0.14)",
-                      transition: "left 150ms ease, background-color 150ms ease",
-                      display: "grid",
-                      placeItems: "center",
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: "8px",
-                        height: "8px",
-                        borderRadius: "999px",
-                        background: hideGetStarted ? "#94a3b8" : "#15803d",
-                      }}
-                    />
-                  </span>
-                </button>
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "12px",
-                  padding: "12px 14px",
-                  borderRadius: "12px",
-                  border: "1px solid #e2e8f0",
-                  background: "#fff1f2",
-                }}
-              >
-                <div style={{ display: "grid", gap: "4px" }}>
-                  <div style={{ color: "#b91c1c", fontWeight: 700 }}>Log out</div>
-                  <div style={{ color: "#9f1239", fontSize: "0.92rem" }}>Sign out of Driving4Dollars.</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleLogout()}
-                  disabled={loggingOut}
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: "10px",
-                    border: "1px solid #fecdd3",
-                    background: "#fda4af",
-                    color: "#7f1d1d",
-                    fontWeight: 700,
-                    cursor: loggingOut ? "not-allowed" : "pointer",
-                    boxShadow: "0 6px 16px rgba(248,113,113,0.24)",
-                    minWidth: "120px",
-                  }}
-                >
-                  {loggingOut ? "Signing out..." : "Log out"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       {canManageLocation && showQuickStart && (
         <div
           role="dialog"
