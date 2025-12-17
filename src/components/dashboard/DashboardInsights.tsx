@@ -715,6 +715,7 @@ export default function DashboardInsights({ locationId }: Props) {
     ghlUserId: null,
   });
   const canManageLocation = viewer.isAdmin;
+  const showSkiptrace = false;
 
   const openInviteModal = useCallback(() => {
     if (!canManageLocation) return;
@@ -1327,7 +1328,15 @@ export default function DashboardInsights({ locationId }: Props) {
           </div>
         ) : null}
         {canManageLocation ? (
-          <div style={{ flex: "1 1 180px", minWidth: "180px", display: "flex", justifyContent: "center" }}>
+          <div
+            style={{
+              flex: showSkiptrace ? "1 1 180px" : "1 1 240px",
+              minWidth: showSkiptrace ? "180px" : "240px",
+              display: "flex",
+              justifyContent: showSkiptrace ? "center" : "flex-end",
+              marginLeft: showSkiptrace ? 0 : "auto",
+            }}
+          >
             <button
               type="button"
               onClick={openQuickStart}
@@ -1351,7 +1360,7 @@ export default function DashboardInsights({ locationId }: Props) {
             </button>
           </div>
         ) : null}
-        {canManageLocation ? (
+        {canManageLocation && showSkiptrace ? (
           <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", flex: "1 1 240px" }}>
             <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
             <SkiptraceToggle locationId={locationId} />
