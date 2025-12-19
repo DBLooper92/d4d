@@ -447,6 +447,7 @@ export async function POST(req: Request) {
   const { action, type, event } = parseAction(payloadUnknown);
   const eventNameRaw = readEventName(payloadUnknown) || type || event || "";
   const eventKey = eventNameRaw ? normalizeEventKey(eventNameRaw) : "";
+  const eventLabel = eventNameRaw || "unknown";
   const summary =
     isObject(payloadUnknown)
       ? {
@@ -465,6 +466,18 @@ export async function POST(req: Request) {
   const planId = pickString(payloadUnknown, "planId");
   const webhookId = pickString(payloadUnknown, "webhookId");
   const isBillingEvent = eventKey ? BILLING_EVENT_KEYS.has(eventKey) : false;
+
+  console.info("[marketplace] webhook received", {
+    event: eventLabel,
+    action: action ?? "unknown",
+    isBillingEvent,
+    companyId: summary.companyId,
+    locationId: summary.locationId,
+    locationsCount: summary.locationsCount,
+    planId,
+    webhookId,
+    rawLength: rawText.length,
+  });
 
   // ---------- INSTALL ----------
   if (action === "install") {
@@ -511,7 +524,14 @@ export async function POST(req: Request) {
 
   // ---------- UNINSTALL ----------
   if (action !== "uninstall") {
-    // Keep noise low for webhook types we are not logging yet.
+    console.info("[marketplace] webhook ignored", {
+      event: eventLabel,
+      action: action ?? "unknown",
+      companyId: summary.companyId,
+      locationId: summary.locationId,
+      webhookId,
+      rawLength: rawText.length,
+    });
     return NextResponse.json({ ok: true, ignored: true }, { status: 200 });
   }
 
