@@ -219,18 +219,31 @@ export async function GET(request: Request) {
     const agenciesRef = db().collection("agencies").doc(agencyId);
     const snap = await agenciesRef.get();
     const isNewAgency = !snap.exists;
+    const nowMillis = Date.now();
+    const expiresAtMillis =
+      installationTarget === "Company" && typeof tokens.expires_in === "number"
+        ? nowMillis + tokens.expires_in * 1000
+        : null;
 
-    await agenciesRef.set(
-      {
-        agencyId,
-        provider: "leadconnector",
-        scopes: scopeArr,
-        ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
-        installedAt: isNewAgency ? FieldValue.serverTimestamp() : snap.get("installedAt") ?? FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    const agencyFields: Record<string, unknown> = {
+      agencyId,
+      provider: "leadconnector",
+      scopes: scopeArr,
+      installedAt: isNewAgency ? FieldValue.serverTimestamp() : snap.get("installedAt") ?? FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    // Only store agency-level tokens when the install target is the Company (authClass: Company)
+    if (installationTarget === "Company") {
+      if (tokens.refresh_token) agencyFields.refreshToken = tokens.refresh_token;
+      if (tokens.access_token) agencyFields.accessToken = tokens.access_token;
+      if (expiresAtMillis) {
+        agencyFields.accessTokenExpiresAt = expiresAtMillis;
+        agencyFields.expiresAt = expiresAtMillis;
+      }
+    }
+
+    await agenciesRef.set(agencyFields, { merge: true });
   }
 
   if (agencyId && locationId) {

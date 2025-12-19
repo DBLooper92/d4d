@@ -190,48 +190,7 @@ async function getAccessTokenForAgency(agencyId: string) {
     if (acc) return acc;
   }
 
-  // Index-free fallback (no composite index required)
-  let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
-  for (let page = 0; page < 5; page++) {
-    let q = db().collection("locations").where("agencyId", "==", agencyId).limit(200);
-    if (last) q = q.startAfter(last);
-    const snap = await q.get();
-    if (snap.empty) break;
-
-    for (const d of snap.docs) {
-      const data = d.data() || {};
-      const acc = String((data as Record<string, unknown>).accessToken || "");
-      if (acc) return acc;
-      const rt = String((data as Record<string, unknown>).refreshToken || "");
-      if (rt) {
-        const acc = await tryExchange(rt);
-        if (acc) return acc;
-      }
-    }
-
-    last = snap.docs[snap.docs.length - 1];
-    if (snap.size < 200) break;
-  }
-
   return null;
-}
-
-async function getAccessTokenForLocation(locationId: string) {
-  const { clientId, clientSecret } = getGhlConfig();
-  const snap = await db().collection("locations").doc(locationId).get();
-  if (!snap.exists) return null;
-  const data = snap.data() || {};
-  const access = String((data as Record<string, unknown>).accessToken || "");
-  if (access) return access;
-  const rt = String((data as Record<string, unknown>).refreshToken || "");
-  if (!rt) return null;
-  try {
-    const tok = await exchangeRefreshToken(rt, clientId, clientSecret);
-    return tok.access_token || null;
-  } catch (e) {
-    olog("location token exchange failed", { locationId, err: String(e) });
-    return null;
-  }
 }
 
 /**
@@ -519,7 +478,6 @@ export async function POST(req: Request) {
 
   // ---- Acquire tokens *before* we delete documents ----
   const preAgencyAccessToken = agencyId ? await getAccessTokenForAgency(agencyId) : null;
-  const preLocationAccessToken = locationId ? await getAccessTokenForLocation(locationId) : null;
 
   // --- CASE A: Location uninstall ---
   if (locationId) {
@@ -558,9 +516,8 @@ export async function POST(req: Request) {
 
   // ---- Custom Menu removal flow (use pre-fetched tokens; do not re-query now)
   const agencyAccessToken = preAgencyAccessToken;
-  const locationAccessToken = preLocationAccessToken;
 
-  if (!agencyAccessToken && !locationAccessToken) {
+  if (!agencyAccessToken) {
     // We can’t auth against CML API; return success so webhook doesn’t retry forever.
     // Run maintenance endpoint later to clean up if needed.
     return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
@@ -572,8 +529,7 @@ export async function POST(req: Request) {
 
   let menuId = knownId || "";
   if (!menuId) {
-    const listToken = agencyAccessToken || locationAccessToken!;
-    const list = await listCompanyMenus(listToken, agencyId);
+    const list = await listCompanyMenus(agencyAccessToken, agencyId);
     if (list.ok) {
       const found = findOurMenu(list.items);
       menuId = (found?.id as string | undefined) || "";
@@ -583,10 +539,7 @@ export async function POST(req: Request) {
   }
   if (!menuId) return NextResponse.json({ ok: true, notFound: true }, { status: 200 });
 
-  const ok = await deleteMenuById(agencyAccessToken || "", menuId, {
-    companyId: agencyId,
-    locationAccessToken: locationAccessToken || undefined,
-  });
+  const ok = await deleteMenuById(agencyAccessToken, menuId, { companyId: agencyId });
 
   if (ok) {
     await db().collection("agencies").doc(agencyId).set({ customMenuId: null }, { merge: true });
