@@ -71,9 +71,15 @@ function parseAction(p: unknown): { action: Action; type: string; event: string 
   const rawEvent = hasKey(p, "event") && isString(p.event) ? p.event : "";
   const t = rawType.toLowerCase();
   const e = rawEvent.toLowerCase();
-  const isInstall = t === "install" || e === "appinstall" || t.includes("install") || e.includes("install");
   const isUninstall = t === "uninstall" || e === "appuninstall" || t.includes("uninstall") || e.includes("uninstall");
+  const isInstall = !isUninstall && (t === "install" || e === "appinstall" || t.includes("install") || e.includes("install"));
   return { action: isInstall ? "install" : isUninstall ? "uninstall" : null, type: rawType, event: rawEvent };
+}
+
+function pickString(obj: unknown, key: string): string {
+  if (!isObject(obj)) return "";
+  const v = hasKey(obj, key) ? obj[key] : undefined;
+  return isString(v) ? v.trim() : "";
 }
 
 /**
@@ -311,8 +317,25 @@ async function handleInstall(payload: InstallPayload) {
   const singleLoc = readLocationId(rawObj);
   const manyLocs = readLocations(rawObj);
   const locationIds = Array.from(new Set([singleLoc, ...manyLocs].filter(Boolean)));
+  const planId = hasKey(rawObj, "planId") && isString(rawObj.planId) ? rawObj.planId.trim() : "";
 
   if (!agencyId || locationIds.length === 0) {
+    // Company-level install without explicit locations: still upsert agency and capture plan.
+    if (agencyId) {
+      const now = FieldValue.serverTimestamp();
+      await db().collection("agencies").doc(agencyId).set(
+        {
+          agencyId,
+          provider: "leadconnector",
+          isInstalled: true,
+          updatedAt: now,
+          installedAt: now,
+        },
+        { merge: true },
+      );
+      return NextResponse.json({ ok: true, note: "agency-only install captured", agencyId }, { status: 200 });
+    }
+
     olog("install payload ignored (missing ids)", { hasAgency: !!agencyId, count: locationIds.length });
     return NextResponse.json({ ok: true, note: "ignored (no ids)" }, { status: 200 });
   }
@@ -324,7 +347,9 @@ async function handleInstall(payload: InstallPayload) {
     {
       agencyId,
       provider: "leadconnector",
+      isInstalled: true,
       updatedAt: now,
+      installedAt: now,
     },
     { merge: true },
   );
@@ -345,6 +370,13 @@ async function handleInstall(payload: InstallPayload) {
           isInstalled: true,
           updatedAt: now,
           installedAt: now,
+          ...(planId
+            ? {
+                ghlPlanId: planId,
+                ghlPlanStatus: "active" as const,
+                ghlPlanUpdatedAt: now,
+              }
+            : {}),
         },
         { merge: true },
       ),
@@ -358,6 +390,13 @@ async function handleInstall(payload: InstallPayload) {
           agencyId,
           updatedAt: now,
           installedAt: now,
+          ...(planId
+            ? {
+                ghlPlanId: planId,
+                ghlPlanStatus: "active" as const,
+                ghlPlanUpdatedAt: now,
+              }
+            : {}),
         },
         { merge: true },
       ),
@@ -418,35 +457,45 @@ export async function POST(req: Request) {
   } catch {
     console.info("[marketplace] webhook bad json", {
       rawLength: rawText.length,
-      rawSample: rawText.slice(0, 1000),
+      rawSample: rawText.slice(0, 200),
     });
     return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
   }
 
   const { action, type, event } = parseAction(payloadUnknown);
   const summary =
-    isObject(payloadUnknown) && hasKey(payloadUnknown, "companyId") && hasKey(payloadUnknown, "locationId")
+    isObject(payloadUnknown)
       ? {
-          companyId: isString(payloadUnknown.companyId) ? payloadUnknown.companyId : "",
-          locationId: isString(payloadUnknown.locationId) ? payloadUnknown.locationId : "",
+          companyId: hasKey(payloadUnknown, "companyId") && isString(payloadUnknown.companyId)
+            ? payloadUnknown.companyId
+            : "",
+          locationId: hasKey(payloadUnknown, "locationId") && isString(payloadUnknown.locationId)
+            ? payloadUnknown.locationId
+            : "",
           locationsCount: Array.isArray((payloadUnknown as { locations?: unknown }).locations)
             ? ((payloadUnknown as { locations?: unknown }).locations as unknown[]).length
             : 0,
         }
       : { companyId: "", locationId: "", locationsCount: 0 };
 
+  const planId = pickString(payloadUnknown, "planId");
+  const installType = pickString(payloadUnknown, "installType");
+  const webhookId = pickString(payloadUnknown, "webhookId");
+
   console.info("[marketplace] webhook", {
     action: action ?? "unknown",
     type,
     event,
-    ...summary,
-    rawLength: rawText.length,
-    rawSample: rawText.slice(0, 1000),
+    companyId: summary.companyId,
+    locationId: summary.locationId,
+    locationsCount: summary.locationsCount,
+    planId,
+    installType,
+    webhookId,
   });
 
   // ---------- INSTALL ----------
   if (action === "install") {
-    console.info("[marketplace] install payload", payloadUnknown);
     return handleInstall(payloadUnknown as InstallPayload);
   }
 
@@ -454,7 +503,6 @@ export async function POST(req: Request) {
   if (action !== "uninstall") {
     return NextResponse.json({ ok: true }, { status: 200 });
   }
-  console.info("[marketplace] uninstall payload", payloadUnknown);
 
   const raw = payloadUnknown as Record<string, unknown>;
   const agencyIdFromPayload = readCompanyId(raw) || null;

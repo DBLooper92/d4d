@@ -216,14 +216,6 @@ export async function GET(request: Request) {
   const installationTarget: InstallationTarget = locationId ? "Location" : "Company";
 
   if (agencyId) {
-    const agencyPlanFields = planId
-      ? {
-          ghlPlanId: planId,
-          ghlPlanStatus: "active" as const,
-          ghlPlanUpdatedAt: FieldValue.serverTimestamp(),
-        }
-      : {};
-
     const agenciesRef = db().collection("agencies").doc(agencyId);
     const snap = await agenciesRef.get();
     const isNewAgency = !snap.exists;
@@ -236,7 +228,6 @@ export async function GET(request: Request) {
         ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
         installedAt: isNewAgency ? FieldValue.serverTimestamp() : snap.get("installedAt") ?? FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
-        ...agencyPlanFields,
       },
       { merge: true },
     );
