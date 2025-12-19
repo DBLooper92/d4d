@@ -48,7 +48,7 @@ env:
     availability: [RUNTIME]
   - variable: GHL_SCOPES
     secret: GHL_SCOPES
-    version: 7
+    version: 8
     availability: [RUNTIME]
   - variable: GHL_INTEGRATION_ID
     secret: GHL_INTEGRATION_ID
