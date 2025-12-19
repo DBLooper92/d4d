@@ -1,6 +1,6 @@
 // src/app/api/webhooks/ghl/marketplace/route.ts
 import { NextResponse } from "next/server";
-import { db, getAdminApp } from "@/lib/firebaseAdmin";
+import { db } from "@/lib/firebaseAdmin";
 import {
   olog,
   getGhlConfig,
@@ -82,7 +82,6 @@ function pickString(obj: unknown, key: string): string {
  * ---- Helpers: chunked Firestore batch + Auth ops
  */
 const BATCH_LIMIT = 450; // under 500 to leave headroom
-const AUTH_DELETE_LIMIT = 1000; // Admin SDK bulk delete limit
 
 async function commitInChunks(ops: Array<(b: FirebaseFirestore.WriteBatch) => void>) {
   let i = 0;
@@ -92,56 +91,6 @@ async function commitInChunks(ops: Array<(b: FirebaseFirestore.WriteBatch) => vo
     slice.forEach((fn) => fn(batch));
     await batch.commit();
     i += slice.length;
-  }
-}
-
-async function deleteCollectionByQuery(
-  col: FirebaseFirestore.Query,
-  pick: (doc: FirebaseFirestore.QueryDocumentSnapshot) => {
-    op: (b: FirebaseFirestore.WriteBatch) => void;
-    uid?: string | null;
-  },
-  pageSize = 500,
-) {
-  const uids: string[] = [];
-  let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
-  while (true) {
-    let q = col.limit(pageSize);
-    if (last) q = q.startAfter(last);
-    const snap = await q.get();
-    if (snap.empty) break;
-
-    const ops: Array<(b: FirebaseFirestore.WriteBatch) => void> = [];
-    for (const d of snap.docs) {
-      const { op, uid } = pick(d);
-      ops.push(op);
-      if (uid && uid.trim()) uids.push(uid.trim());
-    }
-    await commitInChunks(ops);
-    last = snap.docs[snap.docs.length - 1];
-  }
-  return uids;
-}
-
-async function deleteAuthUsersInChunks(uids: string[]) {
-  if (!uids.length) return;
-  const auth = getAdminApp().auth();
-  for (let i = 0; i < uids.length; i += AUTH_DELETE_LIMIT) {
-    const chunk = uids.slice(i, i + AUTH_DELETE_LIMIT);
-    try {
-      const res = await auth.deleteUsers(chunk);
-      olog("auth.deleteUsers", {
-        count: chunk.length,
-        successCount: res.successCount,
-        failureCount: res.failureCount,
-      });
-      if (res.failureCount) {
-        const samples = res.errors.slice(0, 5).map((e) => ({ index: e.index, error: String(e.error) }));
-        olog("auth.deleteUsers failures", { sample: samples });
-      }
-    } catch (e) {
-      olog("auth.deleteUsers error", { err: String(e), chunkSize: chunk.length });
-    }
   }
 }
 
@@ -162,8 +111,8 @@ async function getAgencyIdForLocation(locationId: string) {
 
 /**
  * Get an access token for the agency:
- *  1) Try agency refresh token
- *  2) Index-free fallback: scan locations where agencyId == X and use the first refreshToken
+ *  1) Try stored access token
+ *  2) Fall back to agency refresh token
  */
 async function getAccessTokenForAgency(agencyId: string) {
   const { clientId, clientSecret } = getGhlConfig();
@@ -194,81 +143,68 @@ async function getAccessTokenForAgency(agencyId: string) {
 }
 
 /**
- * ---- Cascade delete for a single location
+ * ---- Soft-deactivate for a single location
  */
-async function cascadeDeleteLocation(locationId: string, agencyId?: string | null) {
-  const ops: Array<(b: FirebaseFirestore.WriteBatch) => void> = [];
+async function softDeactivateLocation(locationId: string, agencyId?: string | null) {
+  const now = FieldValue.serverTimestamp();
+  const locationRef = db().collection("locations").doc(locationId);
+  await locationRef.set(
+    {
+      isInstalled: false,
+      active: false,
+      activeUpdatedAt: now,
+      ghlPlanStatus: "inactive",
+      ghlPlanUpdatedAt: now,
+      accessToken: null,
+      refreshToken: null,
+      expiresAt: null,
+      deactivatedAt: now,
+    },
+    { merge: true },
+  );
 
-  // 1) Membership subcollection → collect UIDs and delete
-  const membersCol = db().collection("locations").doc(locationId).collection("users");
-  const uidsFromMembers = await deleteCollectionByQuery(membersCol, (doc) => {
-    const uid = doc.id;
-    const userRef = db().collection("users").doc(uid);
-    const locUserRef = doc.ref;
-    return {
-      op: (b) => {
-        b.delete(locUserRef);
-        b.delete(userRef);
-      },
-      uid,
-    };
-  });
-
-  // 2) Root users fallback
-  const rootUsersQuery = db().collection("users").where("locationId", "==", locationId);
-  const uidsFromRoot = await deleteCollectionByQuery(rootUsersQuery, (doc) => {
-    const uid = doc.id;
-    return { op: (b) => b.delete(doc.ref), uid };
-  });
-
-  // 3) Agency mirror doc
   if (agencyId) {
     const agLocRef = db().collection("agencies").doc(agencyId).collection("locations").doc(locationId);
-    ops.push((b) => b.delete(agLocRef));
-  }
-
-  // 4) Location doc
-  const locationRef = db().collection("locations").doc(locationId);
-  ops.push((b) => b.delete(locationRef));
-
-  await commitInChunks(ops);
-
-  // 5) Delete Auth users
-  const allUids = Array.from(new Set([...uidsFromMembers, ...uidsFromRoot]));
-  if (allUids.length) {
-    await deleteAuthUsersInChunks(allUids);
+    await agLocRef.set(
+      {
+        isInstalled: false,
+        ghlPlanStatus: "inactive",
+        ghlPlanUpdatedAt: now,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
   }
 }
 
-/**
- * ---- Cascade delete for an agency
- */
-async function cascadeDeleteAgency(agencyId: string) {
-  const baseQuery = db().collection("locations").where("agencyId", "==", agencyId);
-  let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+async function softDeactivateAgency(agencyId: string) {
+  const now = FieldValue.serverTimestamp();
+  await db()
+    .collection("agencies")
+    .doc(agencyId)
+    .set(
+      {
+        isInstalled: false,
+        active: false,
+        activeUpdatedAt: now,
+        ghlPlanStatus: "inactive",
+        ghlPlanUpdatedAt: now,
+        accessToken: null,
+        refreshToken: null,
+        expiresAt: null,
+        deactivatedAt: now,
+      },
+      { merge: true },
+    );
 
-  while (true) {
-    let q = baseQuery.limit(300);
-    if (last) q = q.startAfter(last);
-    const snap = await q.get();
-    if (snap.empty) break;
-
-    for (const d of snap.docs) {
-      const locId = d.id;
-      try {
-        await cascadeDeleteLocation(locId, agencyId);
-      } catch (e) {
-        olog("cascadeDeleteLocation failed (agency-level)", { agencyId, locationId: locId, err: String(e) });
-      }
+  const snap = await db().collection("locations").where("agencyId", "==", agencyId).get();
+  for (const d of snap.docs) {
+    try {
+      await softDeactivateLocation(d.id, agencyId);
+    } catch (e) {
+      olog("softDeactivateLocation failed", { agencyId, locationId: d.id, err: String(e) });
     }
-
-    last = snap.docs[snap.docs.length - 1];
   }
-
-  // Finally, delete the agency doc
-  const ops: Array<(b: FirebaseFirestore.WriteBatch) => void> = [];
-  ops.push((b) => b.delete(db().collection("agencies").doc(agencyId)));
-  await commitInChunks(ops);
 }
 
 /**
@@ -287,14 +223,20 @@ async function handleInstall(payload: InstallPayload) {
     // Company-level install without explicit locations: still upsert agency and capture plan.
     if (agencyId) {
       const now = FieldValue.serverTimestamp();
+      const baseAgency: Record<string, unknown> = {
+        agencyId,
+        provider: "leadconnector",
+        isInstalled: true,
+        updatedAt: now,
+        installedAt: now,
+      };
+      if (planId) {
+        baseAgency.ghlPlanId = planId;
+        baseAgency.ghlPlanStatus = "active";
+        baseAgency.ghlPlanUpdatedAt = now;
+      }
       await db().collection("agencies").doc(agencyId).set(
-        {
-          agencyId,
-          provider: "leadconnector",
-          isInstalled: true,
-          updatedAt: now,
-          installedAt: now,
-        },
+        baseAgency,
         { merge: true },
       );
       return NextResponse.json({ ok: true, note: "agency-only install captured", agencyId }, { status: 200 });
@@ -307,16 +249,19 @@ async function handleInstall(payload: InstallPayload) {
   const now = FieldValue.serverTimestamp();
 
   // 1) Ensure agency doc exists (merge)
-  await db().collection("agencies").doc(agencyId).set(
-    {
-      agencyId,
-      provider: "leadconnector",
-      isInstalled: true,
-      updatedAt: now,
-      installedAt: now,
-    },
-    { merge: true },
-  );
+  const baseAgency: Record<string, unknown> = {
+    agencyId,
+    provider: "leadconnector",
+    isInstalled: true,
+    updatedAt: now,
+    installedAt: now,
+  };
+  if (planId) {
+    baseAgency.ghlPlanId = planId;
+    baseAgency.ghlPlanStatus = "active";
+    baseAgency.ghlPlanUpdatedAt = now;
+  }
+  await db().collection("agencies").doc(agencyId).set(baseAgency, { merge: true });
 
   // 2) Upsert locations (without refreshToken yet)
   const ops: Array<(b: FirebaseFirestore.WriteBatch) => void> = [];
@@ -476,19 +421,16 @@ export async function POST(req: Request) {
   const locationId: string | null = locationIdFromPayload;
   if (!agencyId && locationId) agencyId = await getAgencyIdForLocation(locationId);
 
-  // ---- Acquire tokens *before* we delete documents ----
+  // ---- Acquire tokens *before* we change documents ----
   const preAgencyAccessToken = agencyId ? await getAccessTokenForAgency(agencyId) : null;
 
   // --- CASE A: Location uninstall ---
   if (locationId) {
     try {
-      // Harmless flag in case other code reads it mid-flight
-      await db().collection("locations").doc(locationId).set({ isInstalled: false }, { merge: true });
-
-      await cascadeDeleteLocation(locationId, agencyId);
-      olog("location cascade delete complete", { agencyId, locationId });
+      await softDeactivateLocation(locationId, agencyId);
+      olog("location deactivate complete", { agencyId, locationId });
     } catch (e) {
-      olog("location cascade delete failed", { agencyId, locationId, err: String(e) });
+      olog("location deactivate failed", { agencyId, locationId, err: String(e) });
       // Continue; we still want to try menu removal below
     }
   }
@@ -498,27 +440,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, note: "no agencyId available after location delete" }, { status: 200 });
   }
 
+  const remainingInstalled = await anyInstalledLocations(agencyId);
   // If any locations still have the app, keep the menu (nothing to remove)
-  if (await anyInstalledLocations(agencyId)) {
+  if (remainingInstalled) {
     return NextResponse.json({ ok: true, keptMenu: true }, { status: 200 });
   }
 
-  // --- CASE B: Agency uninstall (company-level) OR last location removed ---
-  if (!locationId) {
-    try {
-      await cascadeDeleteAgency(agencyId);
-      olog("agency cascade delete complete", { agencyId });
-    } catch (e) {
-      olog("agency cascade delete failed", { agencyId, err: String(e) });
-      // continue to try menu removal anyway
-    }
+  // No installed locations remain: mark agency inactive
+  try {
+    await softDeactivateAgency(agencyId);
+    olog("agency deactivate complete", { agencyId });
+  } catch (e) {
+    olog("agency deactivate failed", { agencyId, err: String(e) });
+    // continue to try menu removal anyway
   }
 
   // ---- Custom Menu removal flow (use pre-fetched tokens; do not re-query now)
   const agencyAccessToken = preAgencyAccessToken;
 
   if (!agencyAccessToken) {
-    // We can’t auth against CML API; return success so webhook doesn’t retry forever.
+    // We canΓÇÖt auth against CML API; return success so webhook doesnΓÇÖt retry forever.
     // Run maintenance endpoint later to clean up if needed.
     return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
   }
@@ -547,3 +488,4 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ ok, removedMenuId: menuId }, { status: 200 });
 }
+
