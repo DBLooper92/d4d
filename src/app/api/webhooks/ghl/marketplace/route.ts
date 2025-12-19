@@ -170,6 +170,7 @@ async function getAccessTokenForAgency(agencyId: string) {
   const agSnap = await db().collection("agencies").doc(agencyId).get();
   const ag = agSnap.exists ? (agSnap.data() || {}) : {};
   const agencyRefresh = String((ag as Record<string, unknown>).refreshToken || "") || "";
+  const agencyAccess = String((ag as Record<string, unknown>).accessToken || "") || "";
 
   const tryExchange = async (rt: string) => {
     try {
@@ -180,6 +181,9 @@ async function getAccessTokenForAgency(agencyId: string) {
       return null;
     }
   };
+
+  // Try the stored access token first; even if it's near expiry it may still work for a DELETE.
+  if (agencyAccess) return agencyAccess;
 
   if (agencyRefresh) {
     const acc = await tryExchange(agencyRefresh);
@@ -196,6 +200,8 @@ async function getAccessTokenForAgency(agencyId: string) {
 
     for (const d of snap.docs) {
       const data = d.data() || {};
+      const acc = String((data as Record<string, unknown>).accessToken || "");
+      if (acc) return acc;
       const rt = String((data as Record<string, unknown>).refreshToken || "");
       if (rt) {
         const acc = await tryExchange(rt);
@@ -214,7 +220,10 @@ async function getAccessTokenForLocation(locationId: string) {
   const { clientId, clientSecret } = getGhlConfig();
   const snap = await db().collection("locations").doc(locationId).get();
   if (!snap.exists) return null;
-  const rt = String((snap.data() || {}).refreshToken || "");
+  const data = snap.data() || {};
+  const access = String((data as Record<string, unknown>).accessToken || "");
+  if (access) return access;
+  const rt = String((data as Record<string, unknown>).refreshToken || "");
   if (!rt) return null;
   try {
     const tok = await exchangeRefreshToken(rt, clientId, clientSecret);
