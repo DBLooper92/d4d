@@ -77,6 +77,79 @@ function pickString(obj: unknown, key: string): string {
   const v = hasKey(obj, key) ? obj[key] : undefined;
   return isString(v) ? v.trim() : "";
 }
+function normalizeEventKey(name: string): string {
+  return name.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+const BILLING_EVENT_KEYS = new Set(
+  [
+    "SaasPlanCreate",
+    "InvoiceCreate",
+    "InvoicePaid",
+    "InvoicePartiallyPaid",
+    "InvoiceVoid",
+    "InvoiceDelete",
+    "OrderStatusUpdate",
+  ].map(normalizeEventKey),
+);
+
+function readEventName(payload: unknown): string {
+  if (!isObject(payload)) return "";
+  const candidates = ["type", "event", "eventType", "name"];
+  for (const key of candidates) {
+    const value = pickString(payload, key);
+    if (value) return value;
+  }
+  return "";
+}
+
+function pickLogHeaders(headers: Headers): Record<string, string> {
+  const interesting = [
+    "x-gohighlevel-signature",
+    "x-leadconnector-signature",
+    "x-lc-signature",
+    "x-forwarded-for",
+    "x-cloud-trace-context",
+    "x-request-id",
+    "user-agent",
+  ];
+  const out: Record<string, string> = {};
+  for (const name of interesting) {
+    const value = headers.get(name);
+    if (value) out[name] = value;
+  }
+  return out;
+}
+
+async function logBillingWebhookCapture(params: {
+  eventName: string;
+  eventKey: string;
+  webhookId: string;
+  companyId: string;
+  locationId: string;
+  planId: string;
+  rawBody: string;
+  payload: unknown;
+  headers: Record<string, string>;
+}) {
+  const col = db().collection("ghl_webhook_events");
+  const docRef = params.webhookId ? col.doc(params.webhookId) : col.doc();
+  const data: Record<string, unknown> = {
+    source: "ghl_marketplace",
+    eventName: params.eventName || "unknown",
+    eventKey: params.eventKey,
+    webhookId: params.webhookId || null,
+    companyId: params.companyId || null,
+    locationId: params.locationId || null,
+    planId: params.planId || null,
+    receivedAt: FieldValue.serverTimestamp(),
+    rawBody: params.rawBody,
+    rawLength: params.rawBody.length,
+    payload: isObject(params.payload) ? params.payload : { value: params.payload },
+  };
+  if (Object.keys(params.headers).length) data.headers = params.headers;
+  await docRef.set(data, { merge: true });
+}
 
 /**
  * ---- Helpers: chunked Firestore batch + Auth ops
@@ -372,6 +445,8 @@ export async function POST(req: Request) {
   }
 
   const { action, type, event } = parseAction(payloadUnknown);
+  const eventNameRaw = readEventName(payloadUnknown) || type || event || "";
+  const eventKey = eventNameRaw ? normalizeEventKey(eventNameRaw) : "";
   const summary =
     isObject(payloadUnknown)
       ? {
@@ -388,30 +463,64 @@ export async function POST(req: Request) {
       : { companyId: "", locationId: "", locationsCount: 0 };
 
   const planId = pickString(payloadUnknown, "planId");
-  const installType = pickString(payloadUnknown, "installType");
   const webhookId = pickString(payloadUnknown, "webhookId");
-
-  console.info("[marketplace] webhook", {
-    action: action ?? "unknown",
-    type,
-    event,
-    companyId: summary.companyId,
-    locationId: summary.locationId,
-    locationsCount: summary.locationsCount,
-    planId,
-    installType,
-    webhookId,
-  });
+  const isBillingEvent = eventKey ? BILLING_EVENT_KEYS.has(eventKey) : false;
 
   // ---------- INSTALL ----------
   if (action === "install") {
+    console.info("[marketplace] install", {
+      companyId: summary.companyId,
+      locationId: summary.locationId,
+      locationsCount: summary.locationsCount,
+      webhookId,
+    });
     return handleInstall(payloadUnknown as InstallPayload);
+  }
+
+  // ---------- BILLING / PLAN EVENTS ----------
+  if (isBillingEvent) {
+    const headersForLog = pickLogHeaders(req.headers);
+    const eventLabel = eventNameRaw || type || event || "unknown";
+    try {
+      await logBillingWebhookCapture({
+        eventName: eventLabel,
+        eventKey,
+        webhookId,
+        companyId: summary.companyId,
+        locationId: summary.locationId,
+        planId,
+        rawBody: rawText,
+        payload: payloadUnknown,
+        headers: headersForLog,
+      });
+    } catch (e) {
+      console.error("[marketplace] billing webhook log failed", { event: eventLabel, err: String(e) });
+    }
+
+    console.info("[marketplace] billing webhook", {
+      event: eventLabel,
+      companyId: summary.companyId,
+      locationId: summary.locationId,
+      planId,
+      webhookId,
+      rawLength: rawText.length,
+    });
+
+    return NextResponse.json({ ok: true, captured: true, event: eventLabel }, { status: 200 });
   }
 
   // ---------- UNINSTALL ----------
   if (action !== "uninstall") {
-    return NextResponse.json({ ok: true }, { status: 200 });
+    // Keep noise low for webhook types we are not logging yet.
+    return NextResponse.json({ ok: true, ignored: true }, { status: 200 });
   }
+
+  console.info("[marketplace] uninstall", {
+    companyId: summary.companyId,
+    locationId: summary.locationId,
+    locationsCount: summary.locationsCount,
+    webhookId,
+  });
 
   const raw = payloadUnknown as Record<string, unknown>;
   const agencyIdFromPayload = readCompanyId(raw) || null;
@@ -459,7 +568,7 @@ export async function POST(req: Request) {
   const agencyAccessToken = preAgencyAccessToken;
 
   if (!agencyAccessToken) {
-    // We canΓÇÖt auth against CML API; return success so webhook doesnΓÇÖt retry forever.
+    // We cannot auth against CML API; return success so webhook does not retry forever.
     // Run maintenance endpoint later to clean up if needed.
     return NextResponse.json({ ok: true, pendingManualRemoval: true }, { status: 200 });
   }
