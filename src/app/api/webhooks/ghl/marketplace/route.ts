@@ -151,6 +151,38 @@ async function logBillingWebhookCapture(params: {
   await docRef.set(data, { merge: true });
 }
 
+async function logRawWebhook(params: {
+  eventName: string;
+  eventKey: string;
+  action: string | null;
+  webhookId: string;
+  companyId: string;
+  locationId: string;
+  planId: string;
+  rawBody: string;
+  isBillingEvent: boolean;
+  headers: Record<string, string>;
+}) {
+  const col = db().collection("ghl_webhook_raw");
+  const docRef = params.webhookId ? col.doc(params.webhookId) : col.doc();
+  const data: Record<string, unknown> = {
+    source: "ghl_marketplace",
+    eventName: params.eventName || "unknown",
+    eventKey: params.eventKey,
+    action: params.action,
+    webhookId: params.webhookId || null,
+    companyId: params.companyId || null,
+    locationId: params.locationId || null,
+    planId: params.planId || null,
+    isBillingEvent: params.isBillingEvent,
+    receivedAt: FieldValue.serverTimestamp(),
+    rawBody: params.rawBody,
+    rawLength: params.rawBody.length,
+  };
+  if (Object.keys(params.headers).length) data.headers = params.headers;
+  await docRef.set(data, { merge: true });
+}
+
 /**
  * ---- Helpers: chunked Firestore batch + Auth ops
  */
@@ -466,6 +498,23 @@ export async function POST(req: Request) {
   const planId = pickString(payloadUnknown, "planId");
   const webhookId = pickString(payloadUnknown, "webhookId");
   const isBillingEvent = eventKey ? BILLING_EVENT_KEYS.has(eventKey) : false;
+
+  try {
+    await logRawWebhook({
+      eventName: eventLabel,
+      eventKey,
+      action,
+      webhookId,
+      companyId: summary.companyId,
+      locationId: summary.locationId,
+      planId,
+      rawBody: rawText,
+      isBillingEvent,
+      headers: pickLogHeaders(req.headers),
+    });
+  } catch (e) {
+    console.error("[marketplace] webhook raw log failed", { event: eventLabel, err: String(e) });
+  }
 
   console.info("[marketplace] webhook received", {
     event: eventLabel,
