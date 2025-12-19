@@ -12,6 +12,7 @@ export type OAuthTokens = {
   companyId?: string;          // present for both Company/Location tokens
   locationId?: string | null;  // present when userType is Location (or minted location token)
   userId?: string | null;      // <-- add this (present in token response; ID of the installer/current user)
+  planId?: string | null;      // present for SaaS installs; reflects the selected plan
 };
 
 export const OAUTH_LOG = String(process.env.OAUTH_LOG || "off").toLowerCase() === "on";

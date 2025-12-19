@@ -188,6 +188,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Bad token JSON" }, { status: 502 });
   }
 
+  // Plan selection can arrive via the marketplace billing URL (planId/plan_id) or the token payload.
+  const planFromQuery = url.searchParams.get("planId") || url.searchParams.get("plan_id") || "";
+  const planId = (planFromQuery || tokens.planId || "").trim() || null;
+  olog("plan capture", {
+    planFromQuery: !!planFromQuery,
+    planFromToken: !!tokens.planId,
+    planId,
+    agencyIdHint: tokens.companyId || null,
+    locationIdHint: tokens.locationId || null,
+  });
+
   // Removed legacy installer persistence:
   // Previously wrote to `ghl_installs` and set an installer cookie; both are gone.
 
@@ -205,6 +216,14 @@ export async function GET(request: Request) {
   const installationTarget: InstallationTarget = locationId ? "Location" : "Company";
 
   if (agencyId) {
+    const agencyPlanFields = planId
+      ? {
+          ghlPlanId: planId,
+          ghlPlanStatus: "active" as const,
+          ghlPlanUpdatedAt: FieldValue.serverTimestamp(),
+        }
+      : {};
+
     const agenciesRef = db().collection("agencies").doc(agencyId);
     const snap = await agenciesRef.get();
     const isNewAgency = !snap.exists;
@@ -217,12 +236,21 @@ export async function GET(request: Request) {
         ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
         installedAt: isNewAgency ? FieldValue.serverTimestamp() : snap.get("installedAt") ?? FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
+        ...agencyPlanFields,
       },
       { merge: true },
     );
   }
 
   if (agencyId && locationId) {
+    const locationPlanFields = planId
+      ? {
+          ghlPlanId: planId,
+          ghlPlanStatus: "active" as const,
+          ghlPlanUpdatedAt: FieldValue.serverTimestamp(),
+        }
+      : {};
+
     await db().collection("locations").doc(locationId).set(
       {
         locationId,
@@ -233,6 +261,7 @@ export async function GET(request: Request) {
         name: null,
         installedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
+        ...locationPlanFields,
       },
       { merge: true },
     );
@@ -244,6 +273,7 @@ export async function GET(request: Request) {
         name: null,
         installedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
+        ...locationPlanFields,
       },
       { merge: true },
     );

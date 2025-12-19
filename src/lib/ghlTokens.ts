@@ -127,6 +127,16 @@ function pickTimestampFromPaths(obj: Record<string, unknown>, paths: string[]): 
   return null;
 }
 
+function planFields(planId?: string | null) {
+  const cleaned = readString(planId);
+  if (!cleaned) return {};
+  return {
+    ghlPlanId: cleaned,
+    ghlPlanStatus: "active" as const,
+    ghlPlanUpdatedAt: FieldValue.serverTimestamp(),
+  };
+}
+
 async function fetchRefreshedToken(
   refreshToken: string,
   userType: "Location" | "Company",
@@ -409,9 +419,18 @@ async function refreshLocationWithRefreshToken(options: {
       ghlAuthErrorUpdatedAt: FieldValue.delete(),
       ghlLastTokenRefreshAt: FieldValue.serverTimestamp(),
       ...(readString(refreshed.companyId) ? { companyId: readString(refreshed.companyId) } : {}),
+      ...planFields(refreshed.planId),
     },
     { merge: true },
   );
+
+  if (process.env.OAUTH_LOG === "on") {
+    console.info("[oauth] plan capture (refresh)", {
+      locationId: options.locationRef.id,
+      planId: refreshed.planId ?? null,
+      source: "location_refresh",
+    });
+  }
 
   return {
     accessToken: refreshed.access_token,
@@ -458,9 +477,18 @@ async function issueLocationAccessTokenViaAgency(options: {
       ghlAuthErrorUpdatedAt: FieldValue.delete(),
       ghlLastTokenRefreshAt: FieldValue.serverTimestamp(),
       companyId,
+      ...planFields(locationToken.planId),
     },
     { merge: true },
   );
+
+  if (process.env.OAUTH_LOG === "on") {
+    console.info("[oauth] plan capture (agency_mint)", {
+      locationId: options.locationId,
+      planId: locationToken.planId ?? null,
+      source: "agency_mint",
+    });
+  }
 
   return {
     accessToken: locationToken.access_token,
