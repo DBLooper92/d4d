@@ -28,10 +28,6 @@ type InstallPayload =
   | (CommonKeys & { type: "INSTALL"; event?: string })
   | (CommonKeys & { event: "AppInstall"; type?: string });
 
-type UninstallPayload =
-  | (CommonKeys & { type: "UNINSTALL"; event?: string })
-  | (CommonKeys & { event: "AppUninstall"; type?: string });
-
 /** Type guards */
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
