@@ -18,8 +18,16 @@ export type OAuthTokens = {
 export const OAUTH_LOG = String(process.env.OAUTH_LOG || "off").toLowerCase() === "on";
 export const OAUTH_LOG_PREFIX = "[oauth]";
 
+const OAUTH_LOG_ALLOW = (process.env.OAUTH_LOG_ALLOW || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
 export function olog(msg: string, details?: unknown) {
   if (!OAUTH_LOG) return;
+  if (OAUTH_LOG_ALLOW.length && !OAUTH_LOG_ALLOW.some((substr) => msg.toLowerCase().includes(substr))) {
+    return;
+  }
   try {
     console.info(
       `${OAUTH_LOG_PREFIX} ${msg}`,

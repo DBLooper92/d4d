@@ -49,19 +49,6 @@ function hasKey<T extends string>(
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
-function isInstallPayload(p: unknown): p is InstallPayload {
-  if (!isObject(p)) return false;
-  const t = hasKey(p, "type") && isString(p.type) ? p.type : "";
-  const e = hasKey(p, "event") && isString(p.event) ? p.event : "";
-  return t === "INSTALL" || e === "AppInstall";
-}
-function isUninstallPayload(p: unknown): p is UninstallPayload {
-  if (!isObject(p)) return false;
-  const t = hasKey(p, "type") && isString(p.type) ? p.type : "";
-  const e = hasKey(p, "event") && isString(p.event) ? p.event : "";
-  return t === "UNINSTALL" || e === "AppUninstall";
-}
-
 /** Safe readers */
 function readCompanyId(p: Record<string, unknown>): string {
   const v = hasKey(p, "companyId") ? p.companyId : undefined;
@@ -74,6 +61,19 @@ function readLocationId(p: Record<string, unknown>): string {
 function readLocations(p: Record<string, unknown>): string[] {
   const v = hasKey(p, "locations") ? p.locations : undefined;
   return isStringArray(v) ? v.map((s) => s.trim()).filter(Boolean) : [];
+}
+
+type Action = "install" | "uninstall" | null;
+
+function parseAction(p: unknown): { action: Action; type: string; event: string } {
+  if (!isObject(p)) return { action: null, type: "", event: "" };
+  const rawType = hasKey(p, "type") && isString(p.type) ? p.type : "";
+  const rawEvent = hasKey(p, "event") && isString(p.event) ? p.event : "";
+  const t = rawType.toLowerCase();
+  const e = rawEvent.toLowerCase();
+  const isInstall = t === "install" || e === "appinstall" || t.includes("install") || e.includes("install");
+  const isUninstall = t === "uninstall" || e === "appuninstall" || t.includes("uninstall") || e.includes("uninstall");
+  return { action: isInstall ? "install" : isUninstall ? "uninstall" : null, type: rawType, event: rawEvent };
 }
 
 /**
@@ -411,22 +411,50 @@ async function handleInstall(payload: InstallPayload) {
 }
 
 export async function POST(req: Request) {
+  const rawText = await req.text();
   let payloadUnknown: unknown;
   try {
-    payloadUnknown = (await req.json()) as unknown;
+    payloadUnknown = rawText ? (JSON.parse(rawText) as unknown) : {};
   } catch {
+    console.info("[marketplace] webhook bad json", {
+      rawLength: rawText.length,
+      rawSample: rawText.slice(0, 1000),
+    });
     return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
   }
 
+  const { action, type, event } = parseAction(payloadUnknown);
+  const summary =
+    isObject(payloadUnknown) && hasKey(payloadUnknown, "companyId") && hasKey(payloadUnknown, "locationId")
+      ? {
+          companyId: isString(payloadUnknown.companyId) ? payloadUnknown.companyId : "",
+          locationId: isString(payloadUnknown.locationId) ? payloadUnknown.locationId : "",
+          locationsCount: Array.isArray((payloadUnknown as { locations?: unknown }).locations)
+            ? ((payloadUnknown as { locations?: unknown }).locations as unknown[]).length
+            : 0,
+        }
+      : { companyId: "", locationId: "", locationsCount: 0 };
+
+  console.info("[marketplace] webhook", {
+    action: action ?? "unknown",
+    type,
+    event,
+    ...summary,
+    rawLength: rawText.length,
+    rawSample: rawText.slice(0, 1000),
+  });
+
   // ---------- INSTALL ----------
-  if (isInstallPayload(payloadUnknown)) {
-    return handleInstall(payloadUnknown);
+  if (action === "install") {
+    console.info("[marketplace] install payload", payloadUnknown);
+    return handleInstall(payloadUnknown as InstallPayload);
   }
 
   // ---------- UNINSTALL ----------
-  if (!isUninstallPayload(payloadUnknown)) {
+  if (action !== "uninstall") {
     return NextResponse.json({ ok: true }, { status: 200 });
   }
+  console.info("[marketplace] uninstall payload", payloadUnknown);
 
   const raw = payloadUnknown as Record<string, unknown>;
   const agencyIdFromPayload = readCompanyId(raw) || null;
