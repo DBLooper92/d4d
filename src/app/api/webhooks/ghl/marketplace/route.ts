@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/firebaseAdmin";
 import { FieldValue } from "firebase-admin/firestore";
+import { ensureLocationInstallRecord } from "@/lib/locationInstall";
 
 export const runtime = "nodejs";
 
@@ -220,7 +221,18 @@ export async function POST(req: Request) {
       locationsCount: summary.locationsCount,
       webhookId,
     });
-    return NextResponse.json({ ok: true, captured: true, note: "install logging only" }, { status: 200 });
+    if (summary.locationId) {
+      try {
+        await ensureLocationInstallRecord({ locationId: summary.locationId, agencyId: summary.companyId });
+      } catch (e) {
+        console.error("[marketplace] install seed failed", {
+          locationId: summary.locationId,
+          companyId: summary.companyId,
+          err: String(e),
+        });
+      }
+    }
+    return NextResponse.json({ ok: true, captured: true, note: "install captured" }, { status: 200 });
   }
 
   // ---------- BILLING / PLAN EVENTS ----------

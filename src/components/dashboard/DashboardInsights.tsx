@@ -715,7 +715,7 @@ export default function DashboardInsights({ locationId }: Props) {
     ghlUserId: null,
   });
   const canManageLocation = viewer.isAdmin;
-  const showSkiptrace = false;
+  const showSkiptrace = true;
 
   const openInviteModal = useCallback(() => {
     if (!canManageLocation) return;

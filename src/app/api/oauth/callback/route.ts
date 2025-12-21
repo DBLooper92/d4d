@@ -22,6 +22,7 @@ import {
   CustomMenuListResponse,
 } from "@/lib/ghl";
 import { FieldValue } from "firebase-admin/firestore";
+import { ensureLocationInstallRecord } from "@/lib/locationInstall";
 
 export const runtime = "nodejs";
 
@@ -254,6 +255,12 @@ export async function GET(request: Request) {
           ghlPlanUpdatedAt: FieldValue.serverTimestamp(),
         }
       : {};
+
+    try {
+      await ensureLocationInstallRecord({ locationId, agencyId });
+    } catch (e) {
+      olog("ensureLocationInstallRecord failed", { locationId, agencyId, err: String(e) });
+    }
 
     await db().collection("locations").doc(locationId).set(
       {
