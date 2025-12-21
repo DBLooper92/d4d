@@ -156,11 +156,11 @@ export async function GET(req: Request) {
   const data = (snap.data() || {}) as {
     industryChosen?: unknown;
     industryQuickNotes?: unknown;
-    customIndustryQuickNotes?: unknown;
+    industryQuickNotesCustom?: unknown;
   };
   const industryChosen = typeof data.industryChosen === "string" ? data.industryChosen.trim() : "";
   const quickNotes = cleanNotes(data.industryQuickNotes);
-  const customQuickNotes = cleanNotes(data.customIndustryQuickNotes);
+  const customQuickNotes = cleanNotes(data.industryQuickNotesCustom);
 
   return NextResponse.json(
     { industryChosen: industryChosen || null, quickNotes, customQuickNotes },
@@ -211,7 +211,7 @@ export async function POST(req: Request) {
 
     const isOther = industryChosen.toLowerCase() === "other";
     if (isOther) {
-      updates.customIndustryQuickNotes = quickNotes;
+      updates.industryQuickNotesCustom = quickNotes;
     } else {
       updates.industryQuickNotes = quickNotes;
     }
