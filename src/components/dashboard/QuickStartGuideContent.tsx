@@ -309,28 +309,12 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
 
   if (step === "guide") {
     return (
-      <div style={{ padding: "6px 0", display: "grid", gap: "16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 800, color: "#0f172a" }}>Quick Start Guide</h2>
-            <div style={{ color: "#475569", marginTop: "6px" }}>
-              {selectedLabel ? `You're set up for ${selectedLabel}.` : "You're set up and ready to go."}
-            </div>
-          </div>
-        </div>
-        <div
-          className="card"
-          style={{
-            margin: 0,
-            borderColor: "#e2e8f0",
-            display: "grid",
-            gap: "12px",
-          }}
-        >
-          <div style={{ color: "#0f172a", fontWeight: 700 }}>Next up</div>
-          <div style={{ color: "#475569", fontSize: "0.95rem" }}>
-            Keep building momentum: invite drivers, enable skiptrace, and start adding properties from the field.
-          </div>
+      <div style={{ padding: "6px 0", display: "grid", gap: "12px" }}>
+        <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 800, color: "#0f172a" }}>
+          Quick Start Guide
+        </h2>
+        <div style={{ color: "#475569" }}>
+          {selectedLabel ? `You're set up for ${selectedLabel}.` : "You're set up and ready to go."}
         </div>
       </div>
     );
