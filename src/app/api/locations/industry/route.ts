@@ -153,12 +153,17 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Location not found" }, { status: 404, headers: cacheHeaders() });
   }
 
-  const data = (snap.data() || {}) as { industryChosen?: unknown; industryQuickNotes?: unknown };
+  const data = (snap.data() || {}) as {
+    industryChosen?: unknown;
+    industryQuickNotes?: unknown;
+    customIndustryQuickNotes?: unknown;
+  };
   const industryChosen = typeof data.industryChosen === "string" ? data.industryChosen.trim() : "";
   const quickNotes = cleanNotes(data.industryQuickNotes);
+  const customQuickNotes = cleanNotes(data.customIndustryQuickNotes);
 
   return NextResponse.json(
-    { industryChosen: industryChosen || null, quickNotes },
+    { industryChosen: industryChosen || null, quickNotes, customQuickNotes },
     { status: 200, headers: cacheHeaders() },
   );
 }
@@ -183,8 +188,8 @@ export async function POST(req: Request) {
   const adminCheck = await requireLocationAdmin(uid, locationId);
   if ("error" in adminCheck) return adminCheck.error;
 
-  const industryChosen =
-    typeof body.industryChosen === "string" && body.industryChosen.trim() ? body.industryChosen.trim() : "";
+  const industryChosenRaw = typeof body.industryChosen === "string" ? body.industryChosen : "";
+  const industryChosen = industryChosenRaw.trim();
   if (!industryChosen) {
     return NextResponse.json({ error: "Missing industryChosen" }, { status: 400, headers: cacheHeaders() });
   }
@@ -198,23 +203,26 @@ export async function POST(req: Request) {
   }
 
   try {
-    await db()
-      .collection("locations")
-      .doc(locationId)
-      .set(
-        {
-          industryChosen,
-          industryQuickNotes: quickNotes,
-          industryUpdatedAt: FieldValue.serverTimestamp(),
-          industryUpdatedBy: uid,
-        },
-        { merge: true },
-      );
+    const updates: Record<string, unknown> = {
+      industryChosen,
+      industryUpdatedAt: FieldValue.serverTimestamp(),
+      industryUpdatedBy: uid,
+    };
+
+    const isOther = industryChosen.toLowerCase() === "other";
+    if (isOther) {
+      updates.customIndustryQuickNotes = quickNotes;
+    } else {
+      updates.industryQuickNotes = quickNotes;
+    }
+
+    await db().collection("locations").doc(locationId).set(updates, { merge: true });
 
     return NextResponse.json(
       {
         industryChosen,
         quickNotes,
+        customQuickNotes: isOther ? quickNotes : undefined,
       },
       { status: 200, headers: cacheHeaders() },
     );

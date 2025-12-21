@@ -4,7 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { getFirebaseAuth } from "@/lib/firebaseClient";
 
 type IndustryOption = { id: string; label: string; notes: string[] };
-type ApiResponse = { industryChosen?: string | null; quickNotes?: string[]; error?: string };
+type ApiResponse = {
+  industryChosen?: string | null;
+  quickNotes?: string[];
+  customQuickNotes?: string[];
+  error?: string;
+};
 
 const INDUSTRY_OPTIONS: IndustryOption[] = [
   {
@@ -148,7 +153,6 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [customNotes, setCustomNotes] = useState<string[]>(["", "", "", "", ""]);
   const [persistedIndustry, setPersistedIndustry] = useState<string | null>(null);
-  const [persistedNotes, setPersistedNotes] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notesVisible, setNotesVisible] = useState<boolean>(false);
 
@@ -185,16 +189,27 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
           throw new Error(data.error || `Failed to load (${res.status})`);
         }
         const normalized = normalizeIndustryId(data.industryChosen);
+        const serverCustomNotes = formatNotesForDisplay(data.customQuickNotes ?? []);
+
+        const paddedCustom = [...serverCustomNotes];
+        while (paddedCustom.length < 5) paddedCustom.push("");
+        setCustomNotes(paddedCustom.slice(0, 5));
+
         if (normalized) {
           const opt = INDUSTRY_OPTIONS.find((o) => o.id === normalized);
           setSelectedId(opt?.id ?? normalized);
           setPersistedIndustry(data.industryChosen || opt?.label || normalized);
-          const incomingNotes = formatNotesForDisplay(data.quickNotes ?? []);
-          setPersistedNotes(incomingNotes);
+          // If current choice is "other" use custom notes; otherwise use saved quick notes.
           if (normalized === "other") {
-            const padded = [...incomingNotes];
-            while (padded.length < 5) padded.push("");
-            setCustomNotes(padded.slice(0, 5));
+            if (!serverCustomNotes.length) {
+              setCustomNotes((prev) => {
+                const next = [...prev];
+                if (next.every((n) => !n.trim())) {
+                  next[0] = "";
+                }
+                return next.slice(0, 5);
+              });
+            }
           }
           setStep("guide");
         } else {
@@ -258,7 +273,14 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
         throw new Error(data.error || `Failed to save (${res.status})`);
       }
       setPersistedIndustry(data.industryChosen || selectedOption.label);
-      setPersistedNotes(formatNotesForDisplay(data.quickNotes ?? quickNotes));
+      if (selectedOption.id === "other") {
+        const savedCustom = formatNotesForDisplay(
+          data.customQuickNotes ?? data.quickNotes ?? quickNotes,
+        );
+        const padded = [...savedCustom];
+        while (padded.length < 5) padded.push("");
+        setCustomNotes(padded.slice(0, 5));
+      }
       setStep("guide");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -295,45 +317,7 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
               {selectedLabel ? `You're set up for ${selectedLabel}.` : "You're set up and ready to go."}
             </div>
           </div>
-          {persistedIndustry ? (
-            <span
-              className="badge"
-              style={{
-                background: "#ecfeff",
-                color: "#0f172a",
-                borderColor: "#bae6fd",
-                fontWeight: 700,
-              }}
-            >
-              Industry saved
-            </span>
-          ) : null}
         </div>
-        {persistedNotes.length ? (
-          <div
-            className="card"
-            style={{
-              margin: 0,
-              borderColor: "#e2e8f0",
-              background: "#f8fafc",
-              display: "grid",
-              gap: "10px",
-            }}
-          >
-            <div style={{ color: "#0f172a", fontWeight: 700 }}>Quick notes synced to the mobile app</div>
-            <div style={{ color: "#475569", fontSize: "0.95rem" }}>
-              These notes will appear in the property submission notes field for drivers using the app.
-            </div>
-            <ul style={{ margin: 0, paddingInlineStart: "18px", display: "grid", gap: "6px", color: "#0f172a" }}>
-              {persistedNotes.map((note, idx) => (
-                <li key={`${note}-${idx}`} style={{ lineHeight: 1.5 }}>
-                  {note}
-                </li>
-              ))}
-            </ul>
-            <div style={{ color: "#94a3b8", fontSize: "0.9rem" }}>You can change this later in settings.</div>
-          </div>
-        ) : null}
         <div
           className="card"
           style={{
@@ -380,9 +364,6 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
                 type="button"
                 onClick={() => {
                   setSelectedId(opt.id);
-                  if (opt.id !== "other") {
-                    setCustomNotes(["", "", "", "", ""]);
-                  }
                   setError(null);
                 }}
                 style={{
