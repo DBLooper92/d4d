@@ -1708,7 +1708,7 @@ export default function DashboardInsights({ locationId }: Props) {
               </button>
             </div>
             <div style={{ padding: "16px 16px 18px", overflow: "auto" }}>
-              <QuickStartGuideContent />
+              <QuickStartGuideContent locationId={locationId} />
             </div>
           </div>
         </div>
