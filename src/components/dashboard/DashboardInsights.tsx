@@ -15,7 +15,7 @@ import {
   type FirestoreError,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
-import { onAuthStateChanged, type User } from "firebase/auth";
+import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import { getFirebaseFirestore, getFirebaseAuth } from "@/lib/firebaseClient";
 import { getDocs } from "firebase/firestore";
 import SkiptraceToggle from "./SkiptraceToggle";
@@ -706,6 +706,11 @@ export default function DashboardInsights({ locationId }: Props) {
   >({});
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
   const [showQuickStart, setShowQuickStart] = useState<boolean>(false);
+  const [showQuickStartCta, setShowQuickStartCta] = useState<boolean>(true);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState<boolean>(false);
+  const settingsRef = useRef<HTMLDivElement | null>(null);
   const auth = useMemo(() => getFirebaseAuth(), []);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
@@ -738,6 +743,46 @@ export default function DashboardInsights({ locationId }: Props) {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [showInviteModal, showQuickStart]);
+
+  useEffect(() => {
+    try {
+      const stored =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("d4d:showQuickStartCta")
+          : null;
+      if (stored === "0") {
+        setShowQuickStartCta(false);
+      }
+    } catch {
+      /* ignore preference read errors */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("d4d:showQuickStartCta", showQuickStartCta ? "1" : "0");
+    } catch {
+      /* ignore preference write errors */
+    }
+  }, [showQuickStartCta]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const handleClick = (evt: globalThis.MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(evt.target as Node)) {
+        setSettingsOpen(false);
+      }
+    };
+    const handleKey = (evt: KeyboardEvent) => {
+      if (evt.key === "Escape") setSettingsOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [settingsOpen]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -911,6 +956,35 @@ export default function DashboardInsights({ locationId }: Props) {
       setShowQuickStart(false);
     }
   }, [viewer.isAdmin]);
+
+  const toggleSettings = useCallback(() => {
+    setSettingsError(null);
+    setSettingsOpen((prev) => !prev);
+  }, []);
+
+  const handleQuickStartVisibilityChange = useCallback((checked: boolean) => {
+    setSettingsError(null);
+    setShowQuickStartCta(checked);
+  }, []);
+
+  const handleOpenIndustrySettings = useCallback(() => {
+    if (!canManageLocation) return;
+    setSettingsOpen(false);
+    setShowQuickStart(true);
+  }, [canManageLocation]);
+
+  const handleSignOut = useCallback(async () => {
+    setSettingsError(null);
+    setSigningOut(true);
+    try {
+      await signOut(auth);
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : "Failed to sign out.");
+    } finally {
+      setSigningOut(false);
+      setSettingsOpen(false);
+    }
+  }, [auth]);
 
   const resolveUserName = useMemo(
     () =>
@@ -1292,85 +1366,260 @@ export default function DashboardInsights({ locationId }: Props) {
   return (
     <>
       <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
-        <div style={{ display: "grid", gap: "6px", flex: "1 1 320px", minWidth: "260px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <Image
-              src={logoImage}
-              alt="Driving4Dollars.co logo"
-              width={32}
-              height={32}
-              style={{ objectFit: "contain", filter: "drop-shadow(0 8px 18px rgba(1,185,250,0.3))" }}
-            />
-            <span style={{ color: "#01B9FA", fontWeight: 800, letterSpacing: "0.02em", fontSize: "1.05rem" }}>
-              Driving4Dollars.co
-            </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: "6px", flex: "1 1 320px", minWidth: "260px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <Image
+                src={logoImage}
+                alt="Driving4Dollars.co logo"
+                width={32}
+                height={32}
+                style={{ objectFit: "contain", filter: "drop-shadow(0 8px 18px rgba(1,185,250,0.3))" }}
+              />
+              <span style={{ color: "#01B9FA", fontWeight: 800, letterSpacing: "0.02em", fontSize: "1.05rem" }}>
+                Driving4Dollars.co
+              </span>
+            </div>
+            <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
+              Coverage, submissions, and team activity
+            </h2>
+            <div style={{ marginTop: "4px", color: "#64748b" }}>
+              Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
+            </div>
           </div>
-          <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
-            Coverage, submissions, and team activity
-          </h2>
-          <div style={{ marginTop: "4px", color: "#64748b" }}>
-            Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
-          </div>
-        </div>
-        {!viewer.isAdmin && !viewer.loading ? (
-          <div
-            className="badge"
-            style={{
-              alignSelf: "flex-start",
-              background: "#f0f9ff",
-              color: "#0f172a",
-              borderColor: "#bae6fd",
-              fontWeight: 700,
-            }}
-          >
-            Showing your submissions
-          </div>
-        ) : null}
-        {canManageLocation ? (
-          <div
-            style={{
-              flex: showSkiptrace ? "1 1 180px" : "1 1 240px",
-              minWidth: showSkiptrace ? "180px" : "240px",
-              display: "flex",
-              justifyContent: showSkiptrace ? "center" : "flex-end",
-              marginLeft: showSkiptrace ? 0 : "auto",
-            }}
-          >
-            <button
-              type="button"
-              onClick={openQuickStart}
+          {!viewer.isAdmin && !viewer.loading ? (
+            <div
+              className="badge"
               style={{
-                padding: "0.5rem 0.9rem",
-                borderRadius: "12px",
-                background: "#facc15",
+                alignSelf: "flex-start",
+                background: "#f0f9ff",
                 color: "#0f172a",
-                fontWeight: 800,
-                letterSpacing: "0.02em",
-                border: "1px solid #eab308",
-                boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
-                cursor: "pointer",
-                textTransform: "uppercase",
-                width: "fit-content",
-                minWidth: "140px",
-                textAlign: "center",
+                borderColor: "#bae6fd",
+                fontWeight: 700,
               }}
             >
-              GET STARTED
-            </button>
-          </div>
-        ) : null}
-        {canManageLocation && showSkiptrace ? (
-          <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", flex: "1 1 240px" }}>
-            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
-            <SkiptraceToggle locationId={locationId} />
-            <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
-              Auto-skiptrace new properties ($0.12 each) while enabled.
+              Showing your submissions
             </div>
-            {loading && <div className="skel" style={{ width: "120px", height: "14px", justifySelf: "end" }} />}
+          ) : null}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              flexWrap: "wrap",
+              marginLeft: "auto",
+              justifyContent: "flex-end",
+            }}
+          >
+            <div ref={settingsRef} style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={toggleSettings}
+                aria-expanded={settingsOpen}
+                aria-haspopup="true"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "0.5rem 0.85rem",
+                  borderRadius: "12px",
+                  border: "1px solid #e2e8f0",
+                  background: "#fff",
+                  color: "#0f172a",
+                  fontWeight: 700,
+                  boxShadow: "0 8px 16px rgba(15,23,42,0.12)",
+                  cursor: "pointer",
+                  minWidth: "110px",
+                  justifyContent: "center",
+                }}
+              >
+                <svg
+                  aria-hidden="true"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#0f172a"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01A1.65 1.65 0 0 0 9 3.09V3a2 2 0 1 1 4 0v.09c0 .69.4 1.31 1.02 1.59h0a1.65 1.65 0 0 0 1.81-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01c.28.62.9 1.02 1.59 1.02H21a2 2 0 0 1 0 4h-.09c-.69 0-1.31.4-1.59 1.02Z" />
+                </svg>
+                <span>Settings</span>
+              </button>
+              {settingsOpen ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "calc(100% + 10px)",
+                    width: "min(340px, 88vw)",
+                    background: "#fff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "12px",
+                    boxShadow: "0 18px 42px rgba(15,23,42,0.2)",
+                    padding: "12px",
+                    zIndex: 20,
+                    display: "grid",
+                    gap: "10px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+                    <div style={{ fontWeight: 800, color: "#0f172a" }}>Dashboard settings</div>
+                    <button
+                      type="button"
+                      onClick={() => setSettingsOpen(false)}
+                      aria-label="Close settings"
+                      style={{
+                        width: "30px",
+                        height: "30px",
+                        borderRadius: "10px",
+                        border: "1px solid #e2e8f0",
+                        background: "#f8fafc",
+                        cursor: "pointer",
+                        display: "grid",
+                        placeItems: "center",
+                        color: "#0f172a",
+                        fontWeight: 800,
+                    }}
+                  >
+                      X
+                  </button>
+                </div>
+                  <div style={{ color: "#475569", fontSize: "0.95rem" }}>
+                    Control onboarding prompts and your account.
+                  </div>
+                  {settingsError ? (
+                    <div
+                      style={{
+                        background: "#fef2f2",
+                        border: "1px solid #fecaca",
+                        color: "#b91c1c",
+                        borderRadius: "10px",
+                        padding: "8px 10px",
+                        fontSize: "0.95rem",
+                      }}
+                    >
+                      {settingsError}
+                    </div>
+                  ) : null}
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      padding: "8px 10px",
+                      borderRadius: "10px",
+                      border: "1px solid #e2e8f0",
+                      background: "#f8fafc",
+                      opacity: canManageLocation ? 1 : 0.6,
+                    }}
+                  >
+                    <div style={{ display: "grid", gap: "4px" }}>
+                      <span style={{ fontWeight: 700, color: "#0f172a" }}>Show GET STARTED button</span>
+                      <span style={{ color: "#94a3b8", fontSize: "0.9rem" }}>
+                        Hide the banner if your team is already set up.
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={showQuickStartCta}
+                      onChange={(e) => handleQuickStartVisibilityChange(e.target.checked)}
+                      disabled={!canManageLocation}
+                      aria-label="Toggle Get Started visibility"
+                      style={{
+                        width: "18px",
+                        height: "18px",
+                        cursor: canManageLocation ? "pointer" : "not-allowed",
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleOpenIndustrySettings}
+                    disabled={!canManageLocation}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: "10px",
+                      border: "1px solid #2563eb",
+                      background: canManageLocation ? "linear-gradient(120deg, #2563eb, #1d4ed8)" : "#e2e8f0",
+                      color: canManageLocation ? "#fff" : "#94a3b8",
+                      fontWeight: 700,
+                      cursor: canManageLocation ? "pointer" : "not-allowed",
+                      boxShadow: canManageLocation ? "0 10px 22px rgba(37,99,235,0.2)" : "none",
+                      textAlign: "left",
+                    }}
+                  >
+                    Select industry & quick notes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSignOut()}
+                    disabled={signingOut}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: "10px",
+                      border: "1px solid #ef4444",
+                      background: signingOut ? "#fecdd3" : "linear-gradient(120deg, #ef4444, #dc2626)",
+                      color: "#fff",
+                      fontWeight: 800,
+                      cursor: signingOut ? "not-allowed" : "pointer",
+                      boxShadow: "0 10px 22px rgba(239,68,68,0.2)",
+                      textAlign: "left",
+                    }}
+                  >
+                    {signingOut ? "Signing out..." : "Sign out"}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            {canManageLocation && showQuickStartCta ? (
+              <div
+                style={{
+                  flex: showSkiptrace ? "1 1 180px" : "1 1 240px",
+                  minWidth: showSkiptrace ? "180px" : "240px",
+                  display: "flex",
+                  justifyContent: showSkiptrace ? "center" : "flex-end",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={openQuickStart}
+                  style={{
+                    padding: "0.5rem 0.9rem",
+                    borderRadius: "12px",
+                    background: "#facc15",
+                    color: "#0f172a",
+                    fontWeight: 800,
+                    letterSpacing: "0.02em",
+                    border: "1px solid #eab308",
+                    boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
+                    cursor: "pointer",
+                    textTransform: "uppercase",
+                    width: "fit-content",
+                    minWidth: "140px",
+                    textAlign: "center",
+                  }}
+                >
+                  GET STARTED
+                </button>
+              </div>
+            ) : null}
+            {canManageLocation && showSkiptrace ? (
+              <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", flex: "1 1 240px" }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
+                <SkiptraceToggle locationId={locationId} />
+                <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
+                  Auto-skiptrace new properties ($0.12 each) while enabled.
+                </div>
+                {loading && <div className="skel" style={{ width: "120px", height: "14px", justifySelf: "end" }} />}
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
+        </div>
 
       <div
         style={{
