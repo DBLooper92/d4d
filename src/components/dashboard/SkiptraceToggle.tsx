@@ -117,11 +117,15 @@ export default function SkiptraceToggle({ locationId }: Props) {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: "0.75rem",
+          justifyContent: "flex-end",
+          flexWrap: "wrap",
+          gap: "0.6rem",
           background: "#f8fafc",
           border: "1px solid #e2e8f0",
           borderRadius: "999px",
           padding: "0.5rem 0.75rem",
+          width: "100%",
+          boxSizing: "border-box",
         }}
       >
         <span
@@ -129,7 +133,7 @@ export default function SkiptraceToggle({ locationId }: Props) {
             fontSize: "0.8125rem",
             color: enabled ? "#94a3b8" : "#0f172a",
             fontWeight: 600,
-            whiteSpace: "nowrap",
+            minWidth: 0,
           }}
         >
           Skiptrace Off
@@ -184,7 +188,7 @@ export default function SkiptraceToggle({ locationId }: Props) {
             fontSize: "0.8125rem",
             color: enabled ? "#0f172a" : "#94a3b8",
             fontWeight: 600,
-            whiteSpace: "nowrap",
+            minWidth: 0,
           }}
         >
           Skiptrace On
@@ -194,6 +198,8 @@ export default function SkiptraceToggle({ locationId }: Props) {
             fontSize: "0.75rem",
             color: saving ? "#0f172a" : "#475569",
             opacity: loading ? 0.5 : 1,
+            flexBasis: "100%",
+            textAlign: "right",
           }}
         >
           {loading ? "Loading..." : saving ? "Saving..." : enabled ? "Active" : "Disabled"}
