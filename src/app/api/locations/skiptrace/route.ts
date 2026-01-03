@@ -1,6 +1,6 @@
 // src/app/api/locations/skiptrace/route.ts
 import { NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { db, getAdminApp } from "@/lib/firebaseAdmin";
 
 export const runtime = "nodejs";
@@ -72,6 +72,18 @@ function cacheHeaders() {
   return { "Cache-Control": "no-store" };
 }
 
+function buildNextMonthRefreshDate(base: Date): Date {
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  const day = base.getDate();
+  const nextMonthIndex = month + 1;
+  const targetYear = year + Math.floor(nextMonthIndex / 12);
+  const targetMonth = nextMonthIndex % 12;
+  const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const safeDay = Math.min(day, daysInTargetMonth);
+  return new Date(targetYear, targetMonth, safeDay, 0, 1, 0, 0);
+}
+
 export async function GET(req: Request) {
   const auth = await requireAuth(req);
   if ("error" in auth) return auth.error;
@@ -120,17 +132,30 @@ export async function POST(req: Request) {
 
   const enabled = body.skiptraceEnabled === true;
   try {
-    await db()
-      .collection("locations")
-      .doc(locationId)
-      .set(
-        {
-          skiptraceEnabled: enabled,
-          skiptraceUpdatedAt: FieldValue.serverTimestamp(),
-          skiptraceUpdatedBy: uid,
-        },
-        { merge: true },
-      );
+    const locRef = db().collection("locations").doc(locationId);
+    const updates = {
+      skiptraceEnabled: enabled,
+      skiptraceUpdatedAt: FieldValue.serverTimestamp(),
+      skiptraceUpdatedBy: uid,
+    };
+
+    if (!enabled) {
+      await locRef.set(updates, { merge: true });
+    } else {
+      await db().runTransaction(async (tx) => {
+        const snap = await tx.get(locRef);
+        const payload: Record<string, unknown> = { ...updates };
+        const remaining = snap.exists ? snap.get("skipTracesRemaining") : undefined;
+        const refresh = snap.exists ? snap.get("skipTraceRefresh") : undefined;
+        if (typeof remaining === "undefined") {
+          payload.skipTracesRemaining = 150;
+        }
+        if (typeof refresh === "undefined") {
+          payload.skipTraceRefresh = Timestamp.fromDate(buildNextMonthRefreshDate(new Date()));
+        }
+        tx.set(locRef, payload, { merge: true });
+      });
+    }
 
     return NextResponse.json({ skiptraceEnabled: enabled }, { status: 200, headers: cacheHeaders() });
   } catch (e) {
