@@ -1653,7 +1653,7 @@ export default function DashboardInsights({ locationId }: Props) {
               >
                 <SkiptraceToggle locationId={locationId} />
                 <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
-                  Auto-skiptrace new properties ($0.12 each) while enabled.
+                  Auto-skiptrace new properties.
                 </div>
                 {loading && <div className="skel" style={{ width: "120px", height: "14px", justifySelf: "end" }} />}
               </div>

@@ -16,6 +16,7 @@ export default function SkiptraceToggle({ locationId }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
 
   useEffect(() => {
@@ -102,6 +103,10 @@ export default function SkiptraceToggle({ locationId }: Props) {
     setAcknowledged(false);
   }
 
+  function handleCloseInfo() {
+    setShowInfo(false);
+  }
+
   async function handleActivate() {
     if (!acknowledged || saving || loading) return;
     await persistSkiptrace(true, { closeOnSuccess: true, keepOpenOnError: true });
@@ -113,6 +118,24 @@ export default function SkiptraceToggle({ locationId }: Props) {
 
   return (
     <div style={{ display: "grid", gap: "0.4rem", justifyItems: "end" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%", justifyContent: "space-between" }}>
+        <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</span>
+        <button
+          type="button"
+          onClick={() => setShowInfo(true)}
+          style={{
+            border: "none",
+            background: "transparent",
+            color: "#2563eb",
+            fontSize: "0.8rem",
+            fontWeight: 600,
+            cursor: "pointer",
+            padding: 0,
+          }}
+        >
+          Learn more
+        </button>
+      </div>
       <div
         style={{
           display: "flex",
@@ -207,6 +230,159 @@ export default function SkiptraceToggle({ locationId }: Props) {
       {error ? (
         <div style={{ color: "#b91c1c", fontSize: "0.8125rem", marginTop: "0.25rem", textAlign: "right" }}>
           {error}
+        </div>
+      ) : null}
+      {showInfo ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="About skiptrace"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) handleCloseInfo();
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 60,
+            background: "rgba(15,23,42,0.55)",
+            backdropFilter: "blur(4px)",
+            display: "grid",
+            placeItems: "center",
+            padding: "18px",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(760px, 96vw)",
+              maxHeight: "92vh",
+              background: "#fff",
+              borderRadius: "18px",
+              overflow: "hidden",
+              border: "1px solid #e2e8f0",
+              boxShadow: "0 28px 80px rgba(15,23,42,0.38)",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                padding: "14px 16px",
+                borderBottom: "1px solid #e2e8f0",
+                background: "linear-gradient(120deg, #f8fafc, #eff6ff)",
+              }}
+            >
+              <div>
+                <div style={{ color: "#0f172a", fontWeight: 700, fontSize: "1.05rem" }}>
+                  Skiptrace overview
+                </div>
+                <div style={{ color: "#475569", marginTop: "2px" }}>
+                  What happens when you turn this on.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseInfo}
+                aria-label="Close skiptrace info"
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "12px",
+                  border: "1px solid #e2e8f0",
+                  background: "#fff",
+                  cursor: "pointer",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#0f172a",
+                  fontWeight: 800,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                }}
+              >
+                X
+              </button>
+            </div>
+            <div style={{ padding: "18px 18px 20px", overflow: "auto", display: "grid", gap: "14px" }}>
+              <div style={{ color: "#0f172a", fontSize: "0.95rem", lineHeight: 1.6 }}>
+                Skiptrace automatically enriches new submissions with contact details so your team can act faster.
+                When enabled, each lookup is billed at $0.12 and a daily cap of 150 lookups prevents surprise charges.
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gap: "10px",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                }}
+              >
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "12px",
+                    padding: "12px",
+                    background: "#f8fafc",
+                    display: "grid",
+                    gap: "6px",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, color: "#0f172a" }}>Auto-enrichment</div>
+                  <div style={{ color: "#475569", fontSize: "0.95rem" }}>
+                    Runs on new property submissions while enabled.
+                  </div>
+                </div>
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "12px",
+                    padding: "12px",
+                    background: "#f0f9ff",
+                    display: "grid",
+                    gap: "6px",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, color: "#0f172a" }}>$0.12 per lookup</div>
+                  <div style={{ color: "#475569", fontSize: "0.95rem" }}>
+                    Charges stop immediately when you disable.
+                  </div>
+                </div>
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "12px",
+                    padding: "12px",
+                    background: "#fdf2f8",
+                    display: "grid",
+                    gap: "6px",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, color: "#0f172a" }}>150/day cap</div>
+                  <div style={{ color: "#475569", fontSize: "0.95rem" }}>
+                    Protects you from unexpected spikes.
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={handleCloseInfo}
+                  style={{
+                    padding: "10px 16px",
+                    borderRadius: "10px",
+                    border: "1px solid #e2e8f0",
+                    background: "#fff",
+                    color: "#0f172a",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       ) : null}
       {showConfirm ? (
