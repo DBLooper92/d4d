@@ -1461,15 +1461,13 @@ export default function DashboardInsights({ locationId }: Props) {
           </div>
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              flexWrap: "wrap",
-              justifyContent: "flex-end",
+              display: "grid",
+              gap: "0.5rem",
+              justifyItems: "end",
               minWidth: "0",
             }}
           >
-            <div ref={settingsRef} style={{ position: "relative" }}>
+            <div ref={settingsRef} style={{ position: "relative", justifySelf: "end" }}>
               <button
                 type="button"
                 onClick={toggleSettings}
@@ -1477,17 +1475,18 @@ export default function DashboardInsights({ locationId }: Props) {
                 aria-haspopup="true"
                 aria-label="Open settings"
                 style={{
-                  width: "40px",
-                  height: "40px",
-                  borderRadius: "999px",
-                  border: "1px solid #e2e8f0",
-                  background: "#fff",
+                  width: "24px",
+                  height: "24px",
+                  borderRadius: 0,
+                  border: "none",
+                  background: "transparent",
                   color: "#0f172a",
                   fontWeight: 700,
-                  boxShadow: "0 8px 16px rgba(15,23,42,0.12)",
+                  boxShadow: "none",
                   cursor: "pointer",
                   display: "grid",
                   placeItems: "center",
+                  padding: 0,
                 }}
               >
                 <svg
@@ -1641,8 +1640,17 @@ export default function DashboardInsights({ locationId }: Props) {
               ) : null}
             </div>
             {canManageLocation && showSkiptrace ? (
-              <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", flex: "1 1 240px" }}>
-                <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
+              <div
+                style={{
+                  display: "grid",
+                  gap: "0.35rem",
+                  width: "220px",
+                  minWidth: "180px",
+                  maxWidth: "240px",
+                  textAlign: "right",
+                  justifySelf: "end",
+                }}
+              >
                 <SkiptraceToggle locationId={locationId} />
                 <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
                   Auto-skiptrace new properties ($0.12 each) while enabled.
