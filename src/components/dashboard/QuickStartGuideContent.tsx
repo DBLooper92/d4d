@@ -10,6 +10,10 @@ type ApiResponse = {
   customQuickNotes?: string[];
   error?: string;
 };
+type QuickStartGuideContentProps = {
+  locationId: string;
+  mode?: "quickstart" | "settings";
+};
 
 const INDUSTRY_OPTIONS: IndustryOption[] = [
   {
@@ -145,8 +149,9 @@ function formatNotesForDisplay(list: string[]): string[] {
   return list.map((n) => n.trim()).filter(Boolean).slice(0, 5);
 }
 
-export default function QuickStartGuideContent({ locationId }: { locationId: string }) {
+export default function QuickStartGuideContent({ locationId, mode = "quickstart" }: QuickStartGuideContentProps) {
   const auth = useMemo(() => getFirebaseAuth(), []);
+  const isSettings = mode === "settings";
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [step, setStep] = useState<"industry" | "guide">("industry");
@@ -211,7 +216,7 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
               });
             }
           }
-          setStep("guide");
+          setStep(isSettings ? "industry" : "guide");
         } else {
           setSelectedId(null);
           setStep("industry");
@@ -228,7 +233,7 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
     return () => {
       cancelled = true;
     };
-  }, [auth, locationId]);
+  }, [auth, locationId, isSettings]);
 
   useEffect(() => {
     setNotesVisible(false);
@@ -281,7 +286,7 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
         while (padded.length < 5) padded.push("");
         setCustomNotes(padded.slice(0, 5));
       }
-      setStep("guide");
+      setStep(isSettings ? "industry" : "guide");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -307,7 +312,7 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
     );
   }
 
-  if (step === "guide") {
+  if (step === "guide" && !isSettings) {
     return (
       <div style={{ padding: "6px 0", display: "grid", gap: "12px" }}>
         <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 800, color: "#0f172a" }}>
@@ -327,7 +332,9 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
           Choose your industry
         </h2>
         <div style={{ color: "#475569", marginTop: "4px" }}>
-          Pick one so we can preload relevant quick notes for your team&apos;s mobile submissions.
+          {isSettings
+            ? "Update the default quick notes used in mobile submissions."
+            : "Pick one so we can preload relevant quick notes for your team&apos;s mobile submissions."}
         </div>
       </div>
 
@@ -388,7 +395,7 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
             );
           })}
           <div style={{ color: "#94a3b8", fontSize: "0.92rem", marginTop: "4px" }}>
-            This can be changed later in settings.
+            {isSettings ? "Changes apply to new mobile submissions." : "This can be changed later in settings."}
           </div>
         </div>
 
@@ -487,7 +494,9 @@ export default function QuickStartGuideContent({ locationId }: { locationId: str
       ) : null}
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", alignItems: "center" }}>
-        <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>This can be changed later in settings.</div>
+        <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>
+          {isSettings ? "Updates save to your dashboard settings." : "This can be changed later in settings."}
+        </div>
         <button
           type="button"
           onClick={() => void handleConfirm()}

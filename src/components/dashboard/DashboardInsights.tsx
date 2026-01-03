@@ -706,6 +706,7 @@ export default function DashboardInsights({ locationId }: Props) {
   >({});
   const [showInviteModal, setShowInviteModal] = useState<boolean>(false);
   const [showQuickStart, setShowQuickStart] = useState<boolean>(false);
+  const [showIndustrySettings, setShowIndustrySettings] = useState<boolean>(false);
   const [showQuickStartCta, setShowQuickStartCta] = useState<boolean>(true);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -727,22 +728,32 @@ export default function DashboardInsights({ locationId }: Props) {
     setShowInviteModal(true);
   }, [canManageLocation]);
   const closeInviteModal = useCallback(() => setShowInviteModal(false), []);
-  const openQuickStart = useCallback(() => setShowQuickStart(true), []);
+  const openQuickStart = useCallback(() => {
+    setShowIndustrySettings(false);
+    setShowQuickStart(true);
+  }, []);
   const closeQuickStart = useCallback(() => setShowQuickStart(false), []);
+  const openIndustrySettings = useCallback(() => {
+    if (!canManageLocation) return;
+    setShowQuickStart(false);
+    setShowIndustrySettings(true);
+  }, [canManageLocation]);
+  const closeIndustrySettings = useCallback(() => setShowIndustrySettings(false), []);
 
   useEffect(() => {
-    if (!showInviteModal && !showQuickStart) return;
+    if (!showInviteModal && !showQuickStart && !showIndustrySettings) return;
     const onKeyDown = (evt: KeyboardEvent) => {
       if (evt.key === "Escape") {
         setShowInviteModal(false);
         setShowQuickStart(false);
+        setShowIndustrySettings(false);
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [showInviteModal, showQuickStart]);
+  }, [showInviteModal, showQuickStart, showIndustrySettings]);
 
   useEffect(() => {
     try {
@@ -954,6 +965,7 @@ export default function DashboardInsights({ locationId }: Props) {
     if (!viewer.isAdmin) {
       setShowInviteModal(false);
       setShowQuickStart(false);
+      setShowIndustrySettings(false);
     }
   }, [viewer.isAdmin]);
 
@@ -970,8 +982,8 @@ export default function DashboardInsights({ locationId }: Props) {
   const handleOpenIndustrySettings = useCallback(() => {
     if (!canManageLocation) return;
     setSettingsOpen(false);
-    setShowQuickStart(true);
-  }, [canManageLocation]);
+    openIndustrySettings();
+  }, [canManageLocation, openIndustrySettings]);
 
   const handleSignOut = useCallback(async () => {
     setSettingsError(null);
@@ -1366,8 +1378,16 @@ export default function DashboardInsights({ locationId }: Props) {
   return (
     <>
       <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
-          <div style={{ display: "grid", gap: "6px", flex: "1 1 320px", minWidth: "260px" }}>
+        <div
+          className="dashboard-header"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "var(--dashboard-header-columns, minmax(0, 1fr) auto minmax(0, 1fr))",
+            alignItems: "center",
+            gap: "1rem",
+          }}
+        >
+          <div style={{ display: "grid", gap: "6px", minWidth: "0" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <Image
                 src={logoImage}
@@ -1386,29 +1406,67 @@ export default function DashboardInsights({ locationId }: Props) {
             <div style={{ marginTop: "4px", color: "#64748b" }}>
               Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
             </div>
+            {!viewer.isAdmin && !viewer.loading ? (
+              <div
+                className="badge"
+                style={{
+                  alignSelf: "flex-start",
+                  background: "#f0f9ff",
+                  color: "#0f172a",
+                  borderColor: "#bae6fd",
+                  fontWeight: 700,
+                  justifySelf: "start",
+                }}
+              >
+                Showing your submissions
+              </div>
+            ) : null}
           </div>
-          {!viewer.isAdmin && !viewer.loading ? (
-            <div
-              className="badge"
-              style={{
-                alignSelf: "flex-start",
-                background: "#f0f9ff",
-                color: "#0f172a",
-                borderColor: "#bae6fd",
-                fontWeight: 700,
-              }}
-            >
-              Showing your submissions
-            </div>
-          ) : null}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minWidth: canManageLocation ? "160px" : "0",
+              minHeight: canManageLocation ? "44px" : "0",
+            }}
+          >
+            {canManageLocation ? (
+              <button
+                type="button"
+                onClick={openQuickStart}
+                aria-hidden={!showQuickStartCta}
+                tabIndex={showQuickStartCta ? 0 : -1}
+                style={{
+                  padding: "0.5rem 0.9rem",
+                  borderRadius: "12px",
+                  background: "#facc15",
+                  color: "#0f172a",
+                  fontWeight: 800,
+                  letterSpacing: "0.02em",
+                  border: "1px solid #eab308",
+                  boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
+                  cursor: showQuickStartCta ? "pointer" : "default",
+                  textTransform: "uppercase",
+                  width: "fit-content",
+                  minWidth: "140px",
+                  textAlign: "center",
+                  visibility: showQuickStartCta ? "visible" : "hidden",
+                  pointerEvents: showQuickStartCta ? "auto" : "none",
+                }}
+              >
+                GET STARTED
+              </button>
+            ) : null}
+          </div>
           <div
             style={{
               display: "flex",
               alignItems: "center",
               gap: "10px",
               flexWrap: "wrap",
-              marginLeft: "auto",
               justifyContent: "flex-end",
+              minWidth: "0",
             }}
           >
             <div ref={settingsRef} style={{ position: "relative" }}>
@@ -1417,20 +1475,19 @@ export default function DashboardInsights({ locationId }: Props) {
                 onClick={toggleSettings}
                 aria-expanded={settingsOpen}
                 aria-haspopup="true"
+                aria-label="Open settings"
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  padding: "0.5rem 0.85rem",
-                  borderRadius: "12px",
+                  width: "40px",
+                  height: "40px",
+                  borderRadius: "999px",
                   border: "1px solid #e2e8f0",
                   background: "#fff",
                   color: "#0f172a",
                   fontWeight: 700,
                   boxShadow: "0 8px 16px rgba(15,23,42,0.12)",
                   cursor: "pointer",
-                  minWidth: "110px",
-                  justifyContent: "center",
+                  display: "grid",
+                  placeItems: "center",
                 }}
               >
                 <svg
@@ -1447,57 +1504,61 @@ export default function DashboardInsights({ locationId }: Props) {
                   <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
                   <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01A1.65 1.65 0 0 0 9 3.09V3a2 2 0 1 1 4 0v.09c0 .69.4 1.31 1.02 1.59h0a1.65 1.65 0 0 0 1.81-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01c.28.62.9 1.02 1.59 1.02H21a2 2 0 0 1 0 4h-.09c-.69 0-1.31.4-1.59 1.02Z" />
                 </svg>
-                <span>Settings</span>
               </button>
               {settingsOpen ? (
                 <div
                   style={{
                     position: "absolute",
                     right: 0,
-                    top: "calc(100% + 10px)",
-                    width: "min(340px, 88vw)",
-                    background: "#fff",
+                    top: "calc(100% + 12px)",
+                    width: "min(360px, 92vw)",
+                    background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
                     border: "1px solid #e2e8f0",
-                    borderRadius: "12px",
-                    boxShadow: "0 18px 42px rgba(15,23,42,0.2)",
-                    padding: "12px",
+                    borderRadius: "16px",
+                    boxShadow: "0 20px 48px rgba(15,23,42,0.18)",
+                    padding: "14px",
                     zIndex: 20,
                     display: "grid",
-                    gap: "10px",
+                    gap: "12px",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
-                    <div style={{ fontWeight: 800, color: "#0f172a" }}>Dashboard settings</div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
+                    <div style={{ display: "grid", gap: "4px" }}>
+                      <div style={{ fontWeight: 800, color: "#0f172a", fontSize: "1rem" }}>
+                        Dashboard settings
+                      </div>
+                      <div style={{ color: "#64748b", fontSize: "0.9rem" }}>
+                        Control onboarding prompts and your account.
+                      </div>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setSettingsOpen(false)}
                       aria-label="Close settings"
                       style={{
-                        width: "30px",
-                        height: "30px",
+                        width: "32px",
+                        height: "32px",
                         borderRadius: "10px",
                         border: "1px solid #e2e8f0",
-                        background: "#f8fafc",
+                        background: "#fff",
                         cursor: "pointer",
                         display: "grid",
                         placeItems: "center",
                         color: "#0f172a",
                         fontWeight: 800,
-                    }}
-                  >
+                        boxShadow: "0 4px 10px rgba(15,23,42,0.08)",
+                      }}
+                    >
                       X
-                  </button>
-                </div>
-                  <div style={{ color: "#475569", fontSize: "0.95rem" }}>
-                    Control onboarding prompts and your account.
+                    </button>
                   </div>
                   {settingsError ? (
                     <div
                       style={{
-                        background: "#fef2f2",
+                        background: "#fff1f2",
                         border: "1px solid #fecaca",
                         color: "#b91c1c",
-                        borderRadius: "10px",
+                        borderRadius: "12px",
                         padding: "8px 10px",
                         fontSize: "0.95rem",
                       }}
@@ -1511,10 +1572,11 @@ export default function DashboardInsights({ locationId }: Props) {
                       alignItems: "center",
                       justifyContent: "space-between",
                       gap: "12px",
-                      padding: "8px 10px",
-                      borderRadius: "10px",
+                      padding: "10px 12px",
+                      borderRadius: "12px",
                       border: "1px solid #e2e8f0",
-                      background: "#f8fafc",
+                      background: "#fff",
+                      boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
                       opacity: canManageLocation ? 1 : 0.6,
                     }}
                   >
@@ -1543,14 +1605,15 @@ export default function DashboardInsights({ locationId }: Props) {
                     disabled={!canManageLocation}
                     style={{
                       padding: "10px 12px",
-                      borderRadius: "10px",
-                      border: "1px solid #2563eb",
-                      background: canManageLocation ? "linear-gradient(120deg, #2563eb, #1d4ed8)" : "#e2e8f0",
+                      borderRadius: "12px",
+                      border: "1px solid #38bdf8",
+                      background: canManageLocation ? "linear-gradient(120deg, #01B9FA, #2563eb)" : "#e2e8f0",
                       color: canManageLocation ? "#fff" : "#94a3b8",
                       fontWeight: 700,
                       cursor: canManageLocation ? "pointer" : "not-allowed",
                       boxShadow: canManageLocation ? "0 10px 22px rgba(37,99,235,0.2)" : "none",
                       textAlign: "left",
+                      width: "100%",
                     }}
                   >
                     Select industry & quick notes
@@ -1561,14 +1624,15 @@ export default function DashboardInsights({ locationId }: Props) {
                     disabled={signingOut}
                     style={{
                       padding: "10px 12px",
-                      borderRadius: "10px",
-                      border: "1px solid #ef4444",
-                      background: signingOut ? "#fecdd3" : "linear-gradient(120deg, #ef4444, #dc2626)",
+                      borderRadius: "12px",
+                      border: "1px solid #fecaca",
+                      background: signingOut ? "#fee2e2" : "linear-gradient(120deg, #ef4444, #dc2626)",
                       color: "#fff",
                       fontWeight: 800,
                       cursor: signingOut ? "not-allowed" : "pointer",
-                      boxShadow: "0 10px 22px rgba(239,68,68,0.2)",
+                      boxShadow: signingOut ? "none" : "0 10px 22px rgba(239,68,68,0.2)",
                       textAlign: "left",
+                      width: "100%",
                     }}
                   >
                     {signingOut ? "Signing out..." : "Sign out"}
@@ -1576,38 +1640,6 @@ export default function DashboardInsights({ locationId }: Props) {
                 </div>
               ) : null}
             </div>
-            {canManageLocation && showQuickStartCta ? (
-              <div
-                style={{
-                  flex: showSkiptrace ? "1 1 180px" : "1 1 240px",
-                  minWidth: showSkiptrace ? "180px" : "240px",
-                  display: "flex",
-                  justifyContent: showSkiptrace ? "center" : "flex-end",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={openQuickStart}
-                  style={{
-                    padding: "0.5rem 0.9rem",
-                    borderRadius: "12px",
-                    background: "#facc15",
-                    color: "#0f172a",
-                    fontWeight: 800,
-                    letterSpacing: "0.02em",
-                    border: "1px solid #eab308",
-                    boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
-                    cursor: "pointer",
-                    textTransform: "uppercase",
-                    width: "fit-content",
-                    minWidth: "140px",
-                    textAlign: "center",
-                  }}
-                >
-                  GET STARTED
-                </button>
-              </div>
-            ) : null}
             {canManageLocation && showSkiptrace ? (
               <div style={{ display: "grid", gap: "0.35rem", minWidth: "240px", textAlign: "right", flex: "1 1 240px" }}>
                 <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</div>
@@ -1892,6 +1924,84 @@ export default function DashboardInsights({ locationId }: Props) {
         </div>
       </div>
       </section>
+      {canManageLocation && showIndustrySettings && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Industry settings"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeIndustrySettings();
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 60,
+            background: "rgba(15,23,42,0.55)",
+            backdropFilter: "blur(4px)",
+            display: "grid",
+            placeItems: "center",
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "min(980px, 96vw)",
+              maxHeight: "90vh",
+              background: "#fff",
+              borderRadius: "18px",
+              overflow: "hidden",
+              border: "1px solid #e2e8f0",
+              boxShadow: "0 24px 70px rgba(15,23,42,0.35)",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                padding: "14px 16px",
+                borderBottom: "1px solid #e2e8f0",
+                background: "#f8fafc",
+              }}
+            >
+              <div>
+                <div style={{ color: "#0f172a", fontWeight: 700, fontSize: "1.05rem" }}>
+                  Industry & quick notes
+                </div>
+                <div style={{ color: "#475569", marginTop: "2px" }}>
+                  Update the defaults shown to drivers in the mobile app.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeIndustrySettings}
+                aria-label="Close industry settings"
+                style={{
+                  width: "36px",
+                  height: "36px",
+                  borderRadius: "12px",
+                  border: "1px solid #e2e8f0",
+                  background: "#fff",
+                  cursor: "pointer",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#0f172a",
+                  fontWeight: 800,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                }}
+              >
+                X
+              </button>
+            </div>
+            <div style={{ padding: "16px 16px 18px", overflow: "auto" }}>
+              <QuickStartGuideContent locationId={locationId} mode="settings" />
+            </div>
+          </div>
+        </div>
+      )}
       {canManageLocation && showQuickStart && (
         <div
           role="dialog"

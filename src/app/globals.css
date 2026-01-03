@@ -77,6 +77,16 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 
+.dashboard-header {
+  --dashboard-header-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+@media (max-width: 900px) {
+  .dashboard-header {
+    --dashboard-header-columns: 1fr;
+  }
+}
+
 /* Skeleton loaders */
 .skel {
   position: relative;
