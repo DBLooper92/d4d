@@ -112,14 +112,14 @@ export default function SkiptraceToggle({ locationId }: Props) {
   const trackColor = enabled ? "#dcfce7" : "#e5e7eb";
 
   return (
-    <div>
+    <div style={{ display: "grid", gap: "0.4rem", justifyItems: "end" }}>
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "flex-end",
-          flexWrap: "wrap",
-          gap: "0.6rem",
+          flexWrap: "nowrap",
+          gap: "0.5rem",
           background: "#f8fafc",
           border: "1px solid #e2e8f0",
           borderRadius: "999px",
@@ -133,10 +133,10 @@ export default function SkiptraceToggle({ locationId }: Props) {
             fontSize: "0.8125rem",
             color: enabled ? "#94a3b8" : "#0f172a",
             fontWeight: 600,
-            minWidth: 0,
+            whiteSpace: "nowrap",
           }}
         >
-          Skiptrace Off
+          Off
         </span>
         <button
           type="button"
@@ -188,25 +188,24 @@ export default function SkiptraceToggle({ locationId }: Props) {
             fontSize: "0.8125rem",
             color: enabled ? "#0f172a" : "#94a3b8",
             fontWeight: 600,
-            minWidth: 0,
+            whiteSpace: "nowrap",
           }}
         >
-          Skiptrace On
-        </span>
-        <span
-          style={{
-            fontSize: "0.75rem",
-            color: saving ? "#0f172a" : "#475569",
-            opacity: loading ? 0.5 : 1,
-            flexBasis: "100%",
-            textAlign: "right",
-          }}
-        >
-          {loading ? "Loading..." : saving ? "Saving..." : enabled ? "Active" : "Disabled"}
+          On
         </span>
       </div>
+      <div
+        style={{
+          fontSize: "0.75rem",
+          color: saving ? "#0f172a" : "#475569",
+          opacity: loading ? 0.5 : 1,
+          textAlign: "right",
+        }}
+      >
+        {loading ? "Loading..." : saving ? "Saving..." : enabled ? "Active" : "Disabled"}
+      </div>
       {error ? (
-        <div style={{ color: "#b91c1c", fontSize: "0.8125rem", marginTop: "0.25rem" }}>
+        <div style={{ color: "#b91c1c", fontSize: "0.8125rem", marginTop: "0.25rem", textAlign: "right" }}>
           {error}
         </div>
       ) : null}
