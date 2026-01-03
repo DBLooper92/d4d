@@ -9,6 +9,18 @@ type Props = {
 
 type ApiResponse = { skiptraceEnabled?: boolean; error?: string };
 
+function buildNextMonthRefreshDate(base: Date): Date {
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  const day = base.getDate();
+  const nextMonthIndex = month + 1;
+  const targetYear = year + Math.floor(nextMonthIndex / 12);
+  const targetMonth = nextMonthIndex % 12;
+  const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const safeDay = Math.min(day, daysInTargetMonth);
+  return new Date(targetYear, targetMonth, safeDay, 0, 1, 0, 0);
+}
+
 export default function SkiptraceToggle({ locationId }: Props) {
   const auth = useMemo(() => getFirebaseAuth(), []);
   const [enabled, setEnabled] = useState(false);
@@ -58,13 +70,18 @@ export default function SkiptraceToggle({ locationId }: Props) {
       const user = auth.currentUser;
       if (!user) throw new Error("Not signed in.");
       const idToken = await user.getIdToken();
+      const nextRefreshAt = next ? buildNextMonthRefreshDate(new Date()).getTime() : null;
       const res = await fetch("/api/locations/skiptrace", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ locationId, skiptraceEnabled: next }),
+        body: JSON.stringify({
+          locationId,
+          skiptraceEnabled: next,
+          ...(nextRefreshAt ? { skipTraceRefreshAt: nextRefreshAt } : {}),
+        }),
       });
       const data = (await res.json().catch(() => ({}))) as ApiResponse;
       if (!res.ok || data.error) {

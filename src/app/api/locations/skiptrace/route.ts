@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 type SkiptracePayload = {
   locationId?: string;
   skiptraceEnabled?: unknown;
+  skipTraceRefreshAt?: unknown;
 };
 
 function extractLocationId(req: Request, body?: SkiptracePayload): string {
@@ -84,6 +85,19 @@ function buildNextMonthRefreshDate(base: Date): Date {
   return new Date(targetYear, targetMonth, safeDay, 0, 1, 0, 0);
 }
 
+function extractClientRefreshAt(body?: SkiptracePayload): Date | null {
+  const raw = body?.skipTraceRefreshAt;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+}
+
 export async function GET(req: Request) {
   const auth = await requireAuth(req);
   if ("error" in auth) return auth.error;
@@ -142,16 +156,18 @@ export async function POST(req: Request) {
     if (!enabled) {
       await locRef.set(updates, { merge: true });
     } else {
+      const clientRefreshAt = extractClientRefreshAt(body);
       await db().runTransaction(async (tx) => {
         const snap = await tx.get(locRef);
         const payload: Record<string, unknown> = { ...updates };
-        const remaining = snap.exists ? snap.get("skipTracesRemaining") : undefined;
+        const available = snap.exists ? snap.get("skipTracesAvailable") : undefined;
         const refresh = snap.exists ? snap.get("skipTraceRefresh") : undefined;
-        if (typeof remaining === "undefined") {
-          payload.skipTracesRemaining = 150;
+        if (typeof available === "undefined") {
+          payload.skipTracesAvailable = 150;
         }
         if (typeof refresh === "undefined") {
-          payload.skipTraceRefresh = Timestamp.fromDate(buildNextMonthRefreshDate(new Date()));
+          const refreshDate = clientRefreshAt ?? buildNextMonthRefreshDate(new Date());
+          payload.skipTraceRefresh = Timestamp.fromDate(refreshDate);
         }
         tx.set(locRef, payload, { merge: true });
       });

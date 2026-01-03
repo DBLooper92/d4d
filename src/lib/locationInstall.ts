@@ -9,7 +9,7 @@ type EnsureLocationInstallParams = {
 
 /**
  * Ensure the base location document exists with install metadata and skiptrace defaults.
- * Adds skipTracesAvailable = 100 when the field is missing without overwriting existing values.
+ * Adds skipTracesAvailable = 150 when the field is missing without overwriting existing values.
  */
 export async function ensureLocationInstallRecord({ locationId, agencyId }: EnsureLocationInstallParams) {
   const locId = (locationId || "").trim();
@@ -38,7 +38,7 @@ export async function ensureLocationInstallRecord({ locationId, agencyId }: Ensu
 
     const skipTracesAvailable = snap.exists ? snap.get("skipTracesAvailable") : undefined;
     if (typeof skipTracesAvailable !== "number") {
-      payload.skipTracesAvailable = 100;
+      payload.skipTracesAvailable = 150;
     }
 
     tx.set(ref, payload, { merge: true });
