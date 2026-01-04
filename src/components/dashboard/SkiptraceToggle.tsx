@@ -381,8 +381,8 @@ export default function SkiptraceToggle({ locationId }: Props) {
             </div>
             <div style={{ padding: "18px 18px 20px", overflow: "auto", display: "grid", gap: "16px" }}>
               <div style={{ color: "#0f172a", fontSize: "0.95rem", lineHeight: 1.6 }}>
-                Skiptrace looks up contact details for new property submissions so your team can follow up faster.
-                Each skiptrace attempt uses 1 credit from your monthly balance.
+                Skiptrace looks up homeowner cellphone numbers and email addresses for new property submissions so your
+                team can follow up faster. Each skiptrace attempt uses 1 credit from your monthly balance.
               </div>
               <div
                 style={{
@@ -568,7 +568,8 @@ export default function SkiptraceToggle({ locationId }: Props) {
             <div style={{ padding: "18px 18px 20px", overflow: "auto", display: "grid", gap: "16px" }}>
               <div style={{ display: "grid", gap: "10px", color: "#0f172a" }}>
                 <p style={{ margin: 0, fontSize: "0.975rem", lineHeight: 1.6, color: "#0f172a" }}>
-                  Skiptrace looks up contact details for new property submissions while this toggle is enabled.
+                  Skiptrace looks up homeowner cellphone numbers and email addresses for new property submissions while
+                  this toggle is enabled.
                 </p>
                 <p style={{ margin: 0, fontSize: "0.95rem", lineHeight: 1.55, color: "#334155" }}>
                   Each skiptrace attempt uses 1 credit. Credits reset monthly and unused credits do not roll over.
