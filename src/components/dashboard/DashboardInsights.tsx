@@ -137,6 +137,11 @@ function formatDateTime(value: number | null): string {
   return value ? new Date(value).toLocaleString() : "—";
 }
 
+function formatLongDate(value: number | null): string | null {
+  if (!value) return null;
+  return new Date(value).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+}
+
 function buildContactUrl(locationId: string, contactId: string | null): string | null {
   return locationId && contactId
     ? `https://app.gohighlevel.com/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(
@@ -698,7 +703,7 @@ function DashboardMap({ markers, markerOwners, submissionLookup, resolveUserName
 }
 
 export default function DashboardInsights({ locationId }: Props) {
-  const { submissions: allSubmissions, markers: allMarkers, loading } = useLocationStreams(locationId);
+  const { submissions: allSubmissions, markers: allMarkers } = useLocationStreams(locationId);
   const [timeRangeDays, setTimeRangeDays] = useState<number>(14);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
   const [userMeta, setUserMeta] = useState<
@@ -711,6 +716,9 @@ export default function DashboardInsights({ locationId }: Props) {
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState<boolean>(false);
+  const [skipTracesAvailable, setSkipTracesAvailable] = useState<number | null>(null);
+  const [skipTraceRefreshAt, setSkipTraceRefreshAt] = useState<number | null>(null);
+  const [skipTraceInfoLoading, setSkipTraceInfoLoading] = useState<boolean>(true);
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const auth = useMemo(() => getFirebaseAuth(), []);
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -722,6 +730,7 @@ export default function DashboardInsights({ locationId }: Props) {
   });
   const canManageLocation = viewer.isAdmin;
   const showSkiptrace = true;
+  const skipTraceRefreshLabel = useMemo(() => formatLongDate(skipTraceRefreshAt), [skipTraceRefreshAt]);
 
   const openInviteModal = useCallback(() => {
     if (!canManageLocation) return;
@@ -938,6 +947,50 @@ export default function DashboardInsights({ locationId }: Props) {
       cancelled = true;
     };
   }, [authReady, authUser, locationId]);
+
+  useEffect(() => {
+    if (!locationId) {
+      setSkipTracesAvailable(null);
+      setSkipTraceRefreshAt(null);
+      setSkipTraceInfoLoading(false);
+      return;
+    }
+
+    setSkipTracesAvailable(null);
+    setSkipTraceRefreshAt(null);
+    setSkipTraceInfoLoading(true);
+
+    const db = getFirebaseFirestore();
+    const unsub = onSnapshot(
+      doc(db, "locations", locationId),
+      (snap) => {
+        if (!snap.exists()) {
+          setSkipTracesAvailable(null);
+          setSkipTraceRefreshAt(null);
+          setSkipTraceInfoLoading(false);
+          return;
+        }
+        const data = (snap.data() || {}) as Record<string, unknown>;
+        const availableRaw = (data as { skipTracesAvailable?: unknown }).skipTracesAvailable;
+        const refreshRaw = (data as { skipTraceRefresh?: unknown }).skipTraceRefresh;
+        const available =
+          typeof availableRaw === "number" && Number.isFinite(availableRaw) ? availableRaw : null;
+        setSkipTracesAvailable(available);
+        setSkipTraceRefreshAt(toMillis(refreshRaw));
+        setSkipTraceInfoLoading(false);
+      },
+      (error: FirestoreError) => {
+        console.error("Failed to load skiptrace info:", error);
+        setSkipTracesAvailable(null);
+        setSkipTraceRefreshAt(null);
+        setSkipTraceInfoLoading(false);
+      }
+    );
+
+    return () => {
+      unsub();
+    };
+  }, [locationId]);
 
   useEffect(() => {
     // Ensure admin metadata exists so the Drivers section always shows admin as active.
@@ -1652,10 +1705,19 @@ export default function DashboardInsights({ locationId }: Props) {
                 }}
               >
                 <SkiptraceToggle locationId={locationId} />
-                <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem" }}>
-                  Auto-skiptrace new properties.
-                </div>
-                {loading && <div className="skel" style={{ width: "120px", height: "14px", justifySelf: "end" }} />}
+                {skipTraceInfoLoading ? (
+                  <div style={{ display: "grid", gap: "6px", justifyItems: "end" }}>
+                    <div className="skel" style={{ width: "200px", height: "12px" }} />
+                    <div className="skel" style={{ width: "160px", height: "12px" }} />
+                  </div>
+                ) : (
+                  <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem", display: "grid", gap: "2px" }}>
+                    <div>
+                      You have {skipTracesAvailable ?? "--"}/150 skiptraces remaining this month.
+                    </div>
+                    <div>Skiptraces will refresh {skipTraceRefreshLabel ?? "--"}</div>
+                  </div>
+                )}
               </div>
             ) : null}
           </div>
