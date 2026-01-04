@@ -734,10 +734,11 @@ export default function DashboardInsights({ locationId }: Props) {
   const showAdminControls = canManageLocation || adminControlsLoading;
   const showSkiptrace = true;
   const skipTraceRefreshLabel = useMemo(() => formatMonthDay(skipTraceRefreshAt), [skipTraceRefreshAt]);
-  const skipTraceTotal = useMemo(() => {
+  const skipTraceDisplayAvailable = useMemo(() => {
+    const base = skipTracesAvailable ?? 0;
     const bonus = skipTracePurchasedCredits && skipTracePurchasedCredits > 0 ? skipTracePurchasedCredits : 0;
-    return 150 + bonus;
-  }, [skipTracePurchasedCredits]);
+    return base + bonus;
+  }, [skipTracesAvailable, skipTracePurchasedCredits]);
 
   const openInviteModal = useCallback(() => {
     if (!canManageLocation) return;
@@ -1762,7 +1763,7 @@ export default function DashboardInsights({ locationId }: Props) {
                       </div>
                     ) : (
                       <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem", display: "grid", gap: "2px" }}>
-                        <div>Remaining - {skipTracesAvailable ?? "--"}/{skipTraceTotal}</div>
+                        <div>Remaining - {skipTracesAvailable === null ? "--" : skipTraceDisplayAvailable}/150</div>
                         <div>Refreshes - {skipTraceRefreshLabel ?? "--"}</div>
                       </div>
                     )}

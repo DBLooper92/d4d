@@ -183,14 +183,13 @@ export async function GET(req: Request) {
         nextRefresh = buildNextMonthRefreshDate(nextRefresh);
         guard += 1;
       }
-      const refreshedTotal = 150 + (purchasedCredits && purchasedCredits > 0 ? purchasedCredits : 0);
       const updates: Record<string, unknown> = {
         skipTraceRefresh: Timestamp.fromDate(nextRefresh),
-        skipTracesAvailable: refreshedTotal,
+        skipTracesAvailable: 150,
       };
       tx.set(locRef, updates, { merge: true });
       refreshMillis = nextRefresh.getTime();
-      available = refreshedTotal;
+      available = 150;
     }
 
     responseData = {
