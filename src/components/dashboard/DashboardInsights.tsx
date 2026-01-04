@@ -137,9 +137,9 @@ function formatDateTime(value: number | null): string {
   return value ? new Date(value).toLocaleString() : "—";
 }
 
-function formatMonthDay(value: number | null): string | null {
+function formatLongDate(value: number | null): string | null {
   if (!value) return null;
-  return new Date(value).toLocaleDateString("en-US", { month: "long", day: "numeric" });
+  return new Date(value).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
 function buildContactUrl(locationId: string, contactId: string | null): string | null {
@@ -733,12 +733,16 @@ export default function DashboardInsights({ locationId }: Props) {
   const adminControlsLoading = authReady && Boolean(authUser) && viewer.loading;
   const showAdminControls = canManageLocation || adminControlsLoading;
   const showSkiptrace = true;
-  const skipTraceRefreshLabel = useMemo(() => formatMonthDay(skipTraceRefreshAt), [skipTraceRefreshAt]);
+  const skipTraceRefreshLabel = useMemo(() => formatLongDate(skipTraceRefreshAt), [skipTraceRefreshAt]);
+  const skipTraceBonus = useMemo(
+    () => (skipTracePurchasedCredits && skipTracePurchasedCredits > 0 ? skipTracePurchasedCredits : 0),
+    [skipTracePurchasedCredits],
+  );
+  const skipTraceTotal = useMemo(() => 150 + skipTraceBonus, [skipTraceBonus]);
   const skipTraceDisplayAvailable = useMemo(() => {
-    const base = skipTracesAvailable ?? 0;
-    const bonus = skipTracePurchasedCredits && skipTracePurchasedCredits > 0 ? skipTracePurchasedCredits : 0;
-    return base + bonus;
-  }, [skipTracesAvailable, skipTracePurchasedCredits]);
+    if (skipTracesAvailable === null) return null;
+    return skipTracesAvailable + skipTraceBonus;
+  }, [skipTracesAvailable, skipTraceBonus]);
 
   const openInviteModal = useCallback(() => {
     if (!canManageLocation) return;
@@ -1763,7 +1767,7 @@ export default function DashboardInsights({ locationId }: Props) {
                       </div>
                     ) : (
                       <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem", display: "grid", gap: "2px" }}>
-                        <div>Remaining - {skipTracesAvailable === null ? "--" : skipTraceDisplayAvailable}/150</div>
+                        <div>Remaining - {skipTraceDisplayAvailable ?? "--"}/{skipTraceTotal}</div>
                         <div>Refreshes - {skipTraceRefreshLabel ?? "--"}</div>
                       </div>
                     )}

@@ -7,7 +7,13 @@ type Props = {
   locationId: string;
 };
 
-type ApiResponse = { skiptraceEnabled?: boolean; error?: string };
+type ApiResponse = {
+  skiptraceEnabled?: boolean;
+  skipTracesAvailable?: unknown;
+  skipTraceRefresh?: unknown;
+  skipTracePurchasedCredits?: unknown;
+  error?: string;
+};
 
 function buildNextMonthRefreshDate(base: Date): Date {
   const year = base.getFullYear();
@@ -21,6 +27,11 @@ function buildNextMonthRefreshDate(base: Date): Date {
   return new Date(targetYear, targetMonth, safeDay, 0, 1, 0, 0);
 }
 
+function formatLongDate(value: number | null): string | null {
+  if (!value) return null;
+  return new Date(value).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+}
+
 export default function SkiptraceToggle({ locationId }: Props) {
   const auth = useMemo(() => getFirebaseAuth(), []);
   const [enabled, setEnabled] = useState(false);
@@ -30,12 +41,18 @@ export default function SkiptraceToggle({ locationId }: Props) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
+  const [skipTracesAvailable, setSkipTracesAvailable] = useState<number | null>(null);
+  const [skipTraceRefreshAt, setSkipTraceRefreshAt] = useState<number | null>(null);
+  const [skipTracePurchasedCredits, setSkipTracePurchasedCredits] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
+      setSkipTracesAvailable(null);
+      setSkipTraceRefreshAt(null);
+      setSkipTracePurchasedCredits(null);
       try {
         const user = auth.currentUser;
         if (!user) throw new Error("Not signed in.");
@@ -48,9 +65,46 @@ export default function SkiptraceToggle({ locationId }: Props) {
         if (!res.ok || data.error) {
           throw new Error(data.error || `Load failed (${res.status})`);
         }
-        if (!cancelled) setEnabled(Boolean(data.skiptraceEnabled));
+        const availableRaw = data.skipTracesAvailable;
+        const availableParsed =
+          typeof availableRaw === "number"
+            ? availableRaw
+            : typeof availableRaw === "string" && availableRaw.trim()
+              ? Number(availableRaw)
+              : null;
+        const available = Number.isFinite(availableParsed ?? NaN) ? (availableParsed as number) : null;
+
+        const refreshRaw = data.skipTraceRefresh;
+        const refreshParsed =
+          typeof refreshRaw === "number"
+            ? refreshRaw
+            : typeof refreshRaw === "string" && refreshRaw.trim()
+              ? new Date(refreshRaw).getTime()
+              : null;
+        const refreshAt = Number.isFinite(refreshParsed ?? NaN) ? (refreshParsed as number) : null;
+
+        const purchasedRaw = data.skipTracePurchasedCredits;
+        const purchasedParsed =
+          typeof purchasedRaw === "number"
+            ? purchasedRaw
+            : typeof purchasedRaw === "string" && purchasedRaw.trim()
+              ? Number(purchasedRaw)
+              : null;
+        const purchasedCredits = Number.isFinite(purchasedParsed ?? NaN) ? (purchasedParsed as number) : null;
+
+        if (!cancelled) {
+          setEnabled(Boolean(data.skiptraceEnabled));
+          setSkipTracesAvailable(available);
+          setSkipTraceRefreshAt(refreshAt);
+          setSkipTracePurchasedCredits(purchasedCredits);
+        }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e));
+          setSkipTracesAvailable(null);
+          setSkipTraceRefreshAt(null);
+          setSkipTracePurchasedCredits(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -132,6 +186,19 @@ export default function SkiptraceToggle({ locationId }: Props) {
   const isDisabled = loading || saving;
   const knobColor = enabled ? "#16a34a" : "#cbd5e1";
   const trackColor = enabled ? "#dcfce7" : "#e5e7eb";
+  const skipTraceBonus = useMemo(
+    () => (skipTracePurchasedCredits && skipTracePurchasedCredits > 0 ? skipTracePurchasedCredits : 0),
+    [skipTracePurchasedCredits],
+  );
+  const skipTraceTotal = useMemo(() => 150 + skipTraceBonus, [skipTraceBonus]);
+  const skipTraceRemaining = useMemo(() => {
+    if (skipTracesAvailable === null) return null;
+    return skipTracesAvailable + skipTraceBonus;
+  }, [skipTracesAvailable, skipTraceBonus]);
+  const skipTraceRefreshLabel = useMemo(() => formatLongDate(skipTraceRefreshAt), [skipTraceRefreshAt]);
+  const skipTraceRefreshCopy = skipTraceRefreshLabel
+    ? `Monthly credits reset to 150 on ${skipTraceRefreshLabel}. Purchased credits add on top.`
+    : "Monthly credits reset to 150 and do not roll over. Purchased credits add on top.";
 
   return (
     <div style={{ display: "grid", gap: "0.4rem", justifyItems: "end" }}>
@@ -288,7 +355,7 @@ export default function SkiptraceToggle({ locationId }: Props) {
                   Skiptrace overview
                 </div>
                 <div style={{ color: "#475569", marginTop: "2px" }}>
-                  What happens when you turn this on.
+                  How skiptrace works and how credits reset.
                 </div>
               </div>
               <button
@@ -312,10 +379,10 @@ export default function SkiptraceToggle({ locationId }: Props) {
                 X
               </button>
             </div>
-            <div style={{ padding: "18px 18px 20px", overflow: "auto", display: "grid", gap: "14px" }}>
+            <div style={{ padding: "18px 18px 20px", overflow: "auto", display: "grid", gap: "16px" }}>
               <div style={{ color: "#0f172a", fontSize: "0.95rem", lineHeight: 1.6 }}>
-                Skiptrace automatically enriches new submissions with contact details so your team can act faster.
-                When enabled, each lookup is billed at $0.12 and a daily cap of 150 lookups prevents surprise charges.
+                Skiptrace looks up contact details for new property submissions so your team can follow up faster.
+                Each skiptrace attempt uses 1 credit from your monthly balance.
               </div>
               <div
                 style={{
@@ -334,9 +401,9 @@ export default function SkiptraceToggle({ locationId }: Props) {
                     gap: "6px",
                   }}
                 >
-                  <div style={{ fontWeight: 700, color: "#0f172a" }}>Auto-enrichment</div>
+                  <div style={{ fontWeight: 700, color: "#0f172a" }}>150 credits per month</div>
                   <div style={{ color: "#475569", fontSize: "0.95rem" }}>
-                    Runs on new property submissions while enabled.
+                    You receive 150 skiptrace credits every month.
                   </div>
                 </div>
                 <div
@@ -349,9 +416,9 @@ export default function SkiptraceToggle({ locationId }: Props) {
                     gap: "6px",
                   }}
                 >
-                  <div style={{ fontWeight: 700, color: "#0f172a" }}>$0.12 per lookup</div>
+                  <div style={{ fontWeight: 700, color: "#0f172a" }}>Resets monthly</div>
                   <div style={{ color: "#475569", fontSize: "0.95rem" }}>
-                    Charges stop immediately when you disable.
+                    Credits reset to 150 and unused credits do not roll over.
                   </div>
                 </div>
                 <div
@@ -364,11 +431,42 @@ export default function SkiptraceToggle({ locationId }: Props) {
                     gap: "6px",
                   }}
                 >
-                  <div style={{ fontWeight: 700, color: "#0f172a" }}>150/day cap</div>
+                  <div style={{ fontWeight: 700, color: "#0f172a" }}>Runs when enabled</div>
                   <div style={{ color: "#475569", fontSize: "0.95rem" }}>
-                    Protects you from unexpected spikes.
+                    Applies to new property submissions while the toggle is on.
                   </div>
                 </div>
+              </div>
+              <div
+                style={{
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "12px",
+                  padding: "12px",
+                  background: "#f8fafc",
+                  display: "grid",
+                  gap: "8px",
+                }}
+              >
+                <div style={{ fontWeight: 700, color: "#0f172a" }}>Your credits</div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    fontSize: "1rem",
+                    fontWeight: 700,
+                    color: "#0f172a",
+                  }}
+                >
+                  <span>Remaining</span>
+                  <span>
+                    {skipTraceRemaining ?? "--"} / {skipTraceTotal}
+                  </span>
+                </div>
+                <div style={{ color: "#475569", fontSize: "0.9rem" }}>
+                  Remaining updates as skiptraces run. Total includes your monthly credits plus any purchased credits.
+                </div>
+                <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>{skipTraceRefreshCopy}</div>
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <button
@@ -438,10 +536,10 @@ export default function SkiptraceToggle({ locationId }: Props) {
             >
               <div>
                 <div style={{ color: "#0f172a", fontWeight: 700, fontSize: "1.05rem" }}>
-                  Agree to skiptrace charges
+                  Enable skiptrace
                 </div>
                 <div style={{ color: "#475569", marginTop: "2px" }}>
-                  Enabling skiptrace will bill $0.12 per lookup with safeguards in place.
+                  Review how credits work before turning it on.
                 </div>
               </div>
               <button
@@ -470,10 +568,10 @@ export default function SkiptraceToggle({ locationId }: Props) {
             <div style={{ padding: "18px 18px 20px", overflow: "auto", display: "grid", gap: "16px" }}>
               <div style={{ display: "grid", gap: "10px", color: "#0f172a" }}>
                 <p style={{ margin: 0, fontSize: "0.975rem", lineHeight: 1.6, color: "#0f172a" }}>
-                  Each skiptrace is billed at $0.12. A daily guardrail of 150 skiptraces is enforced to prevent runaway spend.
+                  Skiptrace looks up contact details for new property submissions while this toggle is enabled.
                 </p>
                 <p style={{ margin: 0, fontSize: "0.95rem", lineHeight: 1.55, color: "#334155" }}>
-                  A custom skiptrace workflow has already been installed for this location. It handles the automation and should not be edited so results continue to flow.
+                  Each skiptrace attempt uses 1 credit. Credits reset monthly and unused credits do not roll over.
                 </p>
               </div>
               <div
@@ -493,9 +591,9 @@ export default function SkiptraceToggle({ locationId }: Props) {
                     gap: "6px",
                   }}
                 >
-                  <div style={{ fontWeight: 700, color: "#0f172a" }}>$0.12 per skiptrace</div>
+                  <div style={{ fontWeight: 700, color: "#0f172a" }}>150 credits per month</div>
                   <div style={{ color: "#475569", fontSize: "0.95rem" }}>
-                    Charges apply only while skiptrace is active.
+                    You receive 150 skiptrace credits each month.
                   </div>
                 </div>
                 <div
@@ -508,9 +606,9 @@ export default function SkiptraceToggle({ locationId }: Props) {
                     gap: "6px",
                   }}
                 >
-                  <div style={{ fontWeight: 700, color: "#0f172a" }}>150 / day limit</div>
+                  <div style={{ fontWeight: 700, color: "#0f172a" }}>1 credit per attempt</div>
                   <div style={{ color: "#475569", fontSize: "0.95rem" }}>
-                    Daily cap keeps spend predictable and prevents spikes.
+                    Each skiptrace uses one credit from your monthly balance.
                   </div>
                 </div>
                 <div
@@ -523,9 +621,9 @@ export default function SkiptraceToggle({ locationId }: Props) {
                     gap: "6px",
                   }}
                 >
-                  <div style={{ fontWeight: 700, color: "#0f172a" }}>Managed workflow</div>
+                  <div style={{ fontWeight: 700, color: "#0f172a" }}>Runs on new submissions</div>
                   <div style={{ color: "#475569", fontSize: "0.95rem" }}>
-                    Skiptrace automation is pre-installed. Avoid edits so it keeps running smoothly.
+                    Applies to new property submissions while enabled.
                   </div>
                 </div>
               </div>
@@ -550,7 +648,7 @@ export default function SkiptraceToggle({ locationId }: Props) {
                   style={{ width: "18px", height: "18px", marginTop: "2px", cursor: saving ? "not-allowed" : "pointer" }}
                 />
                 <span style={{ color: "#0f172a", fontSize: "0.95rem", lineHeight: 1.5 }}>
-                  I agree to be charged $0.12 per skiptrace request and understand the daily limit of 150.
+                  I understand that enabling skiptrace will use monthly skiptrace credits while it is on.
                 </span>
               </label>
               {error ? (
@@ -558,7 +656,7 @@ export default function SkiptraceToggle({ locationId }: Props) {
               ) : null}
               <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
                 <div style={{ color: "#475569", fontSize: "0.9rem" }}>
-                  You can turn skiptrace off at any time. Charges stop immediately.
+                  You can turn skiptrace off at any time.
                 </div>
                 <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
                   <button
