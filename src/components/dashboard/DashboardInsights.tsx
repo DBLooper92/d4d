@@ -137,9 +137,9 @@ function formatDateTime(value: number | null): string {
   return value ? new Date(value).toLocaleString() : "—";
 }
 
-function formatLongDate(value: number | null): string | null {
+function formatMonthDay(value: number | null): string | null {
   if (!value) return null;
-  return new Date(value).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return new Date(value).toLocaleDateString("en-US", { month: "long", day: "numeric" });
 }
 
 function buildContactUrl(locationId: string, contactId: string | null): string | null {
@@ -730,7 +730,7 @@ export default function DashboardInsights({ locationId }: Props) {
   });
   const canManageLocation = viewer.isAdmin;
   const showSkiptrace = true;
-  const skipTraceRefreshLabel = useMemo(() => formatLongDate(skipTraceRefreshAt), [skipTraceRefreshAt]);
+  const skipTraceRefreshLabel = useMemo(() => formatMonthDay(skipTraceRefreshAt), [skipTraceRefreshAt]);
 
   const openInviteModal = useCallback(() => {
     if (!canManageLocation) return;
@@ -1643,12 +1643,33 @@ export default function DashboardInsights({ locationId }: Props) {
                 </div>
               ) : null}
             </div>
-            <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
-              Coverage, submissions, and team activity
-            </h2>
-            <div style={{ marginTop: "4px", color: "#64748b" }}>
-              Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
-            </div>
+            {canManageLocation ? (
+              <button
+                type="button"
+                onClick={openQuickStart}
+                aria-hidden={!showQuickStartCta}
+                tabIndex={showQuickStartCta ? 0 : -1}
+                style={{
+                  padding: "0.5rem 0.9rem",
+                  borderRadius: "12px",
+                  background: "#facc15",
+                  color: "#0f172a",
+                  fontWeight: 800,
+                  letterSpacing: "0.02em",
+                  border: "1px solid #eab308",
+                  boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
+                  cursor: showQuickStartCta ? "pointer" : "default",
+                  textTransform: "uppercase",
+                  width: "fit-content",
+                  minWidth: "140px",
+                  textAlign: "center",
+                  visibility: showQuickStartCta ? "visible" : "hidden",
+                  pointerEvents: showQuickStartCta ? "auto" : "none",
+                }}
+              >
+                GET STARTED
+              </button>
+            ) : null}
             {!viewer.isAdmin && !viewer.loading ? (
               <div
                 className="badge"
@@ -1686,33 +1707,6 @@ export default function DashboardInsights({ locationId }: Props) {
                 Driving4Dollars.co
               </span>
             </div>
-            {canManageLocation ? (
-              <button
-                type="button"
-                onClick={openQuickStart}
-                aria-hidden={!showQuickStartCta}
-                tabIndex={showQuickStartCta ? 0 : -1}
-                style={{
-                  padding: "0.5rem 0.9rem",
-                  borderRadius: "12px",
-                  background: "#facc15",
-                  color: "#0f172a",
-                  fontWeight: 800,
-                  letterSpacing: "0.02em",
-                  border: "1px solid #eab308",
-                  boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
-                  cursor: showQuickStartCta ? "pointer" : "default",
-                  textTransform: "uppercase",
-                  width: "fit-content",
-                  minWidth: "140px",
-                  textAlign: "center",
-                  visibility: showQuickStartCta ? "visible" : "hidden",
-                  pointerEvents: showQuickStartCta ? "auto" : "none",
-                }}
-              >
-                GET STARTED
-              </button>
-            ) : null}
           </div>
           <div
             style={{
@@ -1742,10 +1736,8 @@ export default function DashboardInsights({ locationId }: Props) {
                   </div>
                 ) : (
                   <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem", display: "grid", gap: "2px" }}>
-                    <div>
-                      You have {skipTracesAvailable ?? "--"}/150 skiptraces remaining this month.
-                    </div>
-                    <div>Skiptraces will refresh {skipTraceRefreshLabel ?? "--"}</div>
+                    <div>Remaining - {skipTracesAvailable ?? "--"}/150</div>
+                    <div>Refreshes - {skipTraceRefreshLabel ?? "--"}</div>
                   </div>
                 )}
               </div>

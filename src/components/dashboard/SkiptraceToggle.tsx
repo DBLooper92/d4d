@@ -234,16 +234,6 @@ export default function SkiptraceToggle({ locationId }: Props) {
           On
         </span>
       </div>
-      <div
-        style={{
-          fontSize: "0.75rem",
-          color: saving ? "#0f172a" : "#475569",
-          opacity: loading ? 0.5 : 1,
-          textAlign: "right",
-        }}
-      >
-        {loading ? "Loading..." : saving ? "Saving..." : enabled ? "Active" : "Disabled"}
-      </div>
       {error ? (
         <div style={{ color: "#b91c1c", fontSize: "0.8125rem", marginTop: "0.25rem", textAlign: "right" }}>
           {error}
