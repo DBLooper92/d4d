@@ -1470,87 +1470,8 @@ export default function DashboardInsights({ locationId }: Props) {
             gap: "1rem",
           }}
         >
-          <div style={{ display: "grid", gap: "6px", minWidth: "0" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <Image
-                src={logoImage}
-                alt="Driving4Dollars.co logo"
-                width={32}
-                height={32}
-                style={{ objectFit: "contain", filter: "drop-shadow(0 8px 18px rgba(1,185,250,0.3))" }}
-              />
-              <span style={{ color: "#01B9FA", fontWeight: 800, letterSpacing: "0.02em", fontSize: "1.05rem" }}>
-                Driving4Dollars.co
-              </span>
-            </div>
-            <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
-              Coverage, submissions, and team activity
-            </h2>
-            <div style={{ marginTop: "4px", color: "#64748b" }}>
-              Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
-            </div>
-            {!viewer.isAdmin && !viewer.loading ? (
-              <div
-                className="badge"
-                style={{
-                  alignSelf: "flex-start",
-                  background: "#f0f9ff",
-                  color: "#0f172a",
-                  borderColor: "#bae6fd",
-                  fontWeight: 700,
-                  justifySelf: "start",
-                }}
-              >
-                Showing your submissions
-              </div>
-            ) : null}
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              minWidth: canManageLocation ? "160px" : "0",
-              minHeight: canManageLocation ? "44px" : "0",
-            }}
-          >
-            {canManageLocation ? (
-              <button
-                type="button"
-                onClick={openQuickStart}
-                aria-hidden={!showQuickStartCta}
-                tabIndex={showQuickStartCta ? 0 : -1}
-                style={{
-                  padding: "0.5rem 0.9rem",
-                  borderRadius: "12px",
-                  background: "#facc15",
-                  color: "#0f172a",
-                  fontWeight: 800,
-                  letterSpacing: "0.02em",
-                  border: "1px solid #eab308",
-                  boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
-                  cursor: showQuickStartCta ? "pointer" : "default",
-                  textTransform: "uppercase",
-                  width: "fit-content",
-                  minWidth: "140px",
-                  textAlign: "center",
-                  visibility: showQuickStartCta ? "visible" : "hidden",
-                  pointerEvents: showQuickStartCta ? "auto" : "none",
-                }}
-              >
-                GET STARTED
-              </button>
-            ) : null}
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gap: "0.5rem",
-              justifyItems: "end",
-              minWidth: "0",
-            }}
-          >
-            <div ref={settingsRef} style={{ position: "relative", justifySelf: "end" }}>
+          <div style={{ display: "grid", gap: "10px", minWidth: "0" }}>
+            <div ref={settingsRef} style={{ position: "relative", justifySelf: "start" }}>
               <button
                 type="button"
                 onClick={toggleSettings}
@@ -1722,6 +1643,85 @@ export default function DashboardInsights({ locationId }: Props) {
                 </div>
               ) : null}
             </div>
+            <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
+              Coverage, submissions, and team activity
+            </h2>
+            <div style={{ marginTop: "4px", color: "#64748b" }}>
+              Track drivers in real time, watch coverage fill in, and keep new contacts flowing.
+            </div>
+            {!viewer.isAdmin && !viewer.loading ? (
+              <div
+                className="badge"
+                style={{
+                  alignSelf: "flex-start",
+                  background: "#f0f9ff",
+                  color: "#0f172a",
+                  borderColor: "#bae6fd",
+                  fontWeight: 700,
+                  justifySelf: "start",
+                }}
+              >
+                Showing your submissions
+              </div>
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: "grid",
+              alignItems: "center",
+              justifyItems: "center",
+              gap: "0.65rem",
+              minWidth: "200px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <Image
+                src={logoImage}
+                alt="Driving4Dollars.co logo"
+                width={32}
+                height={32}
+                style={{ objectFit: "contain", filter: "drop-shadow(0 8px 18px rgba(1,185,250,0.3))" }}
+              />
+              <span style={{ color: "#01B9FA", fontWeight: 800, letterSpacing: "0.02em", fontSize: "1.05rem" }}>
+                Driving4Dollars.co
+              </span>
+            </div>
+            {canManageLocation ? (
+              <button
+                type="button"
+                onClick={openQuickStart}
+                aria-hidden={!showQuickStartCta}
+                tabIndex={showQuickStartCta ? 0 : -1}
+                style={{
+                  padding: "0.5rem 0.9rem",
+                  borderRadius: "12px",
+                  background: "#facc15",
+                  color: "#0f172a",
+                  fontWeight: 800,
+                  letterSpacing: "0.02em",
+                  border: "1px solid #eab308",
+                  boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
+                  cursor: showQuickStartCta ? "pointer" : "default",
+                  textTransform: "uppercase",
+                  width: "fit-content",
+                  minWidth: "140px",
+                  textAlign: "center",
+                  visibility: showQuickStartCta ? "visible" : "hidden",
+                  pointerEvents: showQuickStartCta ? "auto" : "none",
+                }}
+              >
+                GET STARTED
+              </button>
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: "0.5rem",
+              justifyItems: "end",
+              minWidth: "0",
+            }}
+          >
             {canManageLocation && showSkiptrace ? (
               <div
                 style={{
