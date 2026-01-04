@@ -949,48 +949,78 @@ export default function DashboardInsights({ locationId }: Props) {
   }, [authReady, authUser, locationId]);
 
   useEffect(() => {
-    if (!locationId) {
-      setSkipTracesAvailable(null);
-      setSkipTraceRefreshAt(null);
-      setSkipTraceInfoLoading(false);
-      return;
-    }
-
-    setSkipTracesAvailable(null);
-    setSkipTraceRefreshAt(null);
-    setSkipTraceInfoLoading(true);
-
-    const db = getFirebaseFirestore();
-    const unsub = onSnapshot(
-      doc(db, "locations", locationId),
-      (snap) => {
-        if (!snap.exists()) {
-          setSkipTracesAvailable(null);
-          setSkipTraceRefreshAt(null);
-          setSkipTraceInfoLoading(false);
-          return;
-        }
-        const data = (snap.data() || {}) as Record<string, unknown>;
-        const availableRaw = (data as { skipTracesAvailable?: unknown }).skipTracesAvailable;
-        const refreshRaw = (data as { skipTraceRefresh?: unknown }).skipTraceRefresh;
-        const available =
-          typeof availableRaw === "number" && Number.isFinite(availableRaw) ? availableRaw : null;
-        setSkipTracesAvailable(available);
-        setSkipTraceRefreshAt(toMillis(refreshRaw));
-        setSkipTraceInfoLoading(false);
-      },
-      (error: FirestoreError) => {
-        console.error("Failed to load skiptrace info:", error);
+    let cancelled = false;
+    async function loadSkiptraceInfo() {
+      if (!locationId || !authReady) {
         setSkipTracesAvailable(null);
         setSkipTraceRefreshAt(null);
         setSkipTraceInfoLoading(false);
+        return;
       }
-    );
 
+      if (!authUser) {
+        setSkipTracesAvailable(null);
+        setSkipTraceRefreshAt(null);
+        setSkipTraceInfoLoading(false);
+        return;
+      }
+
+      setSkipTracesAvailable(null);
+      setSkipTraceRefreshAt(null);
+      setSkipTraceInfoLoading(true);
+
+      try {
+        const token = await authUser.getIdToken();
+        const res = await fetch(`/api/locations/skiptrace?locationId=${encodeURIComponent(locationId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          skipTracesAvailable?: unknown;
+          skipTraceRefresh?: unknown;
+          error?: string;
+        };
+        if (!res.ok || data.error) {
+          throw new Error(data.error || `Load failed (${res.status})`);
+        }
+        const availableRaw = data.skipTracesAvailable;
+        const availableParsed =
+          typeof availableRaw === "number"
+            ? availableRaw
+            : typeof availableRaw === "string" && availableRaw.trim()
+              ? Number(availableRaw)
+              : null;
+        const available = Number.isFinite(availableParsed ?? NaN) ? (availableParsed as number) : null;
+
+        const refreshRaw = data.skipTraceRefresh;
+        const refreshParsed =
+          typeof refreshRaw === "number"
+            ? refreshRaw
+            : typeof refreshRaw === "string" && refreshRaw.trim()
+              ? new Date(refreshRaw).getTime()
+              : null;
+        const refreshAt = Number.isFinite(refreshParsed ?? NaN) ? (refreshParsed as number) : null;
+
+        if (!cancelled) {
+          setSkipTracesAvailable(available);
+          setSkipTraceRefreshAt(refreshAt);
+          setSkipTraceInfoLoading(false);
+        }
+      } catch (error) {
+        console.error("Failed to load skiptrace info:", error);
+        if (!cancelled) {
+          setSkipTracesAvailable(null);
+          setSkipTraceRefreshAt(null);
+          setSkipTraceInfoLoading(false);
+        }
+      }
+    }
+
+    void loadSkiptraceInfo();
     return () => {
-      unsub();
+      cancelled = true;
     };
-  }, [locationId]);
+  }, [authReady, authUser, locationId]);
 
   useEffect(() => {
     // Ensure admin metadata exists so the Drivers section always shows admin as active.

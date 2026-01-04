@@ -98,6 +98,28 @@ function extractClientRefreshAt(body?: SkiptracePayload): Date | null {
   return null;
 }
 
+function toMillis(value: unknown): number | null {
+  if (!value) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+  }
+  if (value instanceof Date) return value.getTime();
+  if (value instanceof Timestamp) return value.toMillis();
+  const withToMillis = value as { toMillis?: () => number };
+  if (typeof withToMillis.toMillis === "function") {
+    const millis = withToMillis.toMillis();
+    return Number.isFinite(millis) ? millis : null;
+  }
+  const withSeconds = value as { seconds?: number; nanoseconds?: number };
+  if (typeof withSeconds.seconds === "number") {
+    const extra = typeof withSeconds.nanoseconds === "number" ? Math.floor(withSeconds.nanoseconds / 1_000_000) : 0;
+    return withSeconds.seconds * 1000 + extra;
+  }
+  return null;
+}
+
 export async function GET(req: Request) {
   const auth = await requireAuth(req);
   if ("error" in auth) return auth.error;
@@ -119,8 +141,20 @@ export async function GET(req: Request) {
 
   const data = snap.data() || {};
   const enabled = Boolean(data.skiptraceEnabled);
+  const availableRaw = (data as { skipTracesAvailable?: unknown }).skipTracesAvailable;
+  const availableParsed =
+    typeof availableRaw === "number"
+      ? availableRaw
+      : typeof availableRaw === "string" && availableRaw.trim()
+        ? Number(availableRaw)
+        : null;
+  const available = Number.isFinite(availableParsed ?? NaN) ? (availableParsed as number) : null;
+  const refreshMillis = toMillis((data as { skipTraceRefresh?: unknown }).skipTraceRefresh);
 
-  return NextResponse.json({ skiptraceEnabled: enabled }, { status: 200, headers: cacheHeaders() });
+  return NextResponse.json(
+    { skiptraceEnabled: enabled, skipTracesAvailable: available, skipTraceRefresh: refreshMillis },
+    { status: 200, headers: cacheHeaders() }
+  );
 }
 
 export async function POST(req: Request) {
