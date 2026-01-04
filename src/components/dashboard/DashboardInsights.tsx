@@ -718,6 +718,7 @@ export default function DashboardInsights({ locationId }: Props) {
   const [signingOut, setSigningOut] = useState<boolean>(false);
   const [skipTracesAvailable, setSkipTracesAvailable] = useState<number | null>(null);
   const [skipTraceRefreshAt, setSkipTraceRefreshAt] = useState<number | null>(null);
+  const [skipTracePurchasedCredits, setSkipTracePurchasedCredits] = useState<number | null>(null);
   const [skipTraceInfoLoading, setSkipTraceInfoLoading] = useState<boolean>(true);
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const auth = useMemo(() => getFirebaseAuth(), []);
@@ -729,8 +730,14 @@ export default function DashboardInsights({ locationId }: Props) {
     ghlUserId: null,
   });
   const canManageLocation = viewer.isAdmin;
+  const adminControlsLoading = authReady && Boolean(authUser) && viewer.loading;
+  const showAdminControls = canManageLocation || adminControlsLoading;
   const showSkiptrace = true;
   const skipTraceRefreshLabel = useMemo(() => formatMonthDay(skipTraceRefreshAt), [skipTraceRefreshAt]);
+  const skipTraceTotal = useMemo(() => {
+    const bonus = skipTracePurchasedCredits && skipTracePurchasedCredits > 0 ? skipTracePurchasedCredits : 0;
+    return 150 + bonus;
+  }, [skipTracePurchasedCredits]);
 
   const openInviteModal = useCallback(() => {
     if (!canManageLocation) return;
@@ -954,6 +961,7 @@ export default function DashboardInsights({ locationId }: Props) {
       if (!locationId || !authReady) {
         setSkipTracesAvailable(null);
         setSkipTraceRefreshAt(null);
+        setSkipTracePurchasedCredits(null);
         setSkipTraceInfoLoading(false);
         return;
       }
@@ -961,12 +969,14 @@ export default function DashboardInsights({ locationId }: Props) {
       if (!authUser) {
         setSkipTracesAvailable(null);
         setSkipTraceRefreshAt(null);
+        setSkipTracePurchasedCredits(null);
         setSkipTraceInfoLoading(false);
         return;
       }
 
       setSkipTracesAvailable(null);
       setSkipTraceRefreshAt(null);
+      setSkipTracePurchasedCredits(null);
       setSkipTraceInfoLoading(true);
 
       try {
@@ -978,6 +988,7 @@ export default function DashboardInsights({ locationId }: Props) {
         const data = (await res.json().catch(() => ({}))) as {
           skipTracesAvailable?: unknown;
           skipTraceRefresh?: unknown;
+          skipTracePurchasedCredits?: unknown;
           error?: string;
         };
         if (!res.ok || data.error) {
@@ -1001,9 +1012,19 @@ export default function DashboardInsights({ locationId }: Props) {
               : null;
         const refreshAt = Number.isFinite(refreshParsed ?? NaN) ? (refreshParsed as number) : null;
 
+        const purchasedRaw = data.skipTracePurchasedCredits;
+        const purchasedParsed =
+          typeof purchasedRaw === "number"
+            ? purchasedRaw
+            : typeof purchasedRaw === "string" && purchasedRaw.trim()
+              ? Number(purchasedRaw)
+              : null;
+        const purchasedCredits = Number.isFinite(purchasedParsed ?? NaN) ? (purchasedParsed as number) : null;
+
         if (!cancelled) {
           setSkipTracesAvailable(available);
           setSkipTraceRefreshAt(refreshAt);
+          setSkipTracePurchasedCredits(purchasedCredits);
           setSkipTraceInfoLoading(false);
         }
       } catch (error) {
@@ -1011,6 +1032,7 @@ export default function DashboardInsights({ locationId }: Props) {
         if (!cancelled) {
           setSkipTracesAvailable(null);
           setSkipTraceRefreshAt(null);
+          setSkipTracePurchasedCredits(null);
           setSkipTraceInfoLoading(false);
         }
       }
@@ -1508,28 +1530,30 @@ export default function DashboardInsights({ locationId }: Props) {
               minWidth: "200px",
             }}
           >
-            {canManageLocation ? (
+            {showAdminControls ? (
               <button
                 type="button"
                 onClick={openQuickStart}
+                disabled={!canManageLocation}
                 aria-hidden={!showQuickStartCta}
                 tabIndex={showQuickStartCta ? 0 : -1}
                 style={{
                   padding: "0.5rem 0.9rem",
                   borderRadius: "12px",
-                  background: "#facc15",
-                  color: "#0f172a",
+                  background: canManageLocation ? "#facc15" : "#fde68a",
+                  color: canManageLocation ? "#0f172a" : "#a16207",
                   fontWeight: 800,
                   letterSpacing: "0.02em",
                   border: "1px solid #eab308",
-                  boxShadow: "0 8px 14px rgba(250, 204, 21, 0.3)",
-                  cursor: showQuickStartCta ? "pointer" : "default",
+                  boxShadow: canManageLocation ? "0 8px 14px rgba(250, 204, 21, 0.3)" : "none",
+                  cursor: showQuickStartCta && canManageLocation ? "pointer" : "default",
                   textTransform: "uppercase",
                   width: "fit-content",
                   minWidth: "140px",
                   textAlign: "center",
                   visibility: showQuickStartCta ? "visible" : "hidden",
-                  pointerEvents: showQuickStartCta ? "auto" : "none",
+                  pointerEvents: showQuickStartCta && canManageLocation ? "auto" : "none",
+                  opacity: canManageLocation ? 1 : 0.7,
                 }}
               >
                 GET STARTED
@@ -1716,7 +1740,7 @@ export default function DashboardInsights({ locationId }: Props) {
               minWidth: "0",
             }}
           >
-            {canManageLocation && showSkiptrace ? (
+            {showAdminControls && showSkiptrace ? (
               <div
                 style={{
                   display: "grid",
@@ -1728,16 +1752,26 @@ export default function DashboardInsights({ locationId }: Props) {
                   justifySelf: "end",
                 }}
               >
-                <SkiptraceToggle locationId={locationId} />
-                {skipTraceInfoLoading ? (
+                {canManageLocation ? (
+                  <>
+                    <SkiptraceToggle locationId={locationId} />
+                    {skipTraceInfoLoading ? (
+                      <div style={{ display: "grid", gap: "6px", justifyItems: "end" }}>
+                        <div className="skel" style={{ width: "200px", height: "12px" }} />
+                        <div className="skel" style={{ width: "160px", height: "12px" }} />
+                      </div>
+                    ) : (
+                      <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem", display: "grid", gap: "2px" }}>
+                        <div>Remaining - {skipTracesAvailable ?? "--"}/{skipTraceTotal}</div>
+                        <div>Refreshes - {skipTraceRefreshLabel ?? "--"}</div>
+                      </div>
+                    )}
+                  </>
+                ) : (
                   <div style={{ display: "grid", gap: "6px", justifyItems: "end" }}>
+                    <div className="skel" style={{ width: "180px", height: "32px" }} />
                     <div className="skel" style={{ width: "200px", height: "12px" }} />
                     <div className="skel" style={{ width: "160px", height: "12px" }} />
-                  </div>
-                ) : (
-                  <div style={{ margin: 0, color: "#475569", fontSize: "0.9rem", display: "grid", gap: "2px" }}>
-                    <div>Remaining - {skipTracesAvailable ?? "--"}/150</div>
-                    <div>Refreshes - {skipTraceRefreshLabel ?? "--"}</div>
                   </div>
                 )}
               </div>

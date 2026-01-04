@@ -138,8 +138,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: cacheHeaders() });
   }
 
-  let responseData: { skiptraceEnabled: boolean; skipTracesAvailable: number | null; skipTraceRefresh: number | null } | null =
-    null;
+  let responseData: {
+    skiptraceEnabled: boolean;
+    skipTracesAvailable: number | null;
+    skipTraceRefresh: number | null;
+    skipTracePurchasedCredits: number | null;
+  } | null = null;
   let missingLocation = false;
 
   await db().runTransaction(async (tx) => {
@@ -160,6 +164,14 @@ export async function GET(req: Request) {
           ? Number(availableRaw)
           : null;
     let available = Number.isFinite(availableParsed ?? NaN) ? (availableParsed as number) : null;
+    const purchasedRaw = (data as { skipTracePurchasedCredits?: unknown }).skipTracePurchasedCredits;
+    const purchasedParsed =
+      typeof purchasedRaw === "number"
+        ? purchasedRaw
+        : typeof purchasedRaw === "string" && purchasedRaw.trim()
+          ? Number(purchasedRaw)
+          : null;
+    const purchasedCredits = Number.isFinite(purchasedParsed ?? NaN) ? (purchasedParsed as number) : null;
     const refreshAt = parseTimestamp((data as { skipTraceRefresh?: unknown }).skipTraceRefresh);
     let refreshMillis = refreshAt ? refreshAt.getTime() : null;
 
@@ -171,19 +183,21 @@ export async function GET(req: Request) {
         nextRefresh = buildNextMonthRefreshDate(nextRefresh);
         guard += 1;
       }
+      const refreshedTotal = 150 + (purchasedCredits && purchasedCredits > 0 ? purchasedCredits : 0);
       const updates: Record<string, unknown> = {
         skipTraceRefresh: Timestamp.fromDate(nextRefresh),
-        skipTracesAvailable: 150,
+        skipTracesAvailable: refreshedTotal,
       };
       tx.set(locRef, updates, { merge: true });
       refreshMillis = nextRefresh.getTime();
-      available = 150;
+      available = refreshedTotal;
     }
 
     responseData = {
       skiptraceEnabled: enabled,
       skipTracesAvailable: available,
       skipTraceRefresh: refreshMillis,
+      skipTracePurchasedCredits: purchasedCredits,
     };
   });
 
