@@ -86,7 +86,7 @@ function getTimeZoneOffset(date: Date, timeZone: string): number {
 
 function makeDateInTimeZone(parts: DateParts, timeZone: string): Date {
   const utcGuess = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
-  let offset = getTimeZoneOffset(new Date(utcGuess), timeZone);
+  const offset = getTimeZoneOffset(new Date(utcGuess), timeZone);
   let adjusted = utcGuess - offset * 60000;
   const offsetCheck = getTimeZoneOffset(new Date(adjusted), timeZone);
   if (offsetCheck !== offset) {
