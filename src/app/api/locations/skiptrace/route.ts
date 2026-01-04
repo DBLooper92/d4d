@@ -98,24 +98,28 @@ function extractClientRefreshAt(body?: SkiptracePayload): Date | null {
   return null;
 }
 
-function toMillis(value: unknown): number | null {
+function parseTimestamp(value: unknown): Date | null {
   if (!value) return null;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+  if (value instanceof Date) return value;
+  if (value instanceof Timestamp) return value.toDate();
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
   }
-  if (value instanceof Date) return value.getTime();
-  if (value instanceof Timestamp) return value.toMillis();
-  const withToMillis = value as { toMillis?: () => number };
-  if (typeof withToMillis.toMillis === "function") {
-    const millis = withToMillis.toMillis();
-    return Number.isFinite(millis) ? millis : null;
+  if (typeof value === "string" && value.trim()) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const withToDate = value as { toDate?: () => Date };
+  if (typeof withToDate.toDate === "function") {
+    const date = withToDate.toDate();
+    return date instanceof Date && !Number.isNaN(date.getTime()) ? date : null;
   }
   const withSeconds = value as { seconds?: number; nanoseconds?: number };
   if (typeof withSeconds.seconds === "number") {
     const extra = typeof withSeconds.nanoseconds === "number" ? Math.floor(withSeconds.nanoseconds / 1_000_000) : 0;
-    return withSeconds.seconds * 1000 + extra;
+    const millis = withSeconds.seconds * 1000 + extra;
+    return Number.isNaN(millis) ? null : new Date(millis);
   }
   return null;
 }
@@ -134,27 +138,60 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: cacheHeaders() });
   }
 
-  const snap = await db().collection("locations").doc(locationId).get();
-  if (!snap.exists) {
+  let responseData: { skiptraceEnabled: boolean; skipTracesAvailable: number | null; skipTraceRefresh: number | null } | null =
+    null;
+  let missingLocation = false;
+
+  await db().runTransaction(async (tx) => {
+    const locRef = db().collection("locations").doc(locationId);
+    const liveSnap = await tx.get(locRef);
+    if (!liveSnap.exists) {
+      missingLocation = true;
+      return;
+    }
+
+    const data = liveSnap.data() || {};
+    const enabled = Boolean(data.skiptraceEnabled);
+    const availableRaw = (data as { skipTracesAvailable?: unknown }).skipTracesAvailable;
+    const availableParsed =
+      typeof availableRaw === "number"
+        ? availableRaw
+        : typeof availableRaw === "string" && availableRaw.trim()
+          ? Number(availableRaw)
+          : null;
+    let available = Number.isFinite(availableParsed ?? NaN) ? (availableParsed as number) : null;
+    const refreshAt = parseTimestamp((data as { skipTraceRefresh?: unknown }).skipTraceRefresh);
+    let refreshMillis = refreshAt ? refreshAt.getTime() : null;
+
+    const now = new Date();
+    if (refreshAt && now >= refreshAt) {
+      let nextRefresh = refreshAt;
+      let guard = 0;
+      while (now >= nextRefresh && guard < 120) {
+        nextRefresh = buildNextMonthRefreshDate(nextRefresh);
+        guard += 1;
+      }
+      const updates: Record<string, unknown> = {
+        skipTraceRefresh: Timestamp.fromDate(nextRefresh),
+        skipTracesAvailable: 150,
+      };
+      tx.set(locRef, updates, { merge: true });
+      refreshMillis = nextRefresh.getTime();
+      available = 150;
+    }
+
+    responseData = {
+      skiptraceEnabled: enabled,
+      skipTracesAvailable: available,
+      skipTraceRefresh: refreshMillis,
+    };
+  });
+
+  if (missingLocation || !responseData) {
     return NextResponse.json({ error: "Location not found" }, { status: 404, headers: cacheHeaders() });
   }
 
-  const data = snap.data() || {};
-  const enabled = Boolean(data.skiptraceEnabled);
-  const availableRaw = (data as { skipTracesAvailable?: unknown }).skipTracesAvailable;
-  const availableParsed =
-    typeof availableRaw === "number"
-      ? availableRaw
-      : typeof availableRaw === "string" && availableRaw.trim()
-        ? Number(availableRaw)
-        : null;
-  const available = Number.isFinite(availableParsed ?? NaN) ? (availableParsed as number) : null;
-  const refreshMillis = toMillis((data as { skipTraceRefresh?: unknown }).skipTraceRefresh);
-
-  return NextResponse.json(
-    { skiptraceEnabled: enabled, skipTracesAvailable: available, skipTraceRefresh: refreshMillis },
-    { status: 200, headers: cacheHeaders() }
-  );
+  return NextResponse.json(responseData, { status: 200, headers: cacheHeaders() });
 }
 
 export async function POST(req: Request) {
