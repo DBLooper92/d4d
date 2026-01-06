@@ -734,7 +734,8 @@ export default function DashboardInsights({ locationId }: Props) {
   const [locationTotals, setLocationTotals] = useState<{
     allTimeLocationSubmisisons: number | null;
     activeLocationSubmisisons: number | null;
-  }>({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+    userSubmissionCounts: Record<string, number>;
+  }>({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null, userSubmissionCounts: {} });
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const auth = useMemo(() => getFirebaseAuth(), []);
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -841,7 +842,7 @@ export default function DashboardInsights({ locationId }: Props) {
 
   useEffect(() => {
     if (!locationId) {
-      setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+      setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null, userSubmissionCounts: {} });
       return;
     }
     const db = getFirebaseFirestore();
@@ -849,20 +850,35 @@ export default function DashboardInsights({ locationId }: Props) {
       doc(db, "locations", locationId),
       (snap) => {
         if (!snap.exists()) {
-          setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+          setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null, userSubmissionCounts: {} });
           return;
         }
         const data = (snap.data() || {}) as Record<string, unknown>;
         const allTime = parseCount(data.allTimeLocationSubmisisons);
         const active = parseCount(data.activeLocationSubmisisons);
+        const rawUsers = (data as { locationUsers?: { userSubmissions?: Record<string, unknown> } }).locationUsers
+          ?.userSubmissions;
+        const userSubmissionCounts: Record<string, number> = {};
+        if (rawUsers && typeof rawUsers === "object") {
+          Object.entries(rawUsers).forEach(([id, entry]) => {
+            if (!id || !entry || typeof entry !== "object") return;
+            const count = parseCount(
+              (entry as { allTimeUserSubmisisons?: unknown }).allTimeUserSubmisisons,
+            );
+            if (count !== null) {
+              userSubmissionCounts[id] = count;
+            }
+          });
+        }
         setLocationTotals({
           allTimeLocationSubmisisons: allTime,
           activeLocationSubmisisons: active,
+          userSubmissionCounts,
         });
       },
       (error) => {
         console.error("Failed to load location totals:", error);
-        setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+        setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null, userSubmissionCounts: {} });
       },
     );
 
@@ -1499,9 +1515,9 @@ export default function DashboardInsights({ locationId }: Props) {
     );
 
     const submissionCounts = new Map<string, number>();
-    visibleSubmissions.forEach((s) => {
-      const id = (s.createdByUserId || "Unassigned").trim() || "Unassigned";
-      submissionCounts.set(id, (submissionCounts.get(id) ?? 0) + 1);
+    Object.entries(locationTotals.userSubmissionCounts).forEach(([id, count]) => {
+      if (!id) return;
+      submissionCounts.set(id, count);
     });
 
     const entries = new Map<string, { id: string; name: string; color: string; count: number; active: boolean }>();
@@ -1531,7 +1547,7 @@ export default function DashboardInsights({ locationId }: Props) {
       if (b.count !== a.count) return b.count - a.count;
       return a.name.localeCompare(b.name);
     });
-  }, [visibleSubmissions, userMeta, resolveUserName]);
+  }, [locationTotals.userSubmissionCounts, userMeta, resolveUserName]);
 
   return (
     <>
@@ -1914,7 +1930,7 @@ export default function DashboardInsights({ locationId }: Props) {
                   <div style={{ display: "grid", gap: "2px" }}>
                     <div style={{ fontWeight: 600, color: u.active ? "#0f172a" : "#94a3b8" }}>{u.name}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem" }}>
-                      <span style={{ color: "#475569" }}>{u.count} submission{u.count === 1 ? "" : "s"}</span>
+                      <span style={{ color: "#475569" }}>All Time Submissions: {u.count}</span>
                       {!u.active && (
                         <span style={{ color: "#94a3b8", fontWeight: 600 }}>(inactive)</span>
                       )}
