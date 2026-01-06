@@ -1397,8 +1397,8 @@ export default function DashboardInsights({ locationId }: Props) {
     });
   }, [allMarkers, viewer.isAdmin, ownerIds, allowedCoordKeys]);
 
-  const allTimeSubmissions = locationTotals.allTimeLocationSubmisisons ?? visibleSubmissions.length;
-  const activeMarkerCount = locationTotals.activeLocationSubmisisons ?? visibleMarkers.length;
+  const allTimeSubmissions = locationTotals.allTimeLocationSubmisisons ?? 0;
+  const activeMarkerCount = locationTotals.activeLocationSubmisisons ?? 0;
 
   const donutData = useMemo<DonutDatum[]>(() => {
     const grouped = new Map<string, number>();
