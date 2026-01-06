@@ -840,58 +840,34 @@ export default function DashboardInsights({ locationId }: Props) {
   }, [auth]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadLocationTotals() {
-      if (!locationId || !authReady) {
-        setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
-        return;
-      }
-      if (!authUser) {
-        setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
-        return;
-      }
-
-      try {
-        const token = await authUser.getIdToken();
-        const res = await fetch(
-          `/api/locations/summary?locationId=${encodeURIComponent(locationId)}`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            cache: "no-store",
-          },
-        );
-        const data = (await res.json().catch(() => ({}))) as {
-          allTimeLocationSubmisisons?: unknown;
-          activeLocationSubmisisons?: unknown;
-          error?: string;
-        };
-        if (!res.ok || data.error) {
-          throw new Error(data.error || `Load failed (${res.status})`);
+    if (!locationId) {
+      setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+      return;
+    }
+    const db = getFirebaseFirestore();
+    const unsubscribe = onSnapshot(
+      doc(db, "locations", locationId),
+      (snap) => {
+        if (!snap.exists()) {
+          setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+          return;
         }
+        const data = (snap.data() || {}) as Record<string, unknown>;
         const allTime = parseCount(data.allTimeLocationSubmisisons);
         const active = parseCount(data.activeLocationSubmisisons);
-        if (!cancelled) {
-          setLocationTotals({
-            allTimeLocationSubmisisons: allTime,
-            activeLocationSubmisisons: active,
-          });
-        }
-      } catch (error) {
+        setLocationTotals({
+          allTimeLocationSubmisisons: allTime,
+          activeLocationSubmisisons: active,
+        });
+      },
+      (error) => {
         console.error("Failed to load location totals:", error);
-        if (!cancelled) {
-          setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
-        }
-      }
-    }
+        setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+      },
+    );
 
-    void loadLocationTotals();
-    const intervalId = setInterval(loadLocationTotals, 60000);
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-    };
-  }, [locationId, authReady, authUser]);
+    return () => unsubscribe();
+  }, [locationId]);
 
   useEffect(() => {
     let cancelled = false;
