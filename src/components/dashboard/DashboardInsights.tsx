@@ -866,7 +866,24 @@ export default function DashboardInsights({ locationId }: Props) {
               (entry as { allTimeUserSubmisisons?: unknown }).allTimeUserSubmisisons,
             );
             if (count !== null) {
-              userSubmissionCounts[id] = count;
+              const trimmed = id.trim();
+              if (trimmed) {
+                userSubmissionCounts[trimmed] = count;
+              }
+              const ghlUid =
+                typeof (entry as { ghlUID?: unknown }).ghlUID === "string"
+                  ? ((entry as { ghlUID?: string }).ghlUID as string).trim()
+                  : "";
+              if (ghlUid) {
+                userSubmissionCounts[ghlUid] = count;
+              }
+              const ghlUserId =
+                typeof (entry as { ghlUserId?: unknown }).ghlUserId === "string"
+                  ? ((entry as { ghlUserId?: string }).ghlUserId as string).trim()
+                  : "";
+              if (ghlUserId) {
+                userSubmissionCounts[ghlUserId] = count;
+              }
             }
           });
         }
