@@ -166,6 +166,17 @@ function toMillis(value: unknown): number | null {
   return typeof asDate === "number" && Number.isFinite(asDate) ? asDate : null;
 }
 
+function parseCount(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function parseSubmission(docSnap: QueryDocumentSnapshot<DocumentData>): SubmissionDoc | null {
   const data = docSnap.data() as Record<string, unknown>;
   const coords =
@@ -720,6 +731,10 @@ export default function DashboardInsights({ locationId }: Props) {
   const [skipTraceRefreshAt, setSkipTraceRefreshAt] = useState<number | null>(null);
   const [skipTracePurchasedCredits, setSkipTracePurchasedCredits] = useState<number | null>(null);
   const [skipTraceInfoLoading, setSkipTraceInfoLoading] = useState<boolean>(true);
+  const [locationTotals, setLocationTotals] = useState<{
+    allTimeLocationSubmisisons: number | null;
+    activeLocationSubmisisons: number | null;
+  }>({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const auth = useMemo(() => getFirebaseAuth(), []);
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -823,6 +838,36 @@ export default function DashboardInsights({ locationId }: Props) {
     });
     return () => unsub();
   }, [auth]);
+
+  useEffect(() => {
+    if (!locationId) {
+      setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+      return;
+    }
+    const db = getFirebaseFirestore();
+    const unsubscribe = onSnapshot(
+      doc(db, "locations", locationId),
+      (snap) => {
+        if (!snap.exists()) {
+          setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+          return;
+        }
+        const data = (snap.data() || {}) as Record<string, unknown>;
+        const allTime = parseCount(data.allTimeLocationSubmisisons);
+        const active = parseCount(data.activeLocationSubmisisons);
+        setLocationTotals({
+          allTimeLocationSubmisisons: allTime,
+          activeLocationSubmisisons: active,
+        });
+      },
+      (error) => {
+        console.error("Failed to load location totals:", error);
+        setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+      },
+    );
+
+    return () => unsubscribe();
+  }, [locationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1352,6 +1397,9 @@ export default function DashboardInsights({ locationId }: Props) {
     });
   }, [allMarkers, viewer.isAdmin, ownerIds, allowedCoordKeys]);
 
+  const allTimeSubmissions = locationTotals.allTimeLocationSubmisisons ?? visibleSubmissions.length;
+  const activeMarkerCount = locationTotals.activeLocationSubmisisons ?? visibleMarkers.length;
+
   const donutData = useMemo<DonutDatum[]>(() => {
     const grouped = new Map<string, number>();
     visibleSubmissions.forEach((s) => {
@@ -1792,17 +1840,17 @@ export default function DashboardInsights({ locationId }: Props) {
         }}
       >
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Total submissions</div>
-          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{visibleSubmissions.length}</div>
+          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>All-Time Submissions</div>
+          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{allTimeSubmissions}</div>
           <div style={{ color: "#64748b", marginTop: "4px" }}>All time</div>
         </div>
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Active markers</div>
-          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{visibleMarkers.length}</div>
+          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Active Markers</div>
+          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{activeMarkerCount}</div>
           <div style={{ color: "#64748b", marginTop: "4px" }}>Currently visible on map</div>
         </div>
         <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Recent activity</div>
+          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Recent Activity</div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
             <div>
               <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{activitySummary.total}</div>
