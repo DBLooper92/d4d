@@ -734,8 +734,8 @@ export default function DashboardInsights({ locationId }: Props) {
   const [locationTotals, setLocationTotals] = useState<{
     allTimeLocationSubmisisons: number | null;
     activeLocationSubmisisons: number | null;
-    userSubmissionCounts: Record<string, number>;
-  }>({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null, userSubmissionCounts: {} });
+  }>({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
+  const [userSubmissionCounts, setUserSubmissionCounts] = useState<Record<string, number>>({});
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const auth = useMemo(() => getFirebaseAuth(), []);
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -842,7 +842,7 @@ export default function DashboardInsights({ locationId }: Props) {
 
   useEffect(() => {
     if (!locationId) {
-      setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null, userSubmissionCounts: {} });
+      setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
       return;
     }
     const db = getFirebaseFirestore();
@@ -850,52 +850,20 @@ export default function DashboardInsights({ locationId }: Props) {
       doc(db, "locations", locationId),
       (snap) => {
         if (!snap.exists()) {
-          setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null, userSubmissionCounts: {} });
+          setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
           return;
         }
         const data = (snap.data() || {}) as Record<string, unknown>;
         const allTime = parseCount(data.allTimeLocationSubmisisons);
         const active = parseCount(data.activeLocationSubmisisons);
-        const rawUsers = (data as { locationUsers?: { userSubmissions?: Record<string, unknown> } }).locationUsers
-          ?.userSubmissions;
-        const userSubmissionCounts: Record<string, number> = {};
-        if (rawUsers && typeof rawUsers === "object") {
-          Object.entries(rawUsers).forEach(([id, entry]) => {
-            if (!id || !entry || typeof entry !== "object") return;
-            const count = parseCount(
-              (entry as { allTimeUserSubmisisons?: unknown }).allTimeUserSubmisisons,
-            );
-            if (count !== null) {
-              const trimmed = id.trim();
-              if (trimmed) {
-                userSubmissionCounts[trimmed] = count;
-              }
-              const ghlUid =
-                typeof (entry as { ghlUID?: unknown }).ghlUID === "string"
-                  ? ((entry as { ghlUID?: string }).ghlUID as string).trim()
-                  : "";
-              if (ghlUid) {
-                userSubmissionCounts[ghlUid] = count;
-              }
-              const ghlUserId =
-                typeof (entry as { ghlUserId?: unknown }).ghlUserId === "string"
-                  ? ((entry as { ghlUserId?: string }).ghlUserId as string).trim()
-                  : "";
-              if (ghlUserId) {
-                userSubmissionCounts[ghlUserId] = count;
-              }
-            }
-          });
-        }
         setLocationTotals({
           allTimeLocationSubmisisons: allTime,
           activeLocationSubmisisons: active,
-          userSubmissionCounts,
         });
       },
       (error) => {
         console.error("Failed to load location totals:", error);
-        setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null, userSubmissionCounts: {} });
+        setLocationTotals({ allTimeLocationSubmisisons: null, activeLocationSubmisisons: null });
       },
     );
 
@@ -1217,6 +1185,7 @@ export default function DashboardInsights({ locationId }: Props) {
         const map: Record<string, string> = {};
         const meta: Record<string, { active?: boolean; invited?: boolean; accepted?: boolean; isAdmin?: boolean }> =
           {};
+        const counts: Record<string, number> = {};
 
         const storeMeta = (id: string | null | undefined, data: typeof meta[string]) => {
           const key = (id || "").trim();
@@ -1313,6 +1282,14 @@ export default function DashboardInsights({ locationId }: Props) {
               const ghlId = extractGhlUserId(data);
               storeDisplay(map, ghlId, display);
             }
+            const count = parseCount((data as { allTimeUserSubmisisons?: unknown }).allTimeUserSubmisisons);
+            if (count !== null) {
+              counts[uid] = count;
+              const ghlId = extractGhlUserId(data);
+              if (ghlId) {
+                counts[ghlId] = count;
+              }
+            }
           });
         } catch {
           /* ignore */
@@ -1321,11 +1298,13 @@ export default function DashboardInsights({ locationId }: Props) {
         if (!cancelled) {
           setUserNames(map);
           setUserMeta(meta);
+          setUserSubmissionCounts(counts);
         }
       } catch {
         if (!cancelled) {
           setUserNames({});
           setUserMeta((prev) => prev);
+          setUserSubmissionCounts({});
         }
       }
     }
@@ -1532,7 +1511,7 @@ export default function DashboardInsights({ locationId }: Props) {
     );
 
     const submissionCounts = new Map<string, number>();
-    Object.entries(locationTotals.userSubmissionCounts).forEach(([id, count]) => {
+    Object.entries(userSubmissionCounts).forEach(([id, count]) => {
       if (!id) return;
       submissionCounts.set(id, count);
     });
@@ -1564,7 +1543,7 @@ export default function DashboardInsights({ locationId }: Props) {
       if (b.count !== a.count) return b.count - a.count;
       return a.name.localeCompare(b.name);
     });
-  }, [locationTotals.userSubmissionCounts, userMeta, resolveUserName]);
+  }, [userSubmissionCounts, userMeta, resolveUserName]);
 
   return (
     <>
