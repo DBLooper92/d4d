@@ -323,6 +323,7 @@ export async function GET(req: Request) {
     const firebaseUid = locUser?.uid ?? null;
     const accepted = Boolean(firebaseUid);
     const invitedMeta = invites[u.id] || null;
+    const hasActiveFlag = Object.prototype.hasOwnProperty.call(activeUsers, u.id);
     const activeBefore = isAdmin ? true : Boolean(activeUsers[u.id]);
 
     // If not accepted, force inactive
@@ -334,7 +335,7 @@ export async function GET(req: Request) {
     let active = isAdmin ? true : Boolean(activeUsers[u.id]);
 
     // Auto-activate accepted users if slots available
-    if (accepted && !isAdmin && !active) {
+    if (accepted && !isAdmin && !active && !hasActiveFlag) {
       const currentCount = computeActiveCount(activeUsers, adminGhlUserId);
       if (currentCount < ACTIVE_LIMIT) {
         activeUsers[u.id] = true;
