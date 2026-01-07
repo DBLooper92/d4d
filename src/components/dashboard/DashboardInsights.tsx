@@ -314,6 +314,8 @@ function DonutChart({ data }: { data: DonutDatum[] }) {
   const radius = 80;
   const center = 100;
   const stroke = 26;
+  const nonZero = data.filter((d) => d.value > 0);
+  const singleSegment = nonZero.length === 1;
 
   const toPoint = (angle: number) => {
     const rad = (angle * Math.PI) / 180;
@@ -323,7 +325,7 @@ function DonutChart({ data }: { data: DonutDatum[] }) {
     };
   };
 
-  const arcs = data.map((d) => {
+  const arcs = singleSegment ? [] : data.map((d) => {
     const startAngle = (cumulative / total) * 360;
     cumulative += d.value;
     const endAngle = (cumulative / total) * 360;
@@ -341,29 +343,41 @@ function DonutChart({ data }: { data: DonutDatum[] }) {
     <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: "16px", alignItems: "center" }}>
       <div style={{ position: "relative", width: 200, height: 200 }}>
         <svg viewBox="0 0 200 200" role="img" aria-label="Submissions by person">
-          {arcs.map((arc) => (
-            <g key={arc.name}>
-              <path
-                d={arc.path}
-                fill="none"
-                stroke={arc.color}
-                strokeWidth={stroke}
-                strokeLinecap="butt"
-              />
-              {arc.value > 0 && (
-                <text
-                  x={arc.labelPos.x}
-                  y={arc.labelPos.y}
-                  dy={4}
-                  textAnchor="middle"
-                  fontSize="10"
-                  fill="#0f172a"
-                >
-                  {arc.label}
-                </text>
-              )}
-            </g>
-          ))}
+          {singleSegment ? (
+            <circle
+              cx={center}
+              cy={center}
+              r={radius}
+              fill="none"
+              stroke={nonZero[0]?.color ?? "#2563eb"}
+              strokeWidth={stroke}
+              strokeLinecap="butt"
+            />
+          ) : (
+            arcs.map((arc) => (
+              <g key={arc.name}>
+                <path
+                  d={arc.path}
+                  fill="none"
+                  stroke={arc.color}
+                  strokeWidth={stroke}
+                  strokeLinecap="butt"
+                />
+                {arc.value > 0 && (
+                  <text
+                    x={arc.labelPos.x}
+                    y={arc.labelPos.y}
+                    dy={4}
+                    textAnchor="middle"
+                    fontSize="10"
+                    fill="#0f172a"
+                  >
+                    {arc.label}
+                  </text>
+                )}
+              </g>
+            ))
+          )}
           <circle cx={center} cy={center} r={radius - stroke + 6} fill="#fff" />
           <text
             x={center}
