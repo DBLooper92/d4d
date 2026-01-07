@@ -1898,8 +1898,7 @@ export default function DashboardInsights({ locationId }: Props) {
           }}
         >
           <div className="card" style={{ margin: 0, display: "grid", gap: "12px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-              <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
               <button
                 type="button"
                 className="btn primary"
@@ -1908,9 +1907,9 @@ export default function DashboardInsights({ locationId }: Props) {
                   padding: "0.45rem 0.9rem",
                   borderRadius: "10px",
                   fontWeight: 700,
-                  background: "linear-gradient(120deg, #01B9FA, #2563eb)",
+                  background: "linear-gradient(120deg, #2563eb, #01B9FA)",
                   color: "#fff",
-                  boxShadow: "0 8px 16px rgba(1,185,250,0.24)",
+                  boxShadow: "0 8px 16px rgba(37,99,235,0.2)",
                   cursor: "pointer",
                 }}
               >
