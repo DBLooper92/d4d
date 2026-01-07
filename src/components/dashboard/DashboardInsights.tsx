@@ -1559,6 +1559,36 @@ export default function DashboardInsights({ locationId }: Props) {
     });
   }, [userSubmissionCounts, userMeta, resolveUserName]);
 
+  const driverSlots = useMemo(() => userColorGuide.slice(0, 6), [userColorGuide]);
+
+  const summaryCards = (
+    <>
+      <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+        <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>All-Time Submissions</div>
+        <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{allTimeSubmissions}</div>
+        <div style={{ color: "#64748b", marginTop: "4px" }}>All time</div>
+      </div>
+      <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+        <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Active Markers</div>
+        <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{activeMarkerCount}</div>
+        <div style={{ color: "#64748b", marginTop: "4px" }}>Currently visible on map</div>
+      </div>
+      <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
+        <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Recent Activity</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+          <div>
+            <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{activitySummary.total}</div>
+            <div style={{ color: "#64748b", marginTop: "4px" }}>{rangeLabel}</div>
+          </div>
+          <div style={{ textAlign: "right", color: "#475569", fontSize: "0.95rem" }}>
+            <div style={{ fontWeight: 700 }}>Avg {activitySummary.avg.toFixed(1)} / day</div>
+            <div style={{ color: "#64748b" }}>Peak: {activitySummary.peak.value} on {activitySummary.peak.label}</div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <>
       <section className="card" style={{ marginTop: "1.5rem", display: "grid", gap: "1rem" }}>
@@ -1858,102 +1888,95 @@ export default function DashboardInsights({ locationId }: Props) {
           </div>
         </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-          gap: "12px",
-        }}
-      >
-        <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>All-Time Submissions</div>
-          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{allTimeSubmissions}</div>
-          <div style={{ color: "#64748b", marginTop: "4px" }}>All time</div>
-        </div>
-        <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Active Markers</div>
-          <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{activeMarkerCount}</div>
-          <div style={{ color: "#64748b", marginTop: "4px" }}>Currently visible on map</div>
-        </div>
-        <div className="card" style={{ margin: 0, borderColor: "#e2e8f0" }}>
-          <div style={{ color: "#475569", fontSize: "0.9rem", fontWeight: 600 }}>Recent Activity</div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
-            <div>
-              <div style={{ fontSize: "2rem", fontWeight: 700, color: "#0f172a" }}>{activitySummary.total}</div>
-              <div style={{ color: "#64748b", marginTop: "4px" }}>{rangeLabel}</div>
-            </div>
-            <div style={{ textAlign: "right", color: "#475569", fontSize: "0.95rem" }}>
-              <div style={{ fontWeight: 700 }}>Avg {activitySummary.avg.toFixed(1)} / day</div>
-              <div style={{ color: "#64748b" }}>Peak: {activitySummary.peak.value} on {activitySummary.peak.label}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {canManageLocation ? (
-        <div className="card" style={{ margin: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px", gap: "10px", flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
-            <button
-              type="button"
-              className="btn primary"
-              onClick={openInviteModal}
-              style={{
-                padding: "0.5rem 0.9rem",
-                borderRadius: "10px",
-                fontWeight: 700,
-                background: "#01B9FA",
-                color: "#fff",
-                boxShadow: "0 8px 16px rgba(1,185,250,0.24)",
-                cursor: "pointer",
-              }}
-            >
-              Invite Drivers
-            </button>
-          </div>
-          {userColorGuide.length ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
-              {userColorGuide.map((u) => (
-                <div
-                  key={u.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "10px",
-                    padding: "8px 10px",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: "10px",
-                    background: "#fff",
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gap: "14px",
+            alignItems: "stretch",
+          }}
+        >
+          <div className="card" style={{ margin: 0, display: "grid", gap: "12px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+              <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>Drivers</h3>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={openInviteModal}
+                style={{
+                  padding: "0.45rem 0.9rem",
+                  borderRadius: "10px",
+                  fontWeight: 700,
+                  background: "linear-gradient(120deg, #01B9FA, #2563eb)",
+                  color: "#fff",
+                  boxShadow: "0 8px 16px rgba(1,185,250,0.24)",
+                  cursor: "pointer",
+                }}
+              >
+                Invite Drivers
+              </button>
+            </div>
+            {driverSlots.length ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                  gap: "8px 16px",
+                  alignContent: "start",
+                  minHeight: "180px",
+                }}
+              >
+                {driverSlots.map((u) => (
+                  <div
+                    key={u.id}
                     style={{
-                      width: "16px",
-                      height: "16px",
-                      borderRadius: "6px",
-                      background: u.color,
-                      border: "1px solid rgba(15,23,42,0.12)",
-                      boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      padding: "6px 2px",
+                      borderBottom: "1px solid #f1f5f9",
                     }}
-                  />
-                  <div style={{ display: "grid", gap: "2px" }}>
-                    <div style={{ fontWeight: 600, color: u.active ? "#0f172a" : "#94a3b8" }}>{u.name}</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem" }}>
-                      <span style={{ color: "#475569" }}>All Time Submissions: {u.count}</span>
-                      {!u.active && (
-                        <span style={{ color: "#94a3b8", fontWeight: 600 }}>(inactive)</span>
-                      )}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        width: "14px",
+                        height: "14px",
+                        borderRadius: "6px",
+                        background: u.color,
+                        border: "1px solid rgba(15,23,42,0.12)",
+                        boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+                        flexShrink: 0,
+                      }}
+                    />
+                    <div style={{ display: "grid", gap: "2px" }}>
+                      <div style={{ fontWeight: 700, color: u.active ? "#0f172a" : "#94a3b8" }}>{u.name}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem", color: "#64748b" }}>
+                        <span>All-time submissions: {u.count}</span>
+                        {!u.active && <span style={{ color: "#94a3b8", fontWeight: 600 }}>(inactive)</span>}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>No users yet.</div>
-          )}
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: "#94a3b8", fontSize: "0.95rem" }}>No drivers yet.</div>
+            )}
+          </div>
+          <div style={{ display: "grid", gap: "12px" }}>{summaryCards}</div>
         </div>
-      ) : null}
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: "12px",
+          }}
+        >
+          {summaryCards}
+        </div>
+      )}
 
       <div
         style={{
