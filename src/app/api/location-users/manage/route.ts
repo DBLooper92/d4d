@@ -201,7 +201,7 @@ type GhlUsersResponse =
   return Array.isArray(users) ? users : [];
 }
 
-type LocUserRecord = { uid: string; isAdmin: boolean; ghlUserId: string | null };
+type LocUserRecord = { uid: string; isAdmin: boolean; ghlUserId: string | null; active?: boolean };
 
 async function loadLocationUsers(locationId: string): Promise<Record<string, LocUserRecord>> {
   const snap = await db().collection("locations").doc(locationId).collection("users").limit(500).get();
@@ -220,6 +220,7 @@ async function loadLocationUsers(locationId: string): Promise<Record<string, Loc
       uid: doc.id,
       isAdmin: Boolean((data as { isAdmin?: boolean; role?: string }).isAdmin) || (data as { role?: string }).role === "admin",
       ghlUserId,
+      active: typeof (data as { active?: unknown }).active === "boolean" ? (data as { active?: boolean }).active : undefined,
     };
   });
   return map;
@@ -324,18 +325,18 @@ export async function GET(req: Request) {
     const accepted = Boolean(firebaseUid);
     const invitedMeta = invites[u.id] || null;
     const hasActiveFlag = Object.prototype.hasOwnProperty.call(activeUsers, u.id);
-    const activeBefore = isAdmin ? true : Boolean(activeUsers[u.id]);
 
-    // If not accepted, force inactive
-    if (!accepted && activeBefore) {
-      activeUsers[u.id] = false;
+    // If not accepted, clear any stored active flag so acceptance can auto-activate later.
+    if (!accepted && !isAdmin && hasActiveFlag) {
+      delete activeUsers[u.id];
       changed = true;
     }
 
+    const explicitlyInactive = locUser?.active === false;
     let active = isAdmin ? true : Boolean(activeUsers[u.id]);
 
     // Auto-activate accepted users if slots available
-    if (accepted && !isAdmin && !active && !hasActiveFlag) {
+    if (accepted && !isAdmin && !active && !explicitlyInactive) {
       const currentCount = computeActiveCount(activeUsers, adminGhlUserId);
       if (currentCount < ACTIVE_LIMIT) {
         activeUsers[u.id] = true;
