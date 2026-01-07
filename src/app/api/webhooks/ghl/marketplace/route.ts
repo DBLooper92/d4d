@@ -42,6 +42,14 @@ function pickString(obj: unknown, key: string): string {
   const v = hasKey(obj, key) ? obj[key] : undefined;
   return isString(v) ? v.trim() : "";
 }
+function pickNestedString(obj: unknown, path: string[]): string {
+  let current: unknown = obj;
+  for (const key of path) {
+    if (!isObject(current) || !hasKey(current, key)) return "";
+    current = current[key];
+  }
+  return isString(current) ? current.trim() : "";
+}
 function normalizeEventKey(name: string): string {
   return name.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
@@ -66,6 +74,38 @@ function readEventName(payload: unknown): string {
     if (value) return value;
   }
   return "";
+}
+function readContactId(payload: unknown, eventKey: string, webhookId: string): { contactId: string; source: string | null } {
+  const candidates: Array<{ path: string[]; source: string }> = [
+    { path: ["contactId"], source: "contactId" },
+    { path: ["contact_id"], source: "contact_id" },
+    { path: ["contact", "id"], source: "contact.id" },
+    { path: ["contact", "contactId"], source: "contact.contactId" },
+    { path: ["contact", "contact_id"], source: "contact.contact_id" },
+    { path: ["data", "contactId"], source: "data.contactId" },
+    { path: ["data", "contact_id"], source: "data.contact_id" },
+    { path: ["data", "contact", "id"], source: "data.contact.id" },
+    { path: ["data", "contact", "contactId"], source: "data.contact.contactId" },
+    { path: ["data", "contact", "contact_id"], source: "data.contact.contact_id" },
+  ];
+
+  if (eventKey.startsWith("contact")) {
+    candidates.push(
+      { path: ["id"], source: "id" },
+      { path: ["data", "id"], source: "data.id" },
+    );
+  }
+
+  for (const candidate of candidates) {
+    const value = pickNestedString(payload, candidate.path);
+    if (!value) continue;
+    if ((candidate.source === "id" || candidate.source === "data.id") && value === webhookId) {
+      continue;
+    }
+    return { contactId: value, source: candidate.source };
+  }
+
+  return { contactId: "", source: null };
 }
 
 function pickLogHeaders(headers: Headers): Record<string, string> {
@@ -93,6 +133,8 @@ async function logBillingWebhookCapture(params: {
   companyId: string;
   locationId: string;
   planId: string;
+  contactId: string;
+  contactIdSource: string | null;
   rawBody: string;
   payload: unknown;
   headers: Record<string, string>;
@@ -107,6 +149,8 @@ async function logBillingWebhookCapture(params: {
     companyId: params.companyId || null,
     locationId: params.locationId || null,
     planId: params.planId || null,
+    contactId: params.contactId || null,
+    contactIdSource: params.contactIdSource || null,
     receivedAt: FieldValue.serverTimestamp(),
     rawBody: params.rawBody,
     rawLength: params.rawBody.length,
@@ -124,6 +168,8 @@ async function logRawWebhook(params: {
   companyId: string;
   locationId: string;
   planId: string;
+  contactId: string;
+  contactIdSource: string | null;
   rawBody: string;
   isBillingEvent: boolean;
   headers: Record<string, string>;
@@ -139,6 +185,8 @@ async function logRawWebhook(params: {
     companyId: params.companyId || null,
     locationId: params.locationId || null,
     planId: params.planId || null,
+    contactId: params.contactId || null,
+    contactIdSource: params.contactIdSource || null,
     isBillingEvent: params.isBillingEvent,
     receivedAt: FieldValue.serverTimestamp(),
     rawBody: params.rawBody,
@@ -183,43 +231,36 @@ export async function POST(req: Request) {
   const planId = pickString(payloadUnknown, "planId");
   const webhookId = pickString(payloadUnknown, "webhookId");
   const isBillingEvent = eventKey ? BILLING_EVENT_KEYS.has(eventKey) : false;
+  const isContactEvent = eventKey.startsWith("contact");
+  const { contactId, source: contactIdSource } = readContactId(payloadUnknown, eventKey, webhookId);
 
-  try {
-    await logRawWebhook({
-      eventName: eventLabel,
-      eventKey,
-      action,
-      webhookId,
-      companyId: summary.companyId,
-      locationId: summary.locationId,
-      planId,
-      rawBody: rawText,
-      isBillingEvent,
-      headers: pickLogHeaders(req.headers),
-    });
-  } catch (e) {
-    console.error("[marketplace] webhook raw log failed", { event: eventLabel, err: String(e) });
-  }
-
-  console.info("[marketplace] webhook received", {
-    event: eventLabel,
-    action: action ?? "unknown",
-    isBillingEvent,
-    companyId: summary.companyId,
-    locationId: summary.locationId,
-    locationsCount: summary.locationsCount,
-    planId,
-    webhookId,
-    rawLength: rawText.length,
-  });
+  const logHeaders = pickLogHeaders(req.headers);
 
   // ---------- INSTALL ----------
   if (action === "install") {
+    try {
+      await logRawWebhook({
+        eventName: eventLabel,
+        eventKey,
+        action,
+        webhookId,
+        companyId: summary.companyId,
+        locationId: summary.locationId,
+        planId,
+        contactId,
+        contactIdSource,
+        rawBody: rawText,
+        isBillingEvent,
+        headers: logHeaders,
+      });
+    } catch (e) {
+      console.error("[marketplace] webhook raw log failed", { event: eventLabel, err: String(e) });
+    }
+
     console.info("[marketplace] install", {
-      companyId: summary.companyId,
-      locationId: summary.locationId,
-      locationsCount: summary.locationsCount,
-      webhookId,
+      companyId: summary.companyId || null,
+      locationId: summary.locationId || null,
+      webhookId: webhookId || null,
     });
     if (summary.locationId) {
       try {
@@ -237,7 +278,6 @@ export async function POST(req: Request) {
 
   // ---------- BILLING / PLAN EVENTS ----------
   if (isBillingEvent) {
-    const headersForLog = pickLogHeaders(req.headers);
     const eventLabel = eventNameRaw || type || event || "unknown";
     try {
       await logBillingWebhookCapture({
@@ -247,9 +287,11 @@ export async function POST(req: Request) {
         companyId: summary.companyId,
         locationId: summary.locationId,
         planId,
+        contactId,
+        contactIdSource,
         rawBody: rawText,
         payload: payloadUnknown,
-        headers: headersForLog,
+        headers: logHeaders,
       });
     } catch (e) {
       console.error("[marketplace] billing webhook log failed", { event: eventLabel, err: String(e) });
@@ -257,35 +299,74 @@ export async function POST(req: Request) {
 
     console.info("[marketplace] billing webhook", {
       event: eventLabel,
-      companyId: summary.companyId,
-      locationId: summary.locationId,
-      planId,
-      webhookId,
-      rawLength: rawText.length,
+      companyId: summary.companyId || null,
+      locationId: summary.locationId || null,
+      planId: planId || null,
+      webhookId: webhookId || null,
     });
 
     return NextResponse.json({ ok: true, captured: true, event: eventLabel }, { status: 200 });
   }
 
   // ---------- UNINSTALL ----------
-  if (action !== "uninstall") {
-    console.info("[marketplace] webhook ignored", {
-      event: eventLabel,
-      action: action ?? "unknown",
-      companyId: summary.companyId,
-      locationId: summary.locationId,
-      webhookId,
-      rawLength: rawText.length,
+  if (action === "uninstall") {
+    try {
+      await logRawWebhook({
+        eventName: eventLabel,
+        eventKey,
+        action,
+        webhookId,
+        companyId: summary.companyId,
+        locationId: summary.locationId,
+        planId,
+        contactId,
+        contactIdSource,
+        rawBody: rawText,
+        isBillingEvent,
+        headers: logHeaders,
+      });
+    } catch (e) {
+      console.error("[marketplace] webhook raw log failed", { event: eventLabel, err: String(e) });
+    }
+
+    console.info("[marketplace] uninstall", {
+      companyId: summary.companyId || null,
+      locationId: summary.locationId || null,
+      webhookId: webhookId || null,
     });
-    return NextResponse.json({ ok: true, ignored: true }, { status: 200 });
+
+    return NextResponse.json({ ok: true, captured: true, note: "uninstall logging only" }, { status: 200 });
   }
 
-  console.info("[marketplace] uninstall", {
-    companyId: summary.companyId,
-    locationId: summary.locationId,
-    locationsCount: summary.locationsCount,
-    webhookId,
-  });
+  if (isContactEvent) {
+    try {
+      await logRawWebhook({
+        eventName: eventLabel,
+        eventKey,
+        action,
+        webhookId,
+        companyId: summary.companyId,
+        locationId: summary.locationId,
+        planId,
+        contactId,
+        contactIdSource,
+        rawBody: rawText,
+        isBillingEvent,
+        headers: logHeaders,
+      });
+    } catch (e) {
+      console.error("[marketplace] webhook raw log failed", { event: eventLabel, err: String(e) });
+    }
 
-  return NextResponse.json({ ok: true, captured: true, note: "uninstall logging only" }, { status: 200 });
+    console.info("[marketplace] contact webhook", {
+      event: eventLabel,
+      locationId: summary.locationId || null,
+      contactId: contactId || null,
+      contactIdSource,
+      webhookId: webhookId || null,
+    });
+    return NextResponse.json({ ok: true, ignored: true, event: eventLabel }, { status: 200 });
+  }
+
+  return NextResponse.json({ ok: true, ignored: true }, { status: 200 });
 }
