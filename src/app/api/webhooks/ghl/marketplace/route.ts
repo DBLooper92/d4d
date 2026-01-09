@@ -45,6 +45,36 @@ function pickString(obj: unknown, key: string): string {
 function coerceString(value: unknown): string {
   return isString(value) ? value.trim() : "";
 }
+function parseCount(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.floor(value));
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : null;
+  }
+  return null;
+}
+function readSubmissionContactIds(data: Record<string, unknown>): string[] {
+  const ids = new Set<string>();
+  const topLevel = coerceString((data as { contactId?: unknown }).contactId);
+  if (topLevel) ids.add(topLevel);
+  const ghl = (data as { ghl?: { contactId?: unknown; contactIds?: unknown } }).ghl;
+  const nestedContactId = coerceString(ghl?.contactId);
+  if (nestedContactId) ids.add(nestedContactId);
+  if (Array.isArray(ghl?.contactIds)) {
+    for (const value of ghl.contactIds) {
+      const id = coerceString(value);
+      if (id) ids.add(id);
+    }
+  }
+  return Array.from(ids);
+}
+function readSubmissionContactCount(data: Record<string, unknown>, contactIds: string[]): number {
+  const stored = parseCount((data as { numberOfGhlContactsCreated?: unknown }).numberOfGhlContactsCreated);
+  if (stored !== null) return stored;
+  return contactIds.length;
+}
 function pickNestedString(obj: unknown, path: string[]): string {
   let current: unknown = obj;
   for (const key of path) {
@@ -209,6 +239,7 @@ async function cleanupContactSubmissions(params: {
   contactId: string;
 }): Promise<{
   submissionsDeleted: number;
+  submissionsDecremented: number;
   markersDeleted: number;
   usersUpdated: number;
   locationUpdated: boolean;
@@ -220,18 +251,21 @@ async function cleanupContactSubmissions(params: {
   const usersCol = firestore.collection("locations").doc(params.locationId).collection("users");
   const locationRef = firestore.collection("locations").doc(params.locationId);
 
-  const [nestedSnap, flatSnap] = await Promise.all([
+  const [nestedSnap, flatSnap, arraySnap] = await Promise.all([
     submissionsCol.where("ghl.contactId", "==", params.contactId).get(),
     submissionsCol.where("contactId", "==", params.contactId).get(),
+    submissionsCol.where("ghl.contactIds", "array-contains", params.contactId).get(),
   ]);
 
   const submissionMap = new Map<string, QueryDocumentSnapshot<DocumentData>>();
   nestedSnap.docs.forEach((docSnap) => submissionMap.set(docSnap.id, docSnap));
   flatSnap.docs.forEach((docSnap) => submissionMap.set(docSnap.id, docSnap));
+  arraySnap.docs.forEach((docSnap) => submissionMap.set(docSnap.id, docSnap));
 
   if (submissionMap.size === 0) {
     return {
       submissionsDeleted: 0,
+      submissionsDecremented: 0,
       markersDeleted: 0,
       usersUpdated: 0,
       locationUpdated: false,
@@ -242,12 +276,20 @@ async function cleanupContactSubmissions(params: {
   const geohashes = new Set<string>();
   const userCounts = new Map<string, number>();
   const submissionRefs: DocumentReference[] = [];
+  const decrementTargets: Array<{ ref: DocumentReference; nextCount: number }> = [];
   const storageTargets = new Map<string, { bucket: string; path: string }>();
   const fallbackBucket = resolveStorageBucket();
 
   for (const docSnap of submissionMap.values()) {
-    submissionRefs.push(docSnap.ref);
     const data = docSnap.data() as Record<string, unknown>;
+    const contactIds = readSubmissionContactIds(data);
+    const totalContacts = readSubmissionContactCount(data, contactIds);
+    if (totalContacts >= 2) {
+      decrementTargets.push({ ref: docSnap.ref, nextCount: Math.max(totalContacts - 1, 0) });
+      continue;
+    }
+
+    submissionRefs.push(docSnap.ref);
     const geohash = coerceString(data.geohash);
     if (geohash) geohashes.add(geohash);
 
@@ -293,6 +335,7 @@ async function cleanupContactSubmissions(params: {
   const totalSubmissions = submissionRefs.length;
 
   const ops: Array<(batch: WriteBatch) => void> = [];
+  let submissionsDecremented = 0;
 
   if (locationSnap.exists && totalSubmissions > 0) {
     ops.push((batch) =>
@@ -322,6 +365,16 @@ async function cleanupContactSubmissions(params: {
     ops.push((batch) => batch.delete(ref));
   }
 
+  for (const target of decrementTargets) {
+    ops.push((batch) =>
+      batch.update(target.ref, {
+        numberOfGhlContactsCreated: target.nextCount,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    );
+    submissionsDecremented += 1;
+  }
+
   const BATCH_LIMIT = 450;
   let batch = firestore.batch();
   let opCount = 0;
@@ -340,6 +393,7 @@ async function cleanupContactSubmissions(params: {
 
   return {
     submissionsDeleted: submissionRefs.length,
+    submissionsDecremented,
     markersDeleted: geohashes.size,
     usersUpdated,
     locationUpdated,
@@ -615,6 +669,7 @@ export async function POST(req: Request) {
         locationId: summary.locationId,
         contactId,
         submissionsDeleted: result.submissionsDeleted,
+        submissionsDecremented: result.submissionsDecremented,
         markersDeleted: result.markersDeleted,
         usersUpdated: result.usersUpdated,
         locationUpdated: result.locationUpdated,
