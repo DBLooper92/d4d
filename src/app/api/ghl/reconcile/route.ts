@@ -8,24 +8,12 @@ import { enqueueReconcileTask, resolveTaskBaseUrlFromEnv } from "@/lib/reconcile
 
 export const runtime = "nodejs";
 
-const CONTACT_GROUP_FIELD = "d4d_contact_group_id";
-const CONTACTS_PAGE_LIMIT = 100;
-const MAX_CONTACT_PAGES = 50;
 const RECONCILE_GROUPS_COLLECTION = "ghl_reconcile_groups";
 
 type ReconcileRequest = {
   locationId?: string;
   groupId?: string;
   attempt?: unknown;
-};
-
-type GhlContactsResponse = {
-  contacts?: Array<{ id?: string }>;
-  items?: Array<{ id?: string }>;
-  data?: Array<{ id?: string }>;
-  meta?: Record<string, unknown>;
-  pagination?: Record<string, unknown>;
-  total?: unknown;
 };
 
 function readString(value: unknown): string {
@@ -48,44 +36,6 @@ function readAttempt(value: unknown): number {
   return Math.max(0, Math.floor(parsed));
 }
 
-function readTotalCount(data: GhlContactsResponse): number | null {
-  const candidates: unknown[] = [];
-  if (data.meta) {
-    candidates.push(data.meta.total, data.meta.totalCount, data.meta.count);
-  }
-  if (data.pagination) {
-    candidates.push(data.pagination.total, data.pagination.totalCount, data.pagination.count);
-  }
-  candidates.push(data.total);
-  for (const value of candidates) {
-    const parsed = readNumber(value);
-    if (parsed !== null && parsed >= 0) return parsed;
-  }
-  return null;
-}
-
-function readNextPage(data: GhlContactsResponse): number | null {
-  const candidates: unknown[] = [];
-  if (data.meta) {
-    candidates.push(data.meta.nextPage, data.meta.next_page, data.meta.page);
-  }
-  if (data.pagination) {
-    candidates.push(data.pagination.nextPage, data.pagination.next_page, data.pagination.page);
-  }
-  for (const value of candidates) {
-    const parsed = readNumber(value);
-    if (parsed !== null && parsed > 0) return Math.floor(parsed);
-  }
-  return null;
-}
-
-function readContactsList(data: GhlContactsResponse): Array<{ id?: string }> {
-  if (Array.isArray(data.contacts)) return data.contacts;
-  if (Array.isArray(data.items)) return data.items;
-  if (Array.isArray(data.data)) return data.data;
-  return [];
-}
-
 function collectContactIdsFromSubmissions(
   submissions: Array<QueryDocumentSnapshot<DocumentData>>,
 ): string[] {
@@ -106,77 +56,6 @@ function collectContactIdsFromSubmissions(
   return Array.from(ids);
 }
 
-async function fetchContactCount(params: {
-  accessToken: string;
-  locationId: string;
-  groupId: string;
-  contactIds: string[];
-}): Promise<number> {
-  try {
-    return await fetchContactCountByGroupId(params);
-  } catch (err) {
-    if (!params.contactIds.length) throw err;
-    console.warn("[reconcile] group search failed; falling back to stored contact ids", {
-      locationId: params.locationId,
-      groupId: params.groupId,
-      err: String(err),
-    });
-    return fetchContactCountByContactIds({
-      accessToken: params.accessToken,
-      contactIds: params.contactIds,
-    });
-  }
-}
-
-async function fetchContactCountByGroupId(params: {
-  accessToken: string;
-  locationId: string;
-  groupId: string;
-}): Promise<number> {
-  let total = 0;
-  let page = 1;
-
-  for (let guard = 0; guard < MAX_CONTACT_PAGES; guard += 1) {
-    const body: Record<string, unknown> = {
-      locationId: params.locationId,
-      page,
-      pageLimit: CONTACTS_PAGE_LIMIT,
-      filters: [
-        {
-          field: `customField.${CONTACT_GROUP_FIELD}`,
-          operator: "eq",
-          value: params.groupId,
-        },
-      ],
-    };
-
-    const result = await ghlRequest<GhlContactsResponse>("/contacts/search", {
-      accessToken: params.accessToken,
-      method: "POST",
-      body,
-    });
-    if (!result.ok) {
-      throw new Error(`GHL search failed ${result.status}: ${result.text || result.status}`);
-    }
-    const data = (result.data ?? {}) as GhlContactsResponse;
-    const totalCount = readTotalCount(data);
-    if (totalCount !== null) return totalCount;
-
-    const contacts = readContactsList(data);
-    total += contacts.length;
-    if (contacts.length < CONTACTS_PAGE_LIMIT) break;
-
-    const nextPage = readNextPage(data);
-    if (nextPage && nextPage > page) {
-      page = nextPage;
-    } else {
-      page += 1;
-    }
-  }
-
-  return total;
-}
-
 async function fetchContactCountByContactIds(params: {
   accessToken: string;
   contactIds: string[];
@@ -194,10 +73,25 @@ async function fetchContactCountByContactIds(params: {
       total += 1;
       continue;
     }
-    if (result.status === 404) continue;
+    if (result.status === 404 || isMissingContact(result.status, result.text)) continue;
     throw new Error(`GHL contact fetch failed ${result.status}: ${result.text || result.status}`);
   }
   return total;
+}
+
+function isMissingContact(status: number, text: string): boolean {
+  if (status !== 400) return false;
+  const lower = text.toLowerCase();
+  if (lower.includes("contact not found")) return true;
+  try {
+    const parsed = JSON.parse(text) as { message?: unknown };
+    if (typeof parsed?.message === "string" && parsed.message.toLowerCase().includes("contact not found")) {
+      return true;
+    }
+  } catch {
+    // ignore parse failures; handled by string check above
+  }
+  return false;
 }
 
 export async function POST(req: Request) {
@@ -244,7 +138,23 @@ export async function POST(req: Request) {
 
   const contactIds = collectContactIdsFromSubmissions(submissionsSnap.docs);
   const accessToken = await getValidAccessTokenForLocation(locationId);
-  const contactCount = await fetchContactCount({ accessToken, locationId, groupId, contactIds });
+  let contactCount: number;
+  if (contactIds.length === 0) {
+    let fallbackCount = 0;
+    for (const docSnap of submissionsSnap.docs) {
+      const data = docSnap.data() as Record<string, unknown>;
+      const storedCount = readNumber(data.numberOfGhlContactsCreated);
+      if (storedCount !== null) fallbackCount = Math.max(fallbackCount, storedCount);
+    }
+    contactCount = fallbackCount;
+    console.warn("[reconcile] no stored contact ids; using existing count", {
+      locationId,
+      groupId,
+      count: contactCount,
+    });
+  } else {
+    contactCount = await fetchContactCountByContactIds({ accessToken, contactIds });
+  }
 
   console.info("[reconcile] group count", {
     locationId,
