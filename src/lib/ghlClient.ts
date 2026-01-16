@@ -38,3 +38,54 @@ export async function ghlFetch<T>(
   }
   return (await res.json()) as T;
 }
+
+export type GhlRequestResult<T> = {
+  ok: boolean;
+  status: number;
+  data: T | null;
+  text: string;
+};
+
+export async function ghlRequest<T>(
+  path: string,
+  opts: {
+    accessToken: string;
+    method?: "GET" | "POST";
+    query?: Record<string, string | number | boolean | undefined>;
+    body?: unknown;
+  }
+): Promise<GhlRequestResult<T>> {
+  const url = new URL(path.startsWith("http") ? path : `${GHL_BASE}${path}`);
+  for (const [k, v] of Object.entries(opts.query || {})) {
+    if (v !== undefined && v !== null && `${v}`.length) url.searchParams.set(k, String(v));
+  }
+  const method = opts.method ?? "GET";
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${opts.accessToken}`,
+    Accept: "application/json",
+    Version: API_VERSION,
+  };
+  let body: string | undefined;
+  if (opts.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    body = JSON.stringify(opts.body);
+  }
+
+  const res = await fetch(url.toString(), {
+    method,
+    headers,
+    body,
+    cache: "no-store",
+  });
+
+  const text = await res.text().catch(() => "");
+  let data: T | null = null;
+  if (text) {
+    try {
+      data = JSON.parse(text) as T;
+    } catch {
+      data = null;
+    }
+  }
+  return { ok: res.ok, status: res.status, data, text };
+}

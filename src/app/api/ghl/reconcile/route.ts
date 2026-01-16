@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { FieldValue, type DocumentData, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { db } from "@/lib/firebaseAdmin";
 import { getValidAccessTokenForLocation } from "@/lib/ghlTokens";
-import { ghlFetch } from "@/lib/ghlClient";
+import { ghlRequest } from "@/lib/ghlClient";
 import { cleanupSubmissionsAndMarkers } from "@/lib/submissionCleanup";
 import { enqueueReconcileTask, resolveTaskBaseUrlFromEnv } from "@/lib/reconcileTasks";
 
@@ -21,6 +21,8 @@ type ReconcileRequest = {
 
 type GhlContactsResponse = {
   contacts?: Array<{ id?: string }>;
+  items?: Array<{ id?: string }>;
+  data?: Array<{ id?: string }>;
   meta?: Record<string, unknown>;
   pagination?: Record<string, unknown>;
   total?: unknown;
@@ -77,7 +79,56 @@ function readNextPage(data: GhlContactsResponse): number | null {
   return null;
 }
 
+function readContactsList(data: GhlContactsResponse): Array<{ id?: string }> {
+  if (Array.isArray(data.contacts)) return data.contacts;
+  if (Array.isArray(data.items)) return data.items;
+  if (Array.isArray(data.data)) return data.data;
+  return [];
+}
+
+function collectContactIdsFromSubmissions(
+  submissions: Array<QueryDocumentSnapshot<DocumentData>>,
+): string[] {
+  const ids = new Set<string>();
+  for (const docSnap of submissions) {
+    const data = docSnap.data() as Record<string, unknown>;
+    const ghl = (data as { ghl?: Record<string, unknown> }).ghl;
+    const list = Array.isArray(ghl?.contactIds) ? ghl.contactIds : [];
+    for (const entry of list) {
+      const id = readString(entry);
+      if (id) ids.add(id);
+    }
+    const primary = readString(ghl?.contactId);
+    if (primary) ids.add(primary);
+    const flat = readString(data.contactId);
+    if (flat) ids.add(flat);
+  }
+  return Array.from(ids);
+}
+
 async function fetchContactCount(params: {
+  accessToken: string;
+  locationId: string;
+  groupId: string;
+  contactIds: string[];
+}): Promise<number> {
+  try {
+    return await fetchContactCountByGroupId(params);
+  } catch (err) {
+    if (!params.contactIds.length) throw err;
+    console.warn("[reconcile] group search failed; falling back to stored contact ids", {
+      locationId: params.locationId,
+      groupId: params.groupId,
+      err: String(err),
+    });
+    return fetchContactCountByContactIds({
+      accessToken: params.accessToken,
+      contactIds: params.contactIds,
+    });
+  }
+}
+
+async function fetchContactCountByGroupId(params: {
   accessToken: string;
   locationId: string;
   groupId: string;
@@ -86,21 +137,32 @@ async function fetchContactCount(params: {
   let page = 1;
 
   for (let guard = 0; guard < MAX_CONTACT_PAGES; guard += 1) {
-    const query: Record<string, string | number | boolean | undefined> = {
+    const body: Record<string, unknown> = {
       locationId: params.locationId,
-      limit: CONTACTS_PAGE_LIMIT,
       page,
+      pageLimit: CONTACTS_PAGE_LIMIT,
+      filters: [
+        {
+          field: `customField.${CONTACT_GROUP_FIELD}`,
+          operator: "eq",
+          value: params.groupId,
+        },
+      ],
     };
-    query[`customField[${CONTACT_GROUP_FIELD}]`] = params.groupId;
 
-    const data = await ghlFetch<GhlContactsResponse>("/contacts/", {
+    const result = await ghlRequest<GhlContactsResponse>("/contacts/search", {
       accessToken: params.accessToken,
-      query,
+      method: "POST",
+      body,
     });
+    if (!result.ok) {
+      throw new Error(`GHL search failed ${result.status}: ${result.text || result.status}`);
+    }
+    const data = (result.data ?? {}) as GhlContactsResponse;
     const totalCount = readTotalCount(data);
     if (totalCount !== null) return totalCount;
 
-    const contacts = Array.isArray(data.contacts) ? data.contacts : [];
+    const contacts = readContactsList(data);
     total += contacts.length;
     if (contacts.length < CONTACTS_PAGE_LIMIT) break;
 
@@ -112,6 +174,29 @@ async function fetchContactCount(params: {
     }
   }
 
+  return total;
+}
+
+async function fetchContactCountByContactIds(params: {
+  accessToken: string;
+  contactIds: string[];
+}): Promise<number> {
+  let total = 0;
+  for (const contactId of params.contactIds) {
+    const result = await ghlRequest<Record<string, unknown>>(
+      `/contacts/${encodeURIComponent(contactId)}`,
+      {
+        accessToken: params.accessToken,
+        method: "GET",
+      },
+    );
+    if (result.ok) {
+      total += 1;
+      continue;
+    }
+    if (result.status === 404) continue;
+    throw new Error(`GHL contact fetch failed ${result.status}: ${result.text || result.status}`);
+  }
   return total;
 }
 
@@ -157,8 +242,9 @@ export async function POST(req: Request) {
   const storedAttempt = readAttempt(groupData?.reconcileAttempts);
   const currentAttempt = Math.max(requestedAttempt, storedAttempt);
 
+  const contactIds = collectContactIdsFromSubmissions(submissionsSnap.docs);
   const accessToken = await getValidAccessTokenForLocation(locationId);
-  const contactCount = await fetchContactCount({ accessToken, locationId, groupId });
+  const contactCount = await fetchContactCount({ accessToken, locationId, groupId, contactIds });
 
   console.info("[reconcile] group count", {
     locationId,
