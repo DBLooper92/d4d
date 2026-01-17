@@ -187,7 +187,7 @@ export async function POST(req: Request) {
 
   const maxAttempts = Math.max(
     1,
-    Math.floor(readNumber(process.env.GHL_RECONCILE_MAX_ATTEMPTS) ?? 2),
+    Math.floor(readNumber(process.env.GHL_RECONCILE_MAX_ATTEMPTS) ?? 6),
   );
   const shouldRequeue = contactCount > 0 && currentAttempt < maxAttempts - 1;
   let requeueQueued = false;
@@ -208,7 +208,7 @@ export async function POST(req: Request) {
         groupId,
         baseUrl,
         attempt: currentAttempt + 1,
-        delaySeconds: 120,
+        delaySeconds: 30,
       });
       requeueQueued = result.queued;
       requeueDeduped = result.deduped;

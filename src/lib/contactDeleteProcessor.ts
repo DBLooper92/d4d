@@ -138,7 +138,7 @@ export async function processContactDeleteEvent(params: {
       groupId,
       baseUrl: params.baseUrl,
       attempt: 0,
-      delaySeconds: 120,
+      delaySeconds: 0,
     });
     if (result.queued) reconcileQueued += 1;
     if (result.deduped) reconcileDeduped += 1;
