@@ -1,5 +1,5 @@
 // src/lib/ghlClient.ts
-// Server-side helper for calling HighLevel v2 (LeadConnectorHQ) APIs.
+// Server-side helper for calling HighLevel v2 (LeadConnectorHQ) APIs
 
 export const GHL_BASE = "https://services.leadconnectorhq.com";
 
