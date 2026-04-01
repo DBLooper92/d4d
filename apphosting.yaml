@@ -33,15 +33,15 @@ env:
   # --- Secrets (server-only) ---
   - variable: GHL_CLIENT_ID
     secret: GHL_CLIENT_ID
-    version: 3
+    version: 4
     availability: [RUNTIME]
   - variable: GHL_CLIENT_SECRET
     secret: GHL_CLIENT_SECRET
-    version: 3
+    version: 4
     availability: [RUNTIME]
   - variable: GHL_SHARED_SECRET_KEY
     secret: GHL_SHARED_SECRET_KEY
-    version: 3
+    version: 4
     availability: [RUNTIME]
   - variable: GHL_WEBHOOK_PUBLIC_KEY
     secret: GHL_WEBHOOK_PUBLIC_KEY
