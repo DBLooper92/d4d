@@ -9,7 +9,7 @@ type Body = {
   idToken: string;
   email?: string;
   firstName: string;
-  lastName: string;
+  lastName?: string;
   agencyId?: string | null;
   locationId: string;
   ghlUserId?: string | null;
@@ -40,15 +40,29 @@ export async function POST(req: Request) {
     if (!idToken) return NextResponse.json({ error: "Missing idToken" }, { status: 400 });
     if (!locationId || !String(locationId).trim())
       return NextResponse.json({ error: "Missing locationId" }, { status: 400 });
-    if (!firstName?.trim() || !lastName?.trim())
-      return NextResponse.json({ error: "Missing first/last name" }, { status: 400 });
+    if (!firstName?.trim())
+      return NextResponse.json({ error: "Missing first name" }, { status: 400 });
 
     const normalizedLocationId = String(locationId).trim();
+    const normalizedFirstName = String(firstName).trim();
+    const normalizedLastName = typeof lastName === "string" ? lastName.trim() : "";
     const ghlUserId = typeof ghlUserIdIn === "string" && ghlUserIdIn.trim() ? ghlUserIdIn.trim() : null;
     const ghlCompanyId = typeof ghlCompanyIdIn === "string" && ghlCompanyIdIn.trim() ? ghlCompanyIdIn.trim() : null;
     const ghlLocationId =
       typeof ghlLocationIdIn === "string" && ghlLocationIdIn.trim() ? ghlLocationIdIn.trim() : null;
     const ghlLocationForDoc = ghlLocationId ?? normalizedLocationId;
+    const ghlProfile =
+      ghlUserId || ghlCompanyId || ghlLocationForDoc
+        ? {
+            ...(ghlUserId ? { ghlUserId } : {}),
+            ghl: {
+              userId: ghlUserId ?? null,
+              companyId: ghlCompanyId ?? null,
+              locationId: ghlLocationForDoc ?? null,
+              updatedAt: Date.now(),
+            },
+          }
+        : {};
 
     let agencyId = agencyIdIn ?? null;
     if (!agencyId) {
@@ -117,11 +131,12 @@ export async function POST(req: Request) {
       const baseProfile = {
         uid,
         email: userEmail || null,
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
         updatedAt: now,
         role,
         isAdmin: shouldBeAdmin,
+        ...ghlProfile,
       };
 
       if (!uSnap.exists) {
@@ -154,26 +169,6 @@ export async function POST(req: Request) {
         );
       }
     });
-
-    const persistGhlProfile = async (userIdValue: string | null) => {
-      const payload = {
-        ghl: {
-          userId: userIdValue ?? null,
-          companyId: ghlCompanyId ?? null,
-          locationId: ghlLocationForDoc ?? null,
-          updatedAt: Date.now(),
-        },
-      } as Record<string, unknown>;
-      if (userIdValue) payload.ghlUserId = userIdValue;
-
-      await Promise.all([usersRef.set(payload, { merge: true }), locUserRef.set(payload, { merge: true })]);
-    };
-
-    try {
-      await persistGhlProfile(ghlUserId);
-    } catch {
-      /* ignore */
-    }
 
     if (ghlUserId) {
       try {

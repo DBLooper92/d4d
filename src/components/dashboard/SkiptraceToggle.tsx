@@ -5,6 +5,7 @@ import { getFirebaseAuth } from "@/lib/firebaseClient";
 
 type Props = {
   locationId: string;
+  variant?: "compact" | "onboarding";
 };
 
 type ApiResponse = {
@@ -32,8 +33,9 @@ function formatLongDate(value: number | null): string | null {
   return new Date(value).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
-export default function SkiptraceToggle({ locationId }: Props) {
+export default function SkiptraceToggle({ locationId, variant = "compact" }: Props) {
   const auth = useMemo(() => getFirebaseAuth(), []);
+  const isOnboarding = variant === "onboarding";
   const [enabled, setEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -201,9 +203,9 @@ export default function SkiptraceToggle({ locationId }: Props) {
     : "Monthly credits reset to 150 and do not roll over. Purchased credits add on top.";
 
   return (
-    <div style={{ display: "grid", gap: "0.4rem", justifyItems: "end" }}>
+    <div style={{ display: "grid", gap: isOnboarding ? "0.75rem" : "0.4rem", justifyItems: isOnboarding ? "stretch" : "end" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "100%", justifyContent: "space-between" }}>
-        <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</span>
+        <span style={{ fontSize: isOnboarding ? "0.95rem" : "0.85rem", fontWeight: 700, color: "#0f172a" }}>Skiptrace</span>
         <button
           type="button"
           onClick={() => setShowInfo(true)}
@@ -224,7 +226,7 @@ export default function SkiptraceToggle({ locationId }: Props) {
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "flex-end",
+          justifyContent: isOnboarding ? "flex-start" : "flex-end",
           flexWrap: "nowrap",
           gap: "0.5rem",
           background: "#f8fafc",
@@ -302,7 +304,7 @@ export default function SkiptraceToggle({ locationId }: Props) {
         </span>
       </div>
       {error ? (
-        <div style={{ color: "#b91c1c", fontSize: "0.8125rem", marginTop: "0.25rem", textAlign: "right" }}>
+        <div style={{ color: "#b91c1c", fontSize: "0.8125rem", marginTop: "0.25rem", textAlign: isOnboarding ? "left" : "right" }}>
           {error}
         </div>
       ) : null}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getFirebaseAuth } from "@/lib/firebaseClient";
+import SkiptraceToggle from "./SkiptraceToggle";
 
 type IndustryOption = { id: string; label: string; notes: string[] };
 type ApiResponse = {
@@ -13,6 +14,7 @@ type ApiResponse = {
 type QuickStartGuideContentProps = {
   locationId: string;
   mode?: "quickstart" | "settings";
+  onComplete?: () => void;
 };
 
 const INDUSTRY_OPTIONS: IndustryOption[] = [
@@ -149,12 +151,16 @@ function formatNotesForDisplay(list: string[]): string[] {
   return list.map((n) => n.trim()).filter(Boolean).slice(0, 5);
 }
 
-export default function QuickStartGuideContent({ locationId, mode = "quickstart" }: QuickStartGuideContentProps) {
+export default function QuickStartGuideContent({
+  locationId,
+  mode = "quickstart",
+  onComplete,
+}: QuickStartGuideContentProps) {
   const auth = useMemo(() => getFirebaseAuth(), []);
   const isSettings = mode === "settings";
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
-  const [step, setStep] = useState<"industry" | "guide">("industry");
+  const [step, setStep] = useState<"industry" | "skiptrace">("industry");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [customNotes, setCustomNotes] = useState<string[]>(["", "", "", "", ""]);
   const [persistedIndustry, setPersistedIndustry] = useState<string | null>(null);
@@ -216,7 +222,7 @@ export default function QuickStartGuideContent({ locationId, mode = "quickstart"
               });
             }
           }
-          setStep(isSettings ? "industry" : "guide");
+          setStep(isSettings ? "industry" : "skiptrace");
         } else {
           setSelectedId(null);
           setStep("industry");
@@ -286,7 +292,7 @@ export default function QuickStartGuideContent({ locationId, mode = "quickstart"
         while (padded.length < 5) padded.push("");
         setCustomNotes(padded.slice(0, 5));
       }
-      setStep(isSettings ? "industry" : "guide");
+      setStep(isSettings ? "industry" : "skiptrace");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -312,14 +318,161 @@ export default function QuickStartGuideContent({ locationId, mode = "quickstart"
     );
   }
 
-  if (step === "guide" && !isSettings) {
+  if (step === "skiptrace" && !isSettings) {
     return (
-      <div style={{ padding: "6px 0", display: "grid", gap: "12px" }}>
-        <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 800, color: "#0f172a" }}>
-          Quick Start Guide
-        </h2>
-        <div style={{ color: "#475569" }}>
-          {selectedLabel ? `You're set up for ${selectedLabel}.` : "You're set up and ready to go."}
+      <div style={{ display: "grid", gap: "16px" }}>
+        <div style={{ display: "grid", gap: "8px" }}>
+          <div
+            style={{
+              alignSelf: "flex-start",
+              padding: "6px 10px",
+              borderRadius: "999px",
+              background: "#eff6ff",
+              color: "#1d4ed8",
+              fontSize: "0.8rem",
+              fontWeight: 800,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+            }}
+          >
+            Step 2 of 2
+          </div>
+          <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 800, color: "#0f172a" }}>
+            Enable skiptrace
+          </h2>
+          <div style={{ color: "#475569", lineHeight: 1.55 }}>
+            {selectedLabel
+              ? `${selectedLabel} is saved. You can now enable skiptrace for new submissions.`
+              : "Your industry is saved. You can now enable skiptrace for new submissions."}
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: "14px",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            alignItems: "start",
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              margin: 0,
+              borderColor: "#bae6fd",
+              background: "linear-gradient(180deg, #f8fdff 0%, #eff6ff 100%)",
+              display: "grid",
+              gap: "12px",
+            }}
+          >
+            <div style={{ color: "#0f172a", fontWeight: 800, fontSize: "1.02rem" }}>
+              150 free skiptraces every month
+            </div>
+            <div style={{ color: "#475569", fontSize: "0.95rem", lineHeight: 1.55 }}>
+              When skiptrace is on, new property submissions can be enriched with homeowner cell phone numbers and
+              email addresses so your team can follow up faster.
+            </div>
+            <div style={{ display: "grid", gap: "8px" }}>
+              {[
+                "150 free skiptrace credits per month",
+                "Credits reset monthly",
+                "Runs only while the toggle is enabled",
+              ].map((item) => (
+                <div
+                  key={item}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    padding: "10px 12px",
+                    borderRadius: "12px",
+                    border: "1px solid #dbeafe",
+                    background: "#fff",
+                    color: "#0f172a",
+                    fontWeight: 600,
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: "10px",
+                      height: "10px",
+                      borderRadius: "999px",
+                      background: "#0ea5e9",
+                      boxShadow: "0 0 0 4px rgba(14,165,233,0.12)",
+                      flexShrink: 0,
+                    }}
+                  />
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div
+            className="card"
+            style={{
+              margin: 0,
+              borderColor: "#e2e8f0",
+              background: "#fff",
+              display: "grid",
+              gap: "12px",
+            }}
+          >
+            <div style={{ display: "grid", gap: "4px" }}>
+              <div style={{ color: "#0f172a", fontWeight: 800, fontSize: "1.02rem" }}>
+                Turn it on now or skip for later
+              </div>
+              <div style={{ color: "#64748b", fontSize: "0.95rem", lineHeight: 1.55 }}>
+                You can enable skiptrace here now, or leave it off and change it later from the dashboard.
+              </div>
+            </div>
+            <SkiptraceToggle locationId={locationId} variant="onboarding" />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setStep("industry");
+            }}
+            style={{
+              padding: "10px 14px",
+              borderRadius: "10px",
+              border: "1px solid #e2e8f0",
+              background: "#fff",
+              color: "#0f172a",
+              fontWeight: 700,
+              cursor: "pointer",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+            }}
+          >
+            Back
+          </button>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <div style={{ color: "#64748b", fontSize: "0.92rem" }}>
+              You can always update this later in settings.
+            </div>
+            <button
+              type="button"
+              onClick={onComplete}
+              style={{
+                padding: "10px 16px",
+                borderRadius: "12px",
+                border: "1px solid #2563eb",
+                background: "linear-gradient(120deg, #2563eb, #1d4ed8)",
+                color: "#fff",
+                fontWeight: 800,
+                cursor: "pointer",
+                boxShadow: "0 12px 30px rgba(37,99,235,0.24)",
+                minWidth: "160px",
+              }}
+            >
+              Finish onboarding
+            </button>
+          </div>
         </div>
       </div>
     );

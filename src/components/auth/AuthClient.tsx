@@ -117,6 +117,8 @@ type GhlUser = {
   name?: string | null;
   email?: string | null;
   role?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
 };
 
 type ApiOk = { users?: GhlUser[] } | { data?: { users?: GhlUser[] } };
@@ -135,6 +137,53 @@ function visibleError(code: string): string {
 function buildDashboardHref(qs: URLSearchParams): string {
   const query = qs.toString();
   return query ? `${DASHBOARD_ROUTE}?${query}` : DASHBOARD_ROUTE;
+}
+
+function cleanString(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function getGhlUserDisplayName(user: GhlUser | null | undefined): string {
+  const first = cleanString(user?.firstName);
+  const last = cleanString(user?.lastName);
+  const fullName = [first, last].filter(Boolean).join(" ").trim();
+  if (fullName) return fullName;
+
+  const name = cleanString(user?.name);
+  if (name) return name;
+
+  return cleanString(user?.email);
+}
+
+function deriveSignupNameParts(user: GhlUser | null | undefined): { firstName: string; lastName: string } {
+  const first = cleanString(user?.firstName);
+  const last = cleanString(user?.lastName);
+  if (first) return { firstName: first, lastName: last };
+
+  const displayName = cleanString(user?.name);
+  if (displayName) {
+    const parts = displayName.split(/\s+/).filter(Boolean);
+    if (parts.length) {
+      return {
+        firstName: parts[0],
+        lastName: parts.slice(1).join(" "),
+      };
+    }
+  }
+
+  const email = cleanString(user?.email);
+  const emailLocalPart = email.split("@")[0]?.trim() ?? "";
+  if (emailLocalPart) {
+    const tokens = emailLocalPart.replace(/[._-]+/g, " ").split(/\s+/).filter(Boolean);
+    if (tokens.length) {
+      return {
+        firstName: tokens[0],
+        lastName: tokens.slice(1).join(" "),
+      };
+    }
+  }
+
+  return { firstName: "Admin", lastName: "" };
 }
 
 export default function AuthClient() {
@@ -158,8 +207,7 @@ export default function AuthClient() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [firstName, setFirst] = useState("");
-  const [lastName, setLast] = useState("");
+  const [emailSeedUserId, setEmailSeedUserId] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -193,11 +241,17 @@ export default function AuthClient() {
     () => contextFromUrl.locationId || ssoContext?.activeLocationId || "",
     [contextFromUrl.locationId, ssoContext],
   );
+  const selectedUser = useMemo(
+    () => users.find((user) => user.id === selectedUserId) ?? null,
+    [selectedUserId, users],
+  );
+  const selectedUserLabel = useMemo(() => getGhlUserDisplayName(selectedUser), [selectedUser]);
 
   useEffect(() => {
     setAdminExists(null);
     setUsers([]);
     setUsersErr(null);
+    setEmailSeedUserId(null);
   }, [resolvedLocationId]);
 
   // Redirect when signed in
@@ -299,6 +353,18 @@ export default function AuthClient() {
     } catch {}
   }, [adminExists]);
 
+  useEffect(() => {
+    if (!selectedUserId) {
+      setEmailSeedUserId(null);
+      return;
+    }
+    if (!selectedUser) return;
+    const nextEmail = cleanString(selectedUser.email);
+    if (emailSeedUserId === selectedUserId) return;
+    setEmail(nextEmail);
+    setEmailSeedUserId(selectedUserId);
+  }, [emailSeedUserId, selectedUser, selectedUserId]);
+
   // Detect whether an admin already exists. If not, load the location users for selection.
   useEffect(() => {
     if (adminExists !== null) return;
@@ -375,7 +441,7 @@ export default function AuthClient() {
       return;
     }
     if (!auth) { setErr("Auth not ready yet. Please try again."); return; }
-    if (!email.trim() || !password.trim() || !firstName.trim() || !lastName.trim()) { setErr("Please fill in all fields."); return; }
+    if (!email.trim() || !password.trim()) { setErr("Please fill in all fields."); return; }
     if (password !== confirm) { setErr("Passwords do not match."); return; }
     setBusy(true);
     try {
@@ -383,6 +449,10 @@ export default function AuthClient() {
         setErr("Please select a HighLevel user before registering.");
         setBusy(false);
         return;
+      }
+      const { firstName, lastName } = deriveSignupNameParts(selectedUser);
+      if (!firstName) {
+        throw new Error("We couldn't determine the selected owner's name. Please go back and select the owner again.");
       }
       // location id from URL or SSO
       let { locationId } = contextFromUrl;
@@ -782,7 +852,7 @@ export default function AuthClient() {
               Create the owner account
             </div>
             <p style={{ color: "#475569", margin: 0 }}>
-              All fields are required. This account manages drivers, billing, and settings for this HighLevel sub-account.
+              We&apos;ll use the selected HighLevel user&apos;s name for the owner profile. The email below starts with that user&apos;s email, but you can edit it.
             </p>
           </div>
 
@@ -794,19 +864,27 @@ export default function AuthClient() {
             className="space-y-4"
             style={{ marginTop: "16px" }}
           >
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm mb-1 font-semibold text-slate-800">First name *</label>
-                <input value={firstName} onChange={(ev) => setFirst(ev.target.value)} className="input" required />
+            {selectedUserLabel ? (
+              <div
+                className="card"
+                style={{ margin: 0, padding: "0.85rem 1rem", borderColor: "#dbeafe", background: "#f8fbff" }}
+              >
+                <div style={{ fontSize: "0.8rem", fontWeight: 800, letterSpacing: "0.04em", color: "#0369a1", textTransform: "uppercase" }}>
+                  Selected owner
+                </div>
+                <div style={{ marginTop: "4px", fontWeight: 700, color: "#0f172a" }}>{selectedUserLabel}</div>
               </div>
-              <div>
-                <label className="block text-sm mb-1 font-semibold text-slate-800">Last name *</label>
-                <input value={lastName} onChange={(ev) => setLast(ev.target.value)} className="input" required />
-              </div>
-            </div>
+            ) : null}
             <div>
-              <label className="block text-sm mb-1 font-semibold text-slate-800">Email *</label>
-              <input type="email" value={email} onChange={(ev) => setEmail(ev.target.value)} className="input" required />
+              <label className="block text-sm mb-1 font-semibold text-slate-800">Owner email *</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(ev) => setEmail(ev.target.value)}
+                className="input"
+                required
+                placeholder={selectedUser?.email || "owner@yourbusiness.com"}
+              />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>

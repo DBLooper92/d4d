@@ -159,6 +159,20 @@ function storeDisplay(target: Record<string, string>, id: string | null | undefi
   if (short && !target[short]) target[short] = value;
 }
 
+function linkUserAliases(
+  target: Record<string, string>,
+  preferredId: string | null | undefined,
+  ...ids: Array<string | null | undefined>
+) {
+  const canonical = (preferredId || "").trim() || ids.map((id) => (id || "").trim()).find(Boolean) || "";
+  if (!canonical) return;
+  [preferredId, ...ids].forEach((id) => {
+    const key = (id || "").trim();
+    if (!key) return;
+    target[key] = canonical;
+  });
+}
+
 function toMillis(value: unknown): number | null {
   if (!value) return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -731,6 +745,7 @@ export default function DashboardInsights({ locationId }: Props) {
   const { submissions: allSubmissions, markers: allMarkers } = useLocationStreams(locationId);
   const [timeRangeDays, setTimeRangeDays] = useState<number>(14);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
+  const [userAliases, setUserAliases] = useState<Record<string, string>>({});
   const [userMeta, setUserMeta] = useState<
     Record<string, { active?: boolean; invited?: boolean; accepted?: boolean; isAdmin?: boolean }>
   >({});
@@ -784,6 +799,10 @@ export default function DashboardInsights({ locationId }: Props) {
     setShowQuickStart(true);
   }, []);
   const closeQuickStart = useCallback(() => setShowQuickStart(false), []);
+  const completeQuickStart = useCallback(() => {
+    setShowQuickStart(false);
+    setShowQuickStartCta(false);
+  }, []);
   const openIndustrySettings = useCallback(() => {
     if (!canManageLocation) return;
     setShowQuickStart(false);
@@ -1168,23 +1187,38 @@ export default function DashboardInsights({ locationId }: Props) {
     }
   }, [auth]);
 
+  const canonicalizeUserId = useCallback(
+    (id: string | null | undefined) => {
+      const raw = (id || "").trim();
+      if (!raw) return "";
+      const linked = userAliases[raw];
+      return (linked || raw).trim();
+    },
+    [userAliases],
+  );
+
   const resolveUserName = useMemo(
     () =>
       (id: string | null | undefined, fallbackPrefix = "User") => {
         if (!id) return "Unassigned";
         const trimmed = id.trim();
         if (!trimmed) return "Unassigned";
-        const short = trimmed.length > 6 ? trimmed.slice(0, 6) : trimmed;
-        if (userNames[trimmed]) return userNames[trimmed];
-        if (userNames[short]) return userNames[short];
+        const canonical = canonicalizeUserId(trimmed);
+        const candidates = [canonical, trimmed].filter(Boolean);
+        for (const key of candidates) {
+          const short = key.length > 6 ? key.slice(0, 6) : key;
+          if (userNames[key]) return userNames[key];
+          if (userNames[short]) return userNames[short];
+        }
 
         // As a last resort, try to match by prefix against any stored ids (helps if we only stored full IDs)
+        const short = canonical.length > 6 ? canonical.slice(0, 6) : canonical;
         const prefixHit = Object.entries(userNames).find(([key]) => key.startsWith(short));
         if (prefixHit) return prefixHit[1];
 
-        return `${fallbackPrefix} ${short}`;
+        return `${fallbackPrefix} ${short || trimmed.slice(0, 6)}`;
       },
-    [userNames],
+    [canonicalizeUserId, userNames],
   );
 
   useEffect(() => {
@@ -1192,11 +1226,14 @@ export default function DashboardInsights({ locationId }: Props) {
     async function loadUsers() {
       if (!locationId) {
         setUserNames({});
+        setUserAliases({});
         setUserMeta({});
+        setUserSubmissionCounts({});
         return;
       }
       try {
         const map: Record<string, string> = {};
+        const aliases: Record<string, string> = {};
         const meta: Record<string, { active?: boolean; invited?: boolean; accepted?: boolean; isAdmin?: boolean }> =
           {};
         const counts: Record<string, number> = {};
@@ -1224,6 +1261,7 @@ export default function DashboardInsights({ locationId }: Props) {
             (json as { data?: { users?: ManageUser[] } }).data?.users ??
             [];
           users.forEach((u) => {
+            linkUserAliases(aliases, u.id, u.id, u.firebaseUid);
             const display = extractDisplayName(u as Record<string, unknown>);
             if (!display) return;
             storeDisplay(map, u.firebaseUid, display);
@@ -1267,14 +1305,24 @@ export default function DashboardInsights({ locationId }: Props) {
           const locSnap = await getDoc(doc(db, "locations", locationId));
           if (locSnap.exists()) {
             const data = (locSnap.data() || {}) as Record<string, unknown>;
+            const adminUid =
+              typeof (data as { adminUid?: unknown }).adminUid === "string"
+                ? ((data as { adminUid?: string }).adminUid ?? "").trim()
+                : "";
+            const adminGhlUserId =
+              typeof (data as { adminGhlUserId?: unknown }).adminGhlUserId === "string"
+                ? ((data as { adminGhlUserId?: string }).adminGhlUserId ?? "").trim()
+                : "";
+            linkUserAliases(aliases, adminGhlUserId, adminGhlUserId, adminUid);
             const dir = (data as { userDirectory?: Record<string, unknown> }).userDirectory;
             if (dir && typeof dir === "object") {
               Object.entries(dir).forEach(([ghlUserId, raw]) => {
                 if (!raw || typeof raw !== "object") return;
                 const entry = raw as Record<string, unknown>;
                 const display = extractDisplayName(entry);
-                storeDisplay(map, ghlUserId, display || null);
                 const firebaseUid = cleanFirebaseUid(entry);
+                linkUserAliases(aliases, ghlUserId, ghlUserId, firebaseUid);
+                storeDisplay(map, ghlUserId, display || null);
                 storeDisplay(map, firebaseUid, display || null);
               });
             }
@@ -1290,16 +1338,16 @@ export default function DashboardInsights({ locationId }: Props) {
           snap.forEach((docSnap) => {
             const data = (docSnap.data() || {}) as Record<string, unknown>;
             const uid = docSnap.id;
+            const ghlId = extractGhlUserId(data);
+            linkUserAliases(aliases, ghlId, ghlId, uid);
             const display = extractDisplayName(data);
             if (display) {
               storeDisplay(map, uid, display);
-              const ghlId = extractGhlUserId(data);
               storeDisplay(map, ghlId, display);
             }
             const count = parseCount((data as { allTimeUserSubmisisons?: unknown }).allTimeUserSubmisisons);
             if (count !== null) {
               counts[uid] = count;
-              const ghlId = extractGhlUserId(data);
               if (ghlId) {
                 counts[ghlId] = count;
               }
@@ -1311,13 +1359,15 @@ export default function DashboardInsights({ locationId }: Props) {
 
         if (!cancelled) {
           setUserNames(map);
+          setUserAliases(aliases);
           setUserMeta(meta);
           setUserSubmissionCounts(counts);
         }
       } catch {
         if (!cancelled) {
           setUserNames({});
-          setUserMeta((prev) => prev);
+          setUserAliases({});
+          setUserMeta({});
           setUserSubmissionCounts({});
         }
       }
@@ -1386,6 +1436,32 @@ export default function DashboardInsights({ locationId }: Props) {
     };
   }, [locationId, allSubmissions, userNames]);
 
+  const canonicalUserMeta = useMemo(() => {
+    const next: Record<string, { active?: boolean; invited?: boolean; accepted?: boolean; isAdmin?: boolean }> = {};
+    Object.entries(userMeta).forEach(([id, value]) => {
+      const canonical = canonicalizeUserId(id) || id.trim();
+      if (!canonical) return;
+      const existing = next[canonical] || {};
+      next[canonical] = {
+        active: Boolean(existing.active || value.active),
+        invited: Boolean(existing.invited || value.invited),
+        accepted: Boolean(existing.accepted || value.accepted),
+        isAdmin: Boolean(existing.isAdmin || value.isAdmin),
+      };
+    });
+    return next;
+  }, [canonicalizeUserId, userMeta]);
+
+  const canonicalSubmissionCounts = useMemo(() => {
+    const next: Record<string, number> = {};
+    Object.entries(userSubmissionCounts).forEach(([id, count]) => {
+      const canonical = canonicalizeUserId(id) || id.trim();
+      if (!canonical) return;
+      next[canonical] = Math.max(next[canonical] ?? 0, count);
+    });
+    return next;
+  }, [canonicalizeUserId, userSubmissionCounts]);
+
   const ownerIds = useMemo(() => {
     const ids: string[] = [];
     if (viewer.ghlUserId) ids.push(viewer.ghlUserId.trim());
@@ -1393,13 +1469,18 @@ export default function DashboardInsights({ locationId }: Props) {
     return Array.from(new Set(ids.filter(Boolean)));
   }, [viewer.ghlUserId, authUser?.uid]);
 
+  const ownerCanonicalIds = useMemo(
+    () => Array.from(new Set(ownerIds.map((id) => canonicalizeUserId(id)).filter(Boolean))),
+    [canonicalizeUserId, ownerIds],
+  );
+
   // Limit visibility to the current user unless they are an admin.
   const visibleSubmissions = useMemo(() => {
     if (viewer.isAdmin) return allSubmissions;
-    const allowed = new Set(ownerIds.map((id) => id.trim()).filter(Boolean));
+    const allowed = new Set(ownerCanonicalIds);
     if (!allowed.size) return [];
-    return allSubmissions.filter((s) => allowed.has((s.createdByUserId || "").trim()));
-  }, [allSubmissions, viewer.isAdmin, ownerIds]);
+    return allSubmissions.filter((s) => allowed.has(canonicalizeUserId(s.createdByUserId)));
+  }, [allSubmissions, canonicalizeUserId, ownerCanonicalIds, viewer.isAdmin]);
 
   const allowedCoordKeys = useMemo(() => {
     if (viewer.isAdmin) return new Set<string>();
@@ -1413,15 +1494,15 @@ export default function DashboardInsights({ locationId }: Props) {
 
   const visibleMarkers = useMemo(() => {
     if (viewer.isAdmin) return allMarkers;
-    const allowed = new Set(ownerIds.map((id) => id.trim()).filter(Boolean));
+    const allowed = new Set(ownerCanonicalIds);
     if (!allowed.size) return [];
     return allMarkers.filter((m) => {
-      const owner = (m.createdByUserId || "").trim();
+      const owner = canonicalizeUserId(m.createdByUserId);
       if (owner && allowed.has(owner)) return true;
       const key = coordKey(m.lat, m.lng);
       return allowedCoordKeys.has(key);
     });
-  }, [allMarkers, viewer.isAdmin, ownerIds, allowedCoordKeys]);
+  }, [allMarkers, allowedCoordKeys, canonicalizeUserId, ownerCanonicalIds, viewer.isAdmin]);
 
   const allTimeSubmissions = locationTotals.allTimeLocationSubmisisons ?? 0;
   const activeMarkerCount = locationTotals.activeLocationSubmisisons ?? 0;
@@ -1429,7 +1510,7 @@ export default function DashboardInsights({ locationId }: Props) {
   const donutData = useMemo<DonutDatum[]>(() => {
     const grouped = new Map<string, number>();
     visibleSubmissions.forEach((s) => {
-      const key = s.createdByUserId || "Unassigned";
+      const key = canonicalizeUserId(s.createdByUserId) || "Unassigned";
       grouped.set(key, (grouped.get(key) ?? 0) + 1);
     });
     const entries = Array.from(grouped.entries()).sort((a, b) => b[1] - a[1]);
@@ -1438,7 +1519,7 @@ export default function DashboardInsights({ locationId }: Props) {
       value,
       color: colorForUser(label),
     }));
-  }, [visibleSubmissions, resolveUserName]);
+  }, [canonicalizeUserId, resolveUserName, visibleSubmissions]);
 
   const activitySeries = useMemo<ActivityBar[]>(() => {
     const today = new Date();
@@ -1457,7 +1538,7 @@ export default function DashboardInsights({ locationId }: Props) {
         if (!s.createdAt) return;
         const dayKey = new Date(s.createdAt).toISOString().slice(0, 10);
         if (dayKey !== key) return;
-        const ownerId = (s.createdByUserId || "Unassigned").trim() || "Unassigned";
+        const ownerId = canonicalizeUserId(s.createdByUserId) || "Unassigned";
         perUser.set(ownerId, (perUser.get(ownerId) ?? 0) + 1);
       });
       const total = Array.from(perUser.values()).reduce((sum, v) => sum + v, 0);
@@ -1470,7 +1551,7 @@ export default function DashboardInsights({ locationId }: Props) {
       days.push({ label, total, key, segments });
     }
     return days;
-  }, [visibleSubmissions, timeRangeDays, resolveUserName]);
+  }, [canonicalizeUserId, resolveUserName, timeRangeDays, visibleSubmissions]);
 
   const activitySummary = useMemo(() => {
     const total = activitySeries.reduce((sum, d) => sum + d.total, 0);
@@ -1496,13 +1577,13 @@ export default function DashboardInsights({ locationId }: Props) {
     const map = new Map<string, string>();
     visibleSubmissions.forEach((s) => {
       if (!s.coordinates) return;
-      const owner = (s.createdByUserId || "").trim();
+      const owner = canonicalizeUserId(s.createdByUserId);
       if (!owner) return;
       const key = coordKey(s.coordinates.lat, s.coordinates.lng);
       if (!map.has(key)) map.set(key, owner);
     });
     return map;
-  }, [visibleSubmissions]);
+  }, [canonicalizeUserId, visibleSubmissions]);
 
   const submissionLookup = useMemo(() => {
     const map = new Map<string, SubmissionDoc>();
@@ -1518,28 +1599,29 @@ export default function DashboardInsights({ locationId }: Props) {
 
   const userColorGuide = useMemo(() => {
     const allowedIds = new Set(
-      Object.entries(userMeta)
+      Object.entries(canonicalUserMeta)
         .filter(([, m]) => m.isAdmin || m.invited || m.accepted)
         .map(([id]) => id.trim())
         .filter(Boolean),
     );
 
     const submissionCounts = new Map<string, number>();
-    Object.entries(userSubmissionCounts).forEach(([id, count]) => {
+    Object.entries(canonicalSubmissionCounts).forEach(([id, count]) => {
       if (!id) return;
       submissionCounts.set(id, count);
     });
 
     const entries = new Map<string, { id: string; name: string; color: string; count: number; active: boolean }>();
     const addEntry = (id: string, count: number) => {
+      const canonicalId = canonicalizeUserId(id) || id.trim();
+      if (!canonicalId) return;
+      if (!allowedIds.has(canonicalId)) return;
+      const meta = canonicalUserMeta[canonicalId] || {};
       const name = resolveUserName(id);
-      const key = name.toLowerCase();
-      if (!allowedIds.has(id.trim())) return;
-      const existing = entries.get(key);
-      const meta = userMeta[id] || {};
+      const existing = entries.get(canonicalId);
       const active = meta.active ?? (meta.isAdmin ? true : count > 0);
       if (!existing || count > existing.count || (active && !existing.active)) {
-        entries.set(key, { id, name, color: colorForUser(id), count, active });
+        entries.set(canonicalId, { id: canonicalId, name, color: colorForUser(canonicalId), count, active });
       }
     };
 
@@ -1557,7 +1639,7 @@ export default function DashboardInsights({ locationId }: Props) {
       if (b.count !== a.count) return b.count - a.count;
       return a.name.localeCompare(b.name);
     });
-  }, [userSubmissionCounts, userMeta, resolveUserName]);
+  }, [canonicalSubmissionCounts, canonicalUserMeta, canonicalizeUserId, resolveUserName]);
 
   const driverSlots = useMemo(() => userColorGuide.slice(0, 6), [userColorGuide]);
 
@@ -2294,7 +2376,7 @@ export default function DashboardInsights({ locationId }: Props) {
               </button>
             </div>
             <div style={{ padding: "16px 16px 18px", overflow: "auto" }}>
-              <QuickStartGuideContent locationId={locationId} />
+              <QuickStartGuideContent locationId={locationId} onComplete={completeQuickStart} />
             </div>
           </div>
         </div>
