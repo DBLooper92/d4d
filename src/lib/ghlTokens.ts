@@ -290,7 +290,10 @@ async function loadAgencyTokenState(agencyId: string): Promise<AgencyTokenDocSta
       accessTokenExpiresAt:
         pickTimestampFromPaths(data, ["accessTokenExpiresAt"]) ??
         pickTimestampFromPaths(data, ["expiresAt", "oauth.expiresAt", "ghl.expiresAt"]),
-      companyId: pickStringFromPaths(data, ["companyId", "company.id"]),
+      // In our install flow the agency doc ID is the GHL companyId. Older installs
+      // may be missing an explicit `companyId` field, so fall back to the stored
+      // agency id or the document id for token minting.
+      companyId: pickStringFromPaths(data, ["companyId", "company.id", "agencyId", "agency.id"]) ?? agencyId,
     },
   };
 }
@@ -311,21 +314,26 @@ async function ensureAgencyAccessToken(
   const expiresAtMillis = state.accessTokenExpiresAt?.toMillis() ?? null;
   const needsRefresh =
     !state.accessToken || !expiresAtMillis || expiresAtMillis <= Date.now() + REFRESH_LEEWAY_MS;
+  const companyId = state.companyId ?? agencyId;
 
   if (!needsRefresh && state.accessToken) {
+    if (!state.companyId && companyId) {
+      await ref.set({ companyId }, { merge: true });
+    }
     return {
       accessToken: state.accessToken,
       refreshToken: state.refreshToken,
       expiresAt: expiresAtMillis ? new Date(expiresAtMillis) : null,
       refreshed: false,
-      companyId: state.companyId,
+      companyId,
     };
   }
 
   const refreshed = await fetchRefreshedToken(state.refreshToken, "Company");
   const nextExpiresAt = Timestamp.fromMillis(Date.now() + refreshed.expires_in * 1000);
   const nextRefreshToken = refreshed.refresh_token ?? state.refreshToken;
-  const companyId = state.companyId ?? readString(refreshed.companyId) ?? null;
+  const refreshedCompanyId = readString(refreshed.companyId);
+  const resolvedCompanyId = refreshedCompanyId ?? companyId;
 
   await ref.set(
     {
@@ -334,7 +342,7 @@ async function ensureAgencyAccessToken(
       accessTokenExpiresAt: nextExpiresAt,
       expiresAt: nextExpiresAt.toMillis(),
       ghlLastTokenRefreshAt: FieldValue.serverTimestamp(),
-      ...(companyId ? { companyId } : {}),
+      ...(resolvedCompanyId ? { companyId: resolvedCompanyId } : {}),
     },
     { merge: true },
   );
@@ -344,7 +352,7 @@ async function ensureAgencyAccessToken(
     refreshToken: nextRefreshToken ?? null,
     expiresAt: new Date(nextExpiresAt.toMillis()),
     refreshed: true,
-    companyId,
+    companyId: resolvedCompanyId,
   };
 }
 

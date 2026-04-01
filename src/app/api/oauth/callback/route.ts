@@ -228,6 +228,7 @@ export async function GET(request: Request) {
 
     const agencyFields: Record<string, unknown> = {
       agencyId,
+      companyId: agencyId,
       provider: "leadconnector",
       scopes: scopeArr,
       installedAt: isNewAgency ? FieldValue.serverTimestamp() : snap.get("installedAt") ?? FieldValue.serverTimestamp(),
@@ -266,6 +267,7 @@ export async function GET(request: Request) {
       {
         locationId,
         agencyId,
+        companyId: agencyId,
         provider: "leadconnector",
         ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
         isInstalled: true,
@@ -374,6 +376,7 @@ export async function GET(request: Request) {
           {
             locationId: l.id,
             agencyId,
+            companyId: agencyId,
             provider: "leadconnector",
             name: l.name ?? null,
             isInstalled: Boolean(l.isInstalled),
